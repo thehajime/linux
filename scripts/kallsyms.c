@@ -59,6 +59,7 @@ static struct addr_range percpu_range = {
 static struct sym_entry *table;
 static unsigned int table_size, table_cnt;
 static int all_symbols = 0;
+static int use_data_section;
 static int absolute_percpu = 0;
 static char symbol_prefix_char = '\0';
 static int base_relative = 0;
@@ -74,6 +75,7 @@ static void usage(void)
 {
 	fprintf(stderr, "Usage: kallsyms [--all-symbols] "
 			"[--symbol-prefix=<prefix char>] "
+			"[--use-data-section] "
 			"[--base-relative] < in.map > out.S\n");
 	exit(1);
 }
@@ -362,7 +364,10 @@ static void write_src(void)
 	printf("#define ALGN .balign 4\n");
 	printf("#endif\n");
 
-	printf("\t.section .rodata, \"a\"\n");
+	if (use_data_section)
+		printf("\t.section .data\n");
+	else
+		printf("\t.section .rodata, \"a\"\n");
 
 	/* Provide proper symbols relocatability by their relativeness
 	 * to a fixed anchor point in the runtime image, either '_text'
@@ -774,7 +779,9 @@ int main(int argc, char **argv)
 				if ((*p == '"' && *(p+2) == '"') || (*p == '\'' && *(p+2) == '\''))
 					p++;
 				symbol_prefix_char = *p;
-			} else
+			} else if (strcmp(argv[i], "--use-data-section") == 0)
+				use_data_section = 1;
+			else
 				usage();
 		}
 	} else if (argc != 1)
