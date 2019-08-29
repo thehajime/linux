@@ -23,24 +23,12 @@ OS := $(shell uname -s)
 # features.
 SHELL := /bin/bash
 
-ifneq ($(SUBARCH),lkl)
-	core-y			+= $(ARCH_DIR)/kernel/		\
-				 $(ARCH_DIR)/drivers/		\
-				 $(ARCH_DIR)/os-$(OS)/
-endif
-
 MODE_INCLUDE	+= -I$(srctree)/$(ARCH_DIR)/include/shared/skas
 
 HEADER_ARCH 	:= $(SUBARCH)
 
 ifneq ($(filter $(SUBARCH),x86 x86_64 i386),)
 	HEADER_ARCH := x86
-endif
-
-ifneq ($(SUBARCH),lkl)
-  ifdef CONFIG_64BIT
-	  KBUILD_CFLAGS += -mcmodel=large
-  endif
 endif
 
 HOST_DIR := arch/$(HEADER_ARCH)

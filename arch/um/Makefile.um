@@ -7,6 +7,14 @@
 # Licensed under the GPL
 #
 
+core-y			+= $(ARCH_DIR)/kernel/		\
+			 $(ARCH_DIR)/drivers/		\
+			 $(ARCH_DIR)/os-$(OS)/
+
+ifdef CONFIG_64BIT
+	KBUILD_CFLAGS += -mcmodel=large
+endif
+
 SHARED_HEADERS	:= $(ARCH_DIR)/include/shared
 ARCH_INCLUDE	:= -I$(srctree)/$(SHARED_HEADERS)
 ARCH_INCLUDE	+= -I$(srctree)/$(HOST_DIR)/um/shared
