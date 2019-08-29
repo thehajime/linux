@@ -3,8 +3,8 @@ import re, os, sys, argparse, multiprocessing, fnmatch
 
 srctree = os.environ["srctree"]
 objtree = os.environ["objtree"]
-header_paths = [ "include/uapi/", "arch/um/subarch/lkl/include/uapi/",
-                 "arch/um/subarch/lkl/include/generated/uapi/",
+header_paths = [ "include/uapi/", "arch/um/lkl/include/uapi/",
+                 "arch/um/lkl/include/generated/uapi/",
                  "include/generated/" ]
 
 headers = set()
