@@ -1,0 +1,9 @@
+# UAPI Header export list
+
+generic-$(UML_LKL) += elf.h
+generic-$(UML_LKL) += kvm_para.h
+generic-$(UML_LKL) += shmparam.h
+generic-$(UML_LKL) += timex.h
+
+# no header-y since we need special user headers handling
+# see arch/lkl/script/headers.py

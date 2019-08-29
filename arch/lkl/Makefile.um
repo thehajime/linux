@@ -3,6 +3,9 @@
 include arch/lkl/auto.conf
 
 KBUILD_CFLAGS += -fno-builtin
+KBUILD_CFLAGS += -I$(srctree)/arch/lkl/include
+KBUILD_CFLAGS += -I$(srctree)/arch/lkl/include/generated
+KBUILD_CFLAGS += -I$(srctree)/arch/lkl/include/uapi
 
 ifneq (,$(filter $(OUTPUT_FORMAT),elf64-x86-64 elf32-i386 elf64-x86-64-freebsd elf32-littlearm elf64-littleaarch64))
 KBUILD_CFLAGS += -fPIC
