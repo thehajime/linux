@@ -74,6 +74,18 @@ vmlinux_link()
 
 		${LD} ${KBUILD_LDFLAGS} ${LDFLAGS_vmlinux} -o ${2}	\
 			-T ${lds} ${objects}
+	elif [ "${SUBARCH}" == "lkl" ]; then
+                local lds="${objtree}/arch/lkl/kernel/vmlinux.lds"
+		objects="--whole-archive			\
+			${KBUILD_VMLINUX_OBJS}			\
+			--no-whole-archive			\
+			--start-group				\
+			${KBUILD_VMLINUX_LIBS}			\
+			--end-group				\
+			${1}"
+
+		${LD} ${KBUILD_LDFLAGS} ${LDFLAGS_vmlinux} -o ${2}	\
+			-T ${lds} ${objects}
 	else
 		objects="-Wl,--whole-archive			\
 			${KBUILD_VMLINUX_OBJS}			\
