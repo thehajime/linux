@@ -2,8 +2,9 @@
 
 include arch/lkl/auto.conf
 
-ARCH_INCLUDE += -I$(srctree)/arch/lkl/um/include
-LINUXINCLUDE := $(subst arch/um,arch/lkl,$(LINUXINCLUDE)) $(ARCH_INCLUDE)
+SRCARCH := $(SUBARCH)
+ARCH_INCLUDE += -I$(srctree)/arch/$(SRCARCH)/um/include
+LINUXINCLUDE := $(subst $(ARCH),$(SUBARCH),$(LINUXINCLUDE)) $(ARCH_INCLUDE)
 KBUILD_CFLAGS += -fno-builtin
 
 ifneq (,$(filter $(OUTPUT_FORMAT),elf64-x86-64 elf32-i386 elf64-x86-64-freebsd elf32-littlearm elf64-littleaarch64))
