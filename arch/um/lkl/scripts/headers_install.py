@@ -4,8 +4,7 @@ import re, os, sys, argparse, multiprocessing, fnmatch
 srctree = os.environ["srctree"]
 objtree = os.environ["objtree"]
 header_paths = [ "include/uapi/", "arch/um/lkl/include/uapi/",
-                 "arch/um/lkl/include/generated/uapi/",
-                 "include/generated/" ]
+                 "arch/um/lkl/include/generated/uapi/", "include/generated/" ]
 
 headers = set()
 includes = set()
@@ -127,8 +126,8 @@ parser.add_argument('path', help='path to install to', )
 parser.add_argument('-j', '--jobs', help='number of parallel jobs', default=1, type=int)
 args = parser.parse_args()
 
-find_headers("arch/lkl/include/uapi/asm/syscalls.h")
-headers.add("arch/lkl/include/uapi/asm/host_ops.h")
+find_headers("arch/um/lkl/include/uapi/asm/syscalls.h")
+headers.add("arch/um/lkl/include/uapi/asm/host_ops.h")
 
 if 'LKL_INSTALL_ADDITIONAL_HEADERS' in os.environ:
     with open(os.environ['LKL_INSTALL_ADDITIONAL_HEADERS'], 'rU') as f:
@@ -141,7 +140,7 @@ new_headers = set()
 
 for h in headers:
     dir = os.path.dirname(h)
-    out_dir = args.path + "/" + re.sub("(arch/lkl/include/uapi/|arch/lkl/include/generated/uapi/|include/uapi/|include/generated/uapi/|include/generated)(.*)", "lkl/\\2", dir)
+    out_dir = args.path + "/" + re.sub("(arch/um/lkl/include/uapi/|arch/um/lkl/include/generated/uapi/|include/uapi/|include/generated/uapi/|include/generated)(.*)", "lkl/\\2", dir)
     try:
         os.makedirs(out_dir)
     except:
