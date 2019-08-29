@@ -1,1 +1,2 @@
 kernel/vmlinux.lds
+include/generated

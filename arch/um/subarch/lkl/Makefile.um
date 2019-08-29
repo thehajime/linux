@@ -2,10 +2,12 @@
 
 include $(HOST_DIR)/auto.conf
 
-SRCARCH := $(SUBARCH)
+SRCARCH := um/subarch/$(SUBARCH)
 ARCH_INCLUDE += -I$(srctree)/$(HOST_DIR)/um/include
-LINUXINCLUDE := $(subst $(ARCH),$(SUBARCH),$(LINUXINCLUDE)) $(ARCH_INCLUDE)
+LINUXINCLUDE := $(subst $(ARCH),$(ARCH)/subarch/$(SUBARCH),$(LINUXINCLUDE)) $(ARCH_INCLUDE)
 KBUILD_CFLAGS += -fno-builtin
+
+export SRCARCH
 
 ifneq (,$(filter $(OUTPUT_FORMAT),elf64-x86-64 elf32-i386 elf64-x86-64-freebsd elf32-littlearm elf64-littleaarch64))
 KBUILD_CFLAGS += -fPIC
@@ -59,7 +61,7 @@ install: lkl.o __headers $(HOST_DIR)/include/generated/uapi/asm/syscall_defs.h
 		$(INSTALL_PATH)/include
 
 archheaders:
-	$(Q)$(MAKE) -f $(srctree)/Makefile ARCH=$(SUBARCH) asm-generic archheaders
+	$(Q)$(MAKE) -f $(srctree)/Makefile ARCH=$(SRCARCH) asm-generic archheaders
 
 archclean:
 	$(Q)$(MAKE) $(clean)=$(boot)
