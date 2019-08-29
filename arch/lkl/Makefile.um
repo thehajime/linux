@@ -2,13 +2,10 @@
 
 include arch/lkl/auto.conf
 
-ARCH_INCLUDE := -I$(srctree)/arch/lkl/include
-ARCH_INCLUDE += -I$(srctree)/arch/lkl/include/generated
-ARCH_INCLUDE += -I$(srctree)/arch/lkl/include/uapi
-ARCH_INCLUDE += -I$(srctree)/arch/lkl/include/generated/uapi
 ARCH_INCLUDE += -I$(srctree)/arch/lkl/um/include
-KBUILD_CPPFLAGS += $(ARCH_INCLUDE)
 KBUILD_CFLAGS += -fno-builtin
+
+LINUXINCLUDE := $(subst um,lkl,$(LINUXINCLUDE)) $(ARCH_INCLUDE)
 
 ifneq (,$(filter $(OUTPUT_FORMAT),elf64-x86-64 elf32-i386 elf64-x86-64-freebsd elf32-littlearm elf64-littleaarch64))
 KBUILD_CFLAGS += -fPIC
