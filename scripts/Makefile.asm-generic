@@ -15,10 +15,6 @@ src := $(subst /generated,,$(obj))
 # $(generic)/Kbuild lists mandatory-y. Exclude um since it is a special case.
 ifneq ($(SRCARCH),um)
 include $(generic)/Kbuild
-else
-ifeq ($(SUBARCH),lkl)
-include $(generic)/Kbuild
-endif
 endif
 
 include scripts/Kbuild.include

@@ -2,6 +2,12 @@
 
 include arch/lkl/auto.conf
 
+ARCH_INCLUDE := -I$(srctree)/arch/lkl/include
+ARCH_INCLUDE += -I$(srctree)/arch/lkl/include/generated
+ARCH_INCLUDE += -I$(srctree)/arch/lkl/include/uapi
+ARCH_INCLUDE += -I$(srctree)/arch/lkl/include/generated/uapi
+ARCH_INCLUDE += -I$(srctree)/arch/lkl/um/include
+KBUILD_CPPFLAGS += $(ARCH_INCLUDE)
 KBUILD_CFLAGS += -fno-builtin
 
 ifneq (,$(filter $(OUTPUT_FORMAT),elf64-x86-64 elf32-i386 elf64-x86-64-freebsd elf32-littlearm elf64-littleaarch64))
@@ -54,6 +60,9 @@ install: lkl.o __headers arch/lkl/include/generated/uapi/asm/syscall_defs.h
 	@$(srctree)/arch/lkl/scripts/headers_install.py \
 		$(subst -j,-j$(NPROC),$(findstring -j,$(MAKEFLAGS))) \
 		$(INSTALL_PATH)/include
+
+archheaders:
+	$(Q)$(MAKE) -f $(srctree)/Makefile ARCH=$(SUBARCH) asm-generic archheaders
 
 archclean:
 	$(Q)$(MAKE) $(clean)=$(boot)
