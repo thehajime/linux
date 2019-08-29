@@ -2,7 +2,7 @@
 
 config UML_LKL
        def_bool y
-       depends on !SMP && !MMU && !COREDUMP && !SECCOMP && !UPROBES && !COMPAT && !USER_RETURN_NOTIFIER
+       depends on !SMP && !COREDUMP && !COMPAT && !USER_RETURN_NOTIFIER
        select ARCH_THREAD_STACK_ALLOCATOR
        select RWSEM_GENERIC_SPINLOCK
        select GENERIC_ATOMIC64
