@@ -37,10 +37,8 @@ ifneq ($(filter $(SUBARCH),x86 x86_64 i386),)
 	HEADER_ARCH := x86
 endif
 
-ifneq ($(SUBARCH),lkl)
-  ifdef CONFIG_64BIT
-	  KBUILD_CFLAGS += -mcmodel=large
-  endif
+ifdef CONFIG_64BIT
+	KBUILD_CFLAGS += -mcmodel=large
 endif
 
 HOST_DIR := arch/$(HEADER_ARCH)
@@ -51,7 +49,5 @@ include $(HOST_DIR)/Makefile.um
 core-y += $(HOST_DIR)/um/
 
 ifneq ($(SUBARCH),lkl)
-  include $(ARCH_DIR)/Makefile.um
+include $(ARCH_DIR)/Makefile.um
 endif
-
-export HEADER_ARCH SUBARCH
