@@ -34,7 +34,7 @@ endif
 HOST_DIR := arch/$(HEADER_ARCH)
 
 ifneq ($(filter $(HEADER_ARCH),lkl),)
-	HOST_DIR := $(ARCH_DIR)/subarch/$(HEADER_ARCH)
+	HOST_DIR := $(ARCH_DIR)/$(HEADER_ARCH)
 endif
 
 include $(ARCH_DIR)/Makefile-skas
