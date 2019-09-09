@@ -2,6 +2,7 @@
 #include <string.h>
 #include <lkl_host.h>
 #include "virtio.h"
+#include "virtio_net_fd.h"
 #include "endian.h"
 
 #include <lkl/linux/virtio_net.h>
@@ -211,9 +212,21 @@ static struct lkl_mutex **init_queue_locks(int num_queues)
 	return ret;
 }
 
+#ifdef __arch_um__
+static irqreturn_t um_virtio_intr(int irq, void *dev_id)
+{
+	struct virtio_dev *dev = dev_id;
+
+	virtio_process_queue(dev, 0);
+	return 0;
+}
+#endif
+
 int lkl_netdev_add(struct lkl_netdev *nd, struct lkl_netdev_args *args)
 {
 	struct virtio_net_dev *dev;
+	struct lkl_netdev_fd *nd_fd =
+		container_of(nd, struct lkl_netdev_fd, dev);
 	int ret = -LKL_ENOMEM;
 
 	dev = lkl_host_ops.mem_alloc(sizeof(*dev));
@@ -251,16 +264,22 @@ int lkl_netdev_add(struct lkl_netdev *nd, struct lkl_netdev_args *args)
 	if (ret)
 		goto out_free;
 
+#ifdef __arch_um__
+	um_request_irq(dev->dev.irq, nd_fd->fd_rx, IRQ_READ, um_virtio_intr,
+		       IRQF_SHARED, "virtio", dev);
+#endif
+
 	/*
 	 * We may receive upto 64KB TSO packet so collect as many descriptors as
 	 * there are available up to 64KB in total len.
 	 */
 	if (dev->dev.device_features & BIT(LKL_VIRTIO_NET_F_MRG_RXBUF))
 		virtio_set_queue_max_merge_len(&dev->dev, RX_QUEUE_IDX, 65536);
-
+#ifndef __arch_um__
 	dev->poll_tid = lkl_host_ops.thread_create(poll_thread, dev);
 	if (dev->poll_tid == 0)
 		goto out_cleanup_dev;
+#endif
 
 	ret = dev_register(dev);
 	if (ret < 0)
@@ -279,6 +298,7 @@ out_free:
 	return ret;
 }
 
+#ifndef __arch_um__
 /* Return 0 for success, -1 for failure. */
 void lkl_netdev_remove(int id)
 {
@@ -314,6 +334,7 @@ void lkl_netdev_remove(int id)
 	free_queue_locks(dev->queue_locks, NUM_QUEUES);
 	lkl_host_ops.mem_free(dev);
 }
+#endif
 
 void lkl_netdev_free(struct lkl_netdev *nd)
 {

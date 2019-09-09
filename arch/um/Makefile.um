@@ -11,6 +11,8 @@ core-y			+= $(ARCH_DIR)/kernel/		\
 			 $(ARCH_DIR)/drivers/		\
 			 $(ARCH_DIR)/os-$(OS)/
 
+core-y			+= $(srctree)/tools/lkl/lib/
+
 ifdef CONFIG_64BIT
 	KBUILD_CFLAGS += -mcmodel=large
 endif
@@ -51,6 +53,8 @@ KBUILD_CPPFLAGS += -I$(srctree)/$(HOST_DIR)/include \
 		   -I$(srctree)/$(HOST_DIR)/include/uapi \
 		   -I$(objtree)/$(HOST_DIR)/include/generated \
 		   -I$(objtree)/$(HOST_DIR)/include/generated/uapi
+
+KBUILD_CPPFLAGS += -I$(srctree)/$(ARCH_DIR)/lkl/include -I$(srctree)/$(ARCH_DIR)/
 
 # -Derrno=kernel_errno - This turns all kernel references to errno into
 # kernel_errno to separate them from the libc errno.  This allows -fno-common
