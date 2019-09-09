@@ -206,7 +206,7 @@ void lkl_bug(const char *fmt, ...)
 
 	lkl_host_ops.panic();
 }
-
+#ifndef __arch_um__
 int lkl_sysctl(const char *path, const char *value)
 {
 	int ret;
@@ -261,3 +261,4 @@ void lkl_sysctl_parse_write(const char *sysctls)
 		}
 	}
 }
+#endif
