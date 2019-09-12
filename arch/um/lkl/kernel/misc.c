@@ -5,6 +5,7 @@
 #include <asm/ptrace.h>
 #include <asm/host_ops.h>
 
+#ifdef CONFIG_PRINTK
 void dump_stack(void)
 {
 	unsigned long dummy;
@@ -22,6 +23,7 @@ void dump_stack(void)
 	}
 	pr_info("\n");
 }
+#endif
 
 void show_regs(struct pt_regs *regs)
 {
