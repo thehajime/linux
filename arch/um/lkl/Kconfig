@@ -1,4 +1,6 @@
-config LKL
+# SPDX-License-Identifier: GPL-2.0
+
+config UML_LKL
        def_bool y
        depends on !SMP && !MMU && !COREDUMP && !SECCOMP && !UPROBES && !COMPAT && !USER_RETURN_NOTIFIER
        select ARCH_THREAD_STACK_ALLOCATOR
@@ -92,5 +94,3 @@ config CONSOLE_LOGLEVEL_QUIET
 	  When "quiet" is passed on the kernel commandline this loglevel
 	  will be used as the loglevel. IOW passing "quiet" will be the
 	  equivalent of passing "loglevel=<CONSOLE_LOGLEVEL_QUIET>"
-
-
