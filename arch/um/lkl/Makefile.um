@@ -62,6 +62,7 @@ archheaders:
 	$(Q)$(MAKE) -f $(srctree)/Makefile ARCH=$(SRCARCH) asm-generic archheaders
 
 archclean:
+	$(Q)rm -rf $(srctree)/$(HOST_DIR)/include/generated
 	$(Q)$(MAKE) $(clean)=$(boot)
 
 define archhelp
