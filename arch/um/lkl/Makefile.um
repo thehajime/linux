@@ -4,7 +4,7 @@ include $(HOST_DIR)/auto.conf
 
 SRCARCH := um/$(SUBARCH)
 ARCH_INCLUDE += -I$(srctree)/$(HOST_DIR)/um/include
-LINUXINCLUDE := $(subst $(ARCH),$(SRCARCH),$(LINUXINCLUDE)) $(ARCH_INCLUDE)
+LINUXINCLUDE := $(subst $(ARCH_DIR),$(HOST_DIR),$(LINUXINCLUDE)) $(ARCH_INCLUDE)
 KBUILD_CFLAGS += -fno-builtin
 
 ifneq (,$(filter $(OUTPUT_FORMAT),elf64-x86-64 elf32-i386 elf64-x86-64-freebsd elf32-littlearm elf64-littleaarch64))
