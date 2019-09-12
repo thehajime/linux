@@ -20,7 +20,7 @@
  * which irqs were triggered we first search the index and then the
  * corresponding part of the arrary.
  */
-static unsigned long irq_status[NR_IRQS/IRQ_STATUS_BITS];
+static unsigned long irq_status[NR_IRQS / IRQ_STATUS_BITS];
 static unsigned long irq_index_status;
 
 static inline unsigned long test_and_clear_irq_index_status(void)
@@ -143,7 +143,8 @@ int lkl_get_free_irq(const char *user)
 	for (i = 1; i < NR_IRQS; i++) {
 		if (!irqs[i].user) {
 			irqs[i].user = user;
-			irq_set_chip_and_handler(i, &dummy_irq_chip, handle_simple_irq);
+			irq_set_chip_and_handler(i, &dummy_irq_chip,
+						 handle_simple_irq);
 			ret = i;
 			break;
 		}

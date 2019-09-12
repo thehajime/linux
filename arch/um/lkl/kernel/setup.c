@@ -48,8 +48,8 @@ static void __init lkl_run_kernel(void *arg)
 	start_kernel();
 }
 
-int __init lkl_start_kernel(struct lkl_host_operations *ops,
-			const char *fmt, ...)
+int __init lkl_start_kernel(struct lkl_host_operations *ops, const char *fmt,
+			    ...)
 {
 	va_list ap;
 	int ret;
@@ -119,8 +119,11 @@ void machine_restart(char *unused)
 long lkl_sys_halt(void)
 {
 	long err;
-	long params[6] = {LINUX_REBOOT_MAGIC1,
-		LINUX_REBOOT_MAGIC2, LINUX_REBOOT_CMD_RESTART, };
+	long params[6] = {
+		LINUX_REBOOT_MAGIC1,
+		LINUX_REBOOT_MAGIC2,
+		LINUX_REBOOT_CMD_RESTART,
+	};
 
 	err = lkl_syscall(__NR_reboot, params);
 	if (err < 0)
@@ -139,7 +142,6 @@ long lkl_sys_halt(void)
 
 	return 0;
 }
-
 
 static int lkl_run_init(struct linux_binprm *bprm);
 
@@ -173,7 +175,6 @@ static int lkl_run_init(struct linux_binprm *bprm)
 
 	return 0;
 }
-
 
 /* skip mounting the "real" rootfs. ramfs is good enough. */
 static int __init fs_setup(void)

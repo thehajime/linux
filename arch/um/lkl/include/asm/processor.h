@@ -50,9 +50,9 @@ struct thread_struct { };
 
 /* We don't have strict user/kernel spaces */
 #define TASK_SIZE ((unsigned long)-1)
-#define TASK_UNMAPPED_BASE	0
+#define TASK_UNMAPPED_BASE 0
 
-#define KSTK_EIP(tsk)	(0)
-#define KSTK_ESP(tsk)	(0)
+#define KSTK_EIP(tsk) (0)
+#define KSTK_ESP(tsk) (0)
 
 #endif

@@ -88,7 +88,7 @@ struct lkl_host_operations {
 	void (*print)(const char *str, int len);
 	void (*panic)(void);
 
-	struct lkl_sem* (*sem_alloc)(int count);
+	struct lkl_sem *(*sem_alloc)(int count);
 	void (*sem_free)(struct lkl_sem *sem);
 	void (*sem_up)(struct lkl_sem *sem);
 	void (*sem_down)(struct lkl_sem *sem);
@@ -110,16 +110,16 @@ struct lkl_host_operations {
 	int (*tls_set)(struct lkl_tls_key *key, void *data);
 	void *(*tls_get)(struct lkl_tls_key *key);
 
-	void* (*mem_alloc)(unsigned long);
+	void *(*mem_alloc)(unsigned long);
 	void (*mem_free)(void *);
 
 	unsigned long long (*time)(void);
 
-	void* (*timer_alloc)(void (*fn)(void *), void *arg);
+	void *(*timer_alloc)(void (*fn)(void *), void *arg);
 	int (*timer_set_oneshot)(void *timer, unsigned long delta);
 	void (*timer_free)(void *timer);
 
-	void* (*ioremap)(long addr, int size);
+	void *(*ioremap)(long addr, int size);
 	int (*iomem_access)(const volatile void *addr, void *val, int size,
 			    int write);
 
@@ -138,8 +138,8 @@ struct lkl_host_operations {
  * @cmd_line - format for command line string that is going to be used to
  * generate the Linux kernel command line
  */
-int lkl_start_kernel(struct lkl_host_operations *lkl_ops,
-		    const char *cmd_line, ...);
+int lkl_start_kernel(struct lkl_host_operations *lkl_ops, const char *cmd_line,
+		     ...);
 
 /**
  * lkl_is_running - returns 1 if the kernel is currently running

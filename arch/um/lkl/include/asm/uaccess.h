@@ -2,8 +2,8 @@
 #define _ASM_LKL_UACCESS_H
 
 /* copied from old include/asm-generic/uaccess.h */
-static inline __must_check long raw_copy_from_user(void *to,
-		const void __user *from, unsigned long n)
+static inline __must_check long
+raw_copy_from_user(void *to, const void __user *from, unsigned long n)
 {
 	if (__builtin_constant_p(n)) {
 		switch (n) {
@@ -30,8 +30,8 @@ static inline __must_check long raw_copy_from_user(void *to,
 	return 0;
 }
 
-static inline __must_check long raw_copy_to_user(void __user *to,
-		const void *from, unsigned long n)
+static inline __must_check long
+raw_copy_to_user(void __user *to, const void *from, unsigned long n)
 {
 	if (__builtin_constant_p(n)) {
 		switch (n) {
@@ -57,7 +57,6 @@ static inline __must_check long raw_copy_to_user(void __user *to,
 	memcpy((void __force *)to, from, n);
 	return 0;
 }
-
 
 #include <asm-generic/uaccess.h>
 

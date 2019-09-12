@@ -12,4 +12,3 @@
 #define elf_gregset_t long
 #define elf_fpregset_t double
 #endif
-

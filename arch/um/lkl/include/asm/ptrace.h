@@ -11,9 +11,8 @@ struct task_struct;
 #define instruction_pointer(regs) 0
 #define user_stack_pointer(regs) 0
 
-static inline long arch_ptrace(struct task_struct *child,
-			       long request, unsigned long addr,
-			       unsigned long data)
+static inline long arch_ptrace(struct task_struct *child, long request,
+			       unsigned long addr, unsigned long data)
 {
 	return -EINVAL;
 }

@@ -113,10 +113,10 @@ static struct clock_event_device clockevent = {
 };
 
 static struct irqaction irq0  = {
-	.handler = timer_irq_handler,
-	.flags = IRQF_NOBALANCING | IRQF_TIMER,
-	.dev_id = &clockevent,
-	.name = "timer"
+	.handler	= timer_irq_handler,
+	.flags		= IRQF_NOBALANCING | IRQF_TIMER,
+	.dev_id		= &clockevent,
+	.name		= "timer"
 };
 
 void __init time_init(void)
@@ -136,7 +136,8 @@ void __init time_init(void)
 	if (ret)
 		pr_err("lkl: unable to register clocksource\n");
 
-	clockevents_config_and_register(&clockevent, NSEC_PER_SEC, 1, ULONG_MAX);
+	clockevents_config_and_register(&clockevent, NSEC_PER_SEC, 1,
+					ULONG_MAX);
 
 	boot_time = lkl_ops->time();
 	pr_info("lkl: time and timers initialized (irq%d)\n", timer_irq);

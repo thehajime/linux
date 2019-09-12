@@ -33,7 +33,6 @@ unsigned long *alloc_thread_stack_node(struct task_struct *task, int node)
 	}
 	ti->task = task;
 
-
 	return (unsigned long *)ti;
 }
 
@@ -59,7 +58,6 @@ static void kill_thread(struct thread_info *ti)
 		lkl_ops->thread_join(ti->tid);
 	}
 	lkl_ops->sem_free(ti->sched_sem);
-
 }
 
 void free_thread_stack(struct task_struct *tsk)
@@ -213,7 +211,7 @@ void threads_cleanup(void)
 {
 	struct task_struct *p, *t;
 
-	for_each_process_thread(p, t) {
+	for_each_process_thread (p, t) {
 		struct thread_info *ti = task_thread_info(t);
 
 		if (t->pid != 1 && !test_ti_thread_flag(ti, TIF_HOST_THREAD))

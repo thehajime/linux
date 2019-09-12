@@ -7,7 +7,6 @@
 #include <asm/sched.h>
 #include <asm/syscalls.h>
 
-
 /*
  * This structure is used to get access to the "LKL CPU" that allows us to run
  * Linux code. Because we have to deal with various synchronization requirements
@@ -192,7 +191,6 @@ static void lkl_cpu_cleanup(bool shutdown)
 void arch_cpu_idle(void)
 {
 	if (cpu.shutdown_gate >= MAX_THREADS) {
-
 		lkl_ops->mutex_lock(cpu.lock);
 		while (cpu.sleepers--)
 			lkl_ops->sem_up(cpu.sem);

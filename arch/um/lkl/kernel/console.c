@@ -38,4 +38,3 @@ int __init lkl_console_init(void)
 	return 0;
 }
 core_initcall(lkl_console_init);
-

@@ -101,4 +101,3 @@ static inline void __iomem *ioremap(phys_addr_t offset, size_t size)
 #include <asm-generic/io.h>
 
 #endif /* _ASM_LKL_IO_H */
-

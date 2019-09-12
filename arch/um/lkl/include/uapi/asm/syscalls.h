@@ -268,14 +268,14 @@ typedef __kernel_rwf_t		rwf_t;
 long lkl_syscall(long no, long *params);
 long lkl_sys_halt(void);
 
-#define __MAP0(m,...)
-#define __MAP1(m,t,a) m(t,a)
-#define __MAP2(m,t,a,...) m(t,a), __MAP1(m,__VA_ARGS__)
-#define __MAP3(m,t,a,...) m(t,a), __MAP2(m,__VA_ARGS__)
-#define __MAP4(m,t,a,...) m(t,a), __MAP3(m,__VA_ARGS__)
-#define __MAP5(m,t,a,...) m(t,a), __MAP4(m,__VA_ARGS__)
-#define __MAP6(m,t,a,...) m(t,a), __MAP5(m,__VA_ARGS__)
-#define __MAP(n,...) __MAP##n(__VA_ARGS__)
+#define __MAP0(m, ...)
+#define __MAP1(m, t, a) m(t, a)
+#define __MAP2(m, t, a, ...) m(t, a), __MAP1(m, __VA_ARGS__)
+#define __MAP3(m, t, a, ...) m(t, a), __MAP2(m, __VA_ARGS__)
+#define __MAP4(m, t, a, ...) m(t, a), __MAP3(m, __VA_ARGS__)
+#define __MAP5(m, t, a, ...) m(t, a), __MAP4(m, __VA_ARGS__)
+#define __MAP6(m, t, a, ...) m(t, a), __MAP5(m, __VA_ARGS__)
+#define __MAP(n, ...) __MAP##n(__VA_ARGS__)
 
 #define __SC_LONG(t, a) (long)a
 #define __SC_TABLE(t, a) {sizeof(t), (long long)(a)}

@@ -25,7 +25,7 @@ typedef long (*syscall_handler_t)(long arg1, ...);
 #define __SYSCALL(nr, sym) [nr] = (syscall_handler_t)sym,
 
 syscall_handler_t syscall_table[__NR_syscalls] = {
-	[0 ... __NR_syscalls - 1] =  (syscall_handler_t)sys_ni_syscall,
+	[0 ... __NR_syscalls - 1] = (syscall_handler_t)sys_ni_syscall,
 #include <asm/unistd.h>
 
 #if __BITS_PER_LONG == 32
@@ -200,33 +200,39 @@ SYSCALL_DEFINE3(virtio_mmio_device_add, long, base, long, size, unsigned int,
 	int ret;
 
 	struct resource res[] = {
-		[0] = {
-		       .start = base,
-		       .end = base + size - 1,
-		       .flags = IORESOURCE_MEM,
-		       },
-		[1] = {
-		       .start = irq,
-		       .end = irq,
-		       .flags = IORESOURCE_IRQ,
-		       },
+		[0] =
+			{
+				.start = base,
+				.end = base + size - 1,
+				.flags = IORESOURCE_MEM,
+			},
+		[1] =
+			{
+				.start = irq,
+				.end = irq,
+				.flags = IORESOURCE_IRQ,
+			},
 	};
 
 	pdev = platform_device_alloc("virtio-mmio", PLATFORM_DEVID_AUTO);
 	if (!pdev) {
-		dev_err(&pdev->dev, "%s: Unable to device alloc for virtio-mmio\n", __func__);
+		dev_err(&pdev->dev,
+			"%s: Unable to device alloc for virtio-mmio\n",
+			__func__);
 		return -ENOMEM;
 	}
 
 	ret = platform_device_add_resources(pdev, res, ARRAY_SIZE(res));
 	if (ret) {
-		dev_err(&pdev->dev, "%s: Unable to add resources for %s%d\n", __func__, pdev->name, pdev->id);
+		dev_err(&pdev->dev, "%s: Unable to add resources for %s%d\n",
+			__func__, pdev->name, pdev->id);
 		goto exit_device_put;
 	}
 
 	ret = platform_device_add(pdev);
 	if (ret < 0) {
-		dev_err(&pdev->dev, "%s: Unable to add %s%d\n", __func__, pdev->name, pdev->id);
+		dev_err(&pdev->dev, "%s: Unable to add %s%d\n", __func__,
+			pdev->name, pdev->id);
 		goto exit_release_pdev;
 	}
 
