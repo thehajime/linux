@@ -20,7 +20,7 @@ static int is_running;
 void (*pm_power_off)(void) = NULL;
 static unsigned long mem_size = 64 * 1024 * 1024;
 
-long lkl_panic_blink(int state)
+static long lkl_panic_blink(int state)
 {
 	lkl_ops->panic();
 	return 0;
@@ -166,7 +166,7 @@ static int lkl_run_init(struct linux_binprm *bprm)
 
 	set_binfmt(&lkl_run_init_binfmt);
 
-	init_pid_ns.child_reaper = 0;
+	init_pid_ns.child_reaper = NULL;
 
 	syscalls_init();
 

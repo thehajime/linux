@@ -16,7 +16,7 @@
  * mutex or semaphore. Instead, we use a mutex and a bunch of status data plus a
  * semaphore.
  */
-struct lkl_cpu {
+static struct lkl_cpu {
 	/* lock that protects the CPU status data */
 	struct lkl_mutex *lock;
 	/*

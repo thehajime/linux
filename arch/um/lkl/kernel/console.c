@@ -32,7 +32,7 @@ static struct console lkl_console = {
 	.index	= -1,
 };
 
-int __init lkl_console_init(void)
+static int __init lkl_console_init(void)
 {
 	register_console(&lkl_console);
 	return 0;

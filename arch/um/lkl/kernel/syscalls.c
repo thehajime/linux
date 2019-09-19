@@ -24,7 +24,7 @@ typedef long (*syscall_handler_t)(long arg1, ...);
 #undef __SYSCALL
 #define __SYSCALL(nr, sym) [nr] = (syscall_handler_t)sym,
 
-syscall_handler_t syscall_table[__NR_syscalls] = {
+static syscall_handler_t syscall_table[__NR_syscalls] = {
 	[0 ... __NR_syscalls - 1] = (syscall_handler_t)sys_ni_syscall,
 #include <asm/unistd.h>
 
