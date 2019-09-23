@@ -3,9 +3,9 @@ USER_CFLAGS += -I$(srctree)/tools/lkl/include \
 		-Wno-strict-prototypes -Wno-undef \
 		-Wframe-larger-than=20480 -O0 -g
 
-USER_OBJS += fs.o iomem.o net.o jmp_buf.o virtio.o virtio_net.o \
+USER_OBJS += iomem.o jmp_buf.o virtio.o virtio_net.o \
 	 virtio_net_fd.o virtio_net_tap.o utils.o posix-host.o \
-	../../perf/pmu-events/jsmn.o
+	 virtio_blk.o ../../perf/pmu-events/jsmn.o
 
 #obj-y += fs.o
 obj-y += iomem.o
@@ -14,7 +14,7 @@ obj-y += jmp_buf.o
 obj-y += posix-host.o
 #obj-$(LKL_HOST_CONFIG_NT) += nt-host.o
 obj-y += utils.o
-#obj-y += virtio_blk.o
+obj-y += virtio_blk.o
 obj-y += virtio.o
 #obj-y += dbg.o
 #obj-y += dbg_handler.o
