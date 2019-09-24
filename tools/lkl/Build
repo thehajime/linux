@@ -1,0 +1,2 @@
+cptofs-$(LKL_HOST_CONFIG_ARCHIVE) += cptofs.o
+
