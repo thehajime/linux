@@ -10,3 +10,4 @@ tests/valgrind*.xml
 cptofs
 cpfromfs
 fs2tar
+lklfuse

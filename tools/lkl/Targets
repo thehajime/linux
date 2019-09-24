@@ -12,3 +12,6 @@ LDLIBS_cptofs-$(LKL_HOST_CONFIG_NEEDS_LARGP) += -largp
 progs-$(LKL_HOST_CONFIG_ARCHIVE) += fs2tar
 LDLIBS_fs2tar-y := -larchive
 LDLIBS_fs2tar-$(LKL_HOST_CONFIG_NEEDS_LARGP) += -largp
+
+progs-$(LKL_HOST_CONFIG_FUSE) += lklfuse
+LDLIBS_lklfuse-y := -lfuse
