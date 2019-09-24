@@ -4,3 +4,6 @@ progs-y += tests/boot
 progs-y += tests/disk
 progs-y += tests/net-test
 
+progs-$(LKL_HOST_CONFIG_ARCHIVE) += cptofs
+LDLIBS_cptofs-y := -larchive
+LDLIBS_cptofs-$(LKL_HOST_CONFIG_NEEDS_LARGP) += -largp
