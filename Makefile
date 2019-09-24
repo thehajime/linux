@@ -605,6 +605,7 @@ endif
 export KBUILD_MODULES KBUILD_BUILTIN
 
 ifeq ($(dot-config),1)
+include arch/$(SRCARCH)/auto.conf
 include include/config/auto.conf
 endif
 
