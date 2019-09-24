@@ -36,6 +36,15 @@ struct lkl_jmp_buf {
  * @thread_join - wait for the given thread to terminate. Returns 0
  * for success, -1 otherwise
  *
+ * @tls_alloc - allocate a thread local storage key; returns 0 if successful; if
+ * destructor is not NULL it will be called when a thread terminates with its
+ * argument set to the current thread local storage value
+ * @tls_free - frees a thread local storage key; returns 0 if successful
+ * @tls_set - associate data to the thread local storage key; returns 0 if
+ * successful
+ * @tls_get - return data associated with the thread local storage key or NULL
+ * on error
+ *
  * @mem_alloc - allocate memory
  * @mem_free - free memory
  *
@@ -70,6 +79,11 @@ struct lkl_host_operations {
 	int (*thread_join)(lkl_thread_t tid);
 	lkl_thread_t (*thread_self)(void);
 	int (*thread_equal)(lkl_thread_t a, lkl_thread_t b);
+
+	struct lkl_tls_key *(*tls_alloc)(void (*destructor)(void *));
+	void (*tls_free)(struct lkl_tls_key *key);
+	int (*tls_set)(struct lkl_tls_key *key, void *data);
+	void *(*tls_get)(struct lkl_tls_key *key);
 
 	void *(*mem_alloc)(unsigned long mem);
 	void (*mem_free)(void *mem);
