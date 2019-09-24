@@ -9,3 +9,4 @@ tests/valgrind*.xml
 *.pyc
 cptofs
 cpfromfs
+fs2tar
