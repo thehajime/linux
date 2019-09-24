@@ -7,3 +7,5 @@ tests/disk
 tests/boot
 tests/valgrind*.xml
 *.pyc
+cptofs
+cpfromfs
