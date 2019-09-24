@@ -63,6 +63,12 @@ struct lkl_jmp_buf {
  * @timer_set_periodic - arm the timer to fire periodically, with a period of
  * delta ns.
  *
+ * @ioremap - searches for an I/O memory region identified by addr and size and
+ * returns a pointer to the start of the address range that can be used by
+ * iomem_access
+ * @iomem_access - reads or writes to and I/O memory region; addr must be in the
+ * range returned by ioremap
+ *
  * @gettid - returns the host thread id of the caller, which need not
  * be the same as the handle returned by thread_create
  *
@@ -113,6 +119,10 @@ struct lkl_host_operations {
 	void *(*timer_alloc)(void (*fn)(void *), void *arg);
 	int (*timer_set_oneshot)(void *timer, unsigned long delta);
 	void (*timer_free)(void *timer);
+
+	void *(*ioremap)(long addr, int size);
+	int (*iomem_access)(const volatile void *addr, void *val, int size,
+			    int write);
 
 	long (*gettid)(void);
 
