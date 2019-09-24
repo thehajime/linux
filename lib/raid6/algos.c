@@ -18,6 +18,7 @@
 #else
 #include <linux/module.h>
 #include <linux/gfp.h>
+#include <linux/cpu.h>
 #if !RAID6_USE_EMPTY_ZERO_PAGE
 /* In .bss so it's zeroed */
 const char raid6_empty_zero_page[PAGE_SIZE] __attribute__((aligned(256)));
@@ -29,7 +30,7 @@ struct raid6_calls raid6_call;
 EXPORT_SYMBOL_GPL(raid6_call);
 
 const struct raid6_calls * const raid6_algos[] = {
-#if defined(__i386__) && !defined(__arch_um__)
+#ifdef CONFIG_X86_32
 #ifdef CONFIG_AS_AVX512
 	&raid6_avx512x2,
 	&raid6_avx512x1,
@@ -45,7 +46,7 @@ const struct raid6_calls * const raid6_algos[] = {
 	&raid6_mmxx2,
 	&raid6_mmxx1,
 #endif
-#if defined(__x86_64__) && !defined(__arch_um__)
+#ifdef CONFIG_X86_64
 #ifdef CONFIG_AS_AVX512
 	&raid6_avx512x4,
 	&raid6_avx512x2,
@@ -79,7 +80,7 @@ const struct raid6_calls * const raid6_algos[] = {
 	&raid6_neonx2,
 	&raid6_neonx1,
 #endif
-#if defined(__ia64__)
+#ifdef CONFIG_IA64
 	&raid6_intx32,
 	&raid6_intx16,
 #endif
@@ -173,6 +174,7 @@ static inline const struct raid6_calls *raid6_choose_gen(
 					    j1 + (1<<RAID6_TIME_JIFFIES_LG2))) {
 				(*algo)->gen_syndrome(disks, PAGE_SIZE, *dptrs);
 				perf++;
+				cpu_yield_to_irqs();
 			}
 			preempt_enable();
 
@@ -197,6 +199,7 @@ static inline const struct raid6_calls *raid6_choose_gen(
 				(*algo)->xor_syndrome(disks, start, stop,
 						      PAGE_SIZE, *dptrs);
 				perf++;
+				cpu_yield_to_irqs();
 			}
 			preempt_enable();
 

@@ -14,6 +14,7 @@
 #include <linux/raid/xor.h>
 #include <linux/jiffies.h>
 #include <linux/preempt.h>
+#include <linux/cpu.h>
 #include <asm/xor.h>
 
 #ifndef XOR_SELECT_TEMPLATE
@@ -85,6 +86,7 @@ do_xor_speed(struct xor_block_template *tmpl, void *b1, void *b2)
 			mb();
 			count++;
 			mb();
+			cpu_yield_to_irqs();
 		}
 		if (count > max)
 			max = count;

@@ -2339,6 +2339,11 @@ void __init boot_cpu_hotplug_init(void)
 	this_cpu_write(cpuhp_state.state, CPUHP_ONLINE);
 }
 
+void __weak cpu_yield_to_irqs(void)
+{
+}
+EXPORT_SYMBOL(cpu_yield_to_irqs);
+
 enum cpu_mitigations cpu_mitigations __ro_after_init = CPU_MITIGATIONS_AUTO;
 
 static int __init mitigations_parse_cmdline(char *arg)
