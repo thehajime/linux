@@ -204,7 +204,11 @@ int socket(int domain, int type, int protocol)
 }
 
 HOST_CALL(ioctl);
+#ifdef __ANDROID__
+int ioctl(int fd, int req, ...)
+#else
 int ioctl(int fd, unsigned long req, ...)
+#endif
 {
 	va_list vl;
 	long arg;
@@ -589,6 +593,15 @@ void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset)
 		return (void *)host_mmap(addr, length, prot, flags, fd, offset);
 	return lkl_sys_mmap(addr, length, prot, flags, fd, offset);
 }
+
+#ifndef __ANDROID__
+HOST_CALL(__xstat64)
+int stat(const char *pathname, struct stat *buf)
+{
+	CHECK_HOST_CALL(__xstat64);
+	return host___xstat64(0, pathname, buf);
+}
+#endif
 
 ssize_t send(int fd, const void *buf, size_t len, int flags)
 {

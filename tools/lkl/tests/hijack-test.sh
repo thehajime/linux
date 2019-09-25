@@ -15,7 +15,11 @@ set_cfgjson()
 {
     cfgjson=${wdir}/hijack-test$1.conf
 
-    cat > ${cfgjson}
+    if [ -n "$LKL_HOST_CONFIG_ANDROID" ]; then
+        adb shell cat \> ${cfgjson}
+    else
+        cat > ${cfgjson}
+    fi
 
     export_vars cfgjson
 }
@@ -53,6 +57,11 @@ test_ping6()
 test_mount_and_dump()
 {
     set -e
+
+    if [ -n "$LKL_HOST_CONFIG_ANDROID" ]; then
+        echo "TODO: android-23 doesn't call destructor..."
+        return $TEST_SKIP
+    fi
 
     set_cfgjson << EOF
     {
@@ -377,6 +386,10 @@ test_tap_qdisc()
 {
     set -e
 
+    if [ -n "$LKL_HOST_CONFIG_ANDROID" ]; then
+        return $TEST_SKIP
+    fi
+
     set_cfgjson << EOF
     {
         "gateway":"$(ip_host)",
@@ -655,15 +668,25 @@ if [[ ! -e ${base_objdir}/lib/hijack/liblkl-hijack.so ]]; then
     exit 0
 fi
 
-# Make a temporary directory to run tests in, since we'll be copying
-# things there.
-wdir=$(mktemp -d)
-cp `which ping` ${wdir}
-cp `which ping6` ${wdir}
-ping=${wdir}/ping
-ping6=${wdir}/ping6
-hijack=$basedir/bin/lkl-hijack.sh
-netperf=$basedir/tests/run_netperf.sh
+if [ -n "$LKL_HOST_CONFIG_ANDROID" ]; then
+    wdir=$ANDROID_WDIR
+    adb_push lib/hijack/liblkl-hijack.so bin/lkl-hijack.sh tests/net-setup.sh \
+             tests/run_netperf.sh tests/hijack-test.sh
+    ping="ping"
+    ping6="ping6"
+    hijack="$wdir/bin/lkl-hijack.sh"
+    netperf="$wdir/tests/run_netperf.sh"
+else
+    # Make a temporary directory to run tests in, since we'll be copying
+    # things there.
+    wdir=$(mktemp -d)
+    cp `which ping` ${wdir}
+    cp `which ping6` ${wdir}
+    ping=${wdir}/ping
+    ping6=${wdir}/ping6
+    hijack=$basedir/bin/lkl-hijack.sh
+    netperf=$basedir/tests/run_netperf.sh
+fi
 
 fifo1=${wdir}/fifo1
 fifo2=${wdir}/fifo2

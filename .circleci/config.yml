@@ -42,13 +42,29 @@ do_steps: &do_steps
           wget https://github.com/lkl/linux/raw/master/tools/lkl/bin/i686-w64-mingw32-ld
           wget https://github.com/lkl/linux/raw/master/tools/lkl/bin/i686-w64-mingw32-objcopy
           sudo cp i686-w64-mingw32-* /usr/bin;
+        elif [ "$CROSS_COMPILE" = "arm-linux-androideabi-" ]; then
+          wget https://github.com/lkl/linux/raw/master/tools/lkl/bin/arm-linux-androideabi-ld.gold
+          sudo cp arm-linux-androideabi-ld.gold /usr/bin/arm-linux-androideabi-ld;
         fi
+  - run:
+      name: start emulator
+      command: |
+        if [[ $CROSS_COMPILE == *android* ]]; then
+          emulator -avd Nexus5_API24 -no-window -no-audio -no-boot-anim;
+        fi
+      background: true
   - run: cd tools/lkl && make -j8 ${MKARG}
   - run: mkdir -p ~/destdir && cd tools/lkl && make DESTDIR=~/destdir
   - save_cache:
      paths:
        - /home/ubuntu/.ccache
      key: compiler-cache-{{ checksum "~/_cross_compile" }}-{{ .Environment.CACHE_VERSION }}-{{ epoch }}
+  - run:
+      name: wait emulator to boot
+      command: |
+        if [[ $CROSS_COMPILE == *android* ]]; then
+          /home/ubuntu/circle-android.sh wait-for-boot;
+        fi
   - run:
       name: run tests
       command: |
@@ -140,6 +156,24 @@ jobs:
      CROSS_COMPILE: "i686-w64-mingw32-"
    <<: *do_steps
 
+  android-arm32:
+   docker:
+     - image: lkldocker/circleci-android-arm32:0.6
+   environment:
+     CROSS_COMPILE: "arm-linux-androideabi-"
+     LKL_ANDROID_TEST: 1
+     ANDROID_SDK_ROOT: /home/ubuntu/android-sdk
+   <<: *do_steps
+
+  android-aarch64:
+   docker:
+     - image: lkldocker/circleci-android-arm64:0.6
+   environment:
+     CROSS_COMPILE: "aarch64-linux-android-"
+     LKL_ANDROID_TEST: 1
+     ANDROID_SDK_ROOT: /home/ubuntu/android-sdk
+   <<: *do_steps
+
   x86_64_valgrind:
    docker:
      - image: lkldocker/circleci-x86_64:0.7
@@ -198,6 +232,8 @@ workflows:
      - x86_64
      - x86_64_valgrind
      - mingw32
+     - android-arm32
+     - android-aarch64
      - checkpatch
      - i386
      - x86_64_uml

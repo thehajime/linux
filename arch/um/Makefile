@@ -36,7 +36,7 @@ ifneq ($(filter $(SUBARCH),x86 x86_64 i386),)
 	HEADER_ARCH := x86
 endif
 
-ifdef CONFIG_64BIT
+ifdef CONFIG_X86_64
 	KBUILD_CFLAGS += -mcmodel=large
 endif
 
