@@ -103,6 +103,19 @@ lkl_test_exec()
 
     if file $file | grep PE32; then
         WRAPPER="wine"
+    elif file $file | grep "interpreter /system/bin/linker" ; then
+        adb push "$file" $ANDROID_WDIR
+        if [ -n "$SUDO" ]; then
+            ANDROID_USER=root
+            SUDO=""
+        fi
+        if [ -n "$ANDROID_USER" ]; then
+            SU="su $ANDROID_USER"
+        else
+            SU=""
+        fi
+        WRAPPER="adb shell $SU"
+        file=$ANDROID_WDIR/$(basename $file)
     elif file $file | grep ARM; then
         WRAPPER="qemu-arm-static"
     elif file $file | grep "FreeBSD" ; then
@@ -137,11 +150,46 @@ lkl_test_cmd()
         SHOPTS="-x"
     fi
 
-    if [ -n "$LKL_HOST_CONFIG_BSD" ]; then
+    if [ -n "$LKL_HOST_CONFIG_ANDROID" ]; then
+        if [ "$1" = "sudo" ]; then
+            ANDROID_USER=root
+            shift
+        fi
+        if [ -n "$ANDROID_USER" ]; then
+            SU="su $ANDROID_USER"
+        else
+            SU=""
+        fi
+        WRAPPER="adb shell $SU"
+    elif [ -n "$LKL_HOST_CONFIG_BSD" ]; then
         WRAPPER="$MYSSH $SU"
     fi
 
     echo "$@" | $WRAPPER sh $SHOPTS
+}
+
+adb_push()
+{
+    while [ -n "$1" ]; do
+        if [[ "$1" = *.sh ]]; then
+            type="script"
+        else
+            type="file"
+        fi
+
+        dir=$(dirname $1)
+        adb shell mkdir -p $ANDROID_WDIR/$dir
+
+        if [ "$type" = "script" ]; then
+            sed "s/\/usr\/bin\/env bash/\/system\/bin\/sh/" $basedir/$1 | \
+                adb shell cat \> $ANDROID_WDIR/$1
+            adb shell chmod a+x $ANDROID_WDIR/$1
+        else
+            adb push $basedir/$1 $ANDROID_WDIR/$dir
+        fi
+
+        shift
+    done
 }
 
 # XXX: $MYSSH and $MYSCP are defined in a circleci docker image.
@@ -172,10 +220,21 @@ ssh_copy()
     $MYSCP -P 7722 -r $1 root@localhost:$2
 }
 
+lkl_test_android_cleanup()
+{
+    adb shell rm -rf $ANDROID_WDIR
+}
+
 lkl_test_bsd_cleanup()
 {
     $MYSSH rm -rf $BSD_WDIR
 }
+
+if [ -n "$LKL_HOST_CONFIG_ANDROID" ]; then
+    trap lkl_test_android_cleanup EXIT
+    export ANDROID_WDIR=/data/local/tmp/lkl
+    adb shell mkdir -p $ANDROID_WDIR
+fi
 
 if [ -n "$LKL_HOST_CONFIG_BSD" ]; then
     trap lkl_test_bsd_cleanup EXIT

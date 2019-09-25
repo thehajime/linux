@@ -15,6 +15,12 @@ function prepfs()
 
     yes | mkfs.$1 $file
 
+    if ! [ -z $ANDROID_WDIR ]; then
+        adb shell mkdir -p $ANDROID_WDIR
+        adb push $file $ANDROID_WDIR
+        rm $file
+        file=$ANDROID_WDIR/$(basename $file)
+    fi
     if ! [ -z $BSD_WDIR ]; then
         $MYSSH mkdir -p $BSD_WDIR
         ssh_copy $file $BSD_WDIR
@@ -29,7 +35,10 @@ function cleanfs()
 {
     set -e
 
-    if ! [ -z $BSD_WDIR ]; then
+    if ! [ -z $ANDROID_WDIR ]; then
+        adb shell rm $1
+        adb shell rm $ANDROID_WDIR/disk
+    elif ! [ -z $BSD_WDIR ]; then
         $MYSSH rm $1
         $MYSSH rm $BSD_WDIR/disk
     else
