@@ -19,7 +19,9 @@
 #include <stdbool.h>
 #include <errno.h>
 #include "modpost.h"
+#include "../../include/generated/autoconf.h"
 #include "../../include/linux/license.h"
+#include "../../include/linux/export.h"
 
 /* Are we using CONFIG_MODVERSIONS? */
 static int modversions = 0;
@@ -588,7 +590,7 @@ static void parse_elf_finish(struct elf_info *info)
 static int ignore_undef_symbol(struct elf_info *info, const char *symname)
 {
 	/* ignore __this_module, it will be resolved shortly */
-	if (strcmp(symname, "__this_module") == 0)
+	if (strcmp(symname, VMLINUX_SYMBOL_STR(__this_module)) == 0)
 		return 1;
 	/* ignore global offset table */
 	if (strcmp(symname, "_GLOBAL_OFFSET_TABLE_") == 0)
@@ -614,6 +616,9 @@ static int ignore_undef_symbol(struct elf_info *info, const char *symname)
 	return 0;
 }
 
+#define CRC_PFX     VMLINUX_SYMBOL_STR(__crc_)
+#define KSYMTAB_PFX VMLINUX_SYMBOL_STR(__ksymtab_)
+
 static void handle_modversions(struct module *mod, struct elf_info *info,
 			       Elf_Sym *sym, const char *symname)
 {
@@ -628,7 +633,7 @@ static void handle_modversions(struct module *mod, struct elf_info *info,
 		export = export_from_sec(info, get_secindex(info, sym));
 
 	/* CRC'd symbol */
-	if (strstarts(symname, "__crc_")) {
+	if (strstarts(symname, CRC_PFX)) {
 		is_crc = true;
 		crc = (unsigned int) sym->st_value;
 		if (sym->st_shndx != SHN_UNDEF && sym->st_shndx != SHN_ABS) {
@@ -641,7 +646,7 @@ static void handle_modversions(struct module *mod, struct elf_info *info,
 				info->sechdrs[sym->st_shndx].sh_addr : 0);
 			crc = TO_NATIVE(*crcp);
 		}
-		sym_update_crc(symname + strlen("__crc_"), mod, crc,
+		sym_update_crc(symname + strlen(CRC_PFX), mod, crc,
 				export);
 	}
 
@@ -679,10 +684,15 @@ static void handle_modversions(struct module *mod, struct elf_info *info,
 		}
 #endif
 
+#ifdef CONFIG_HAVE_UNDERSCORE_SYMBOL_PREFIX
+		if (symname[0] != '_')
+			break;
+		else
+			symname++;
+#endif
 		if (is_crc) {
 			const char *e = is_vmlinux(mod->name) ?"":".ko";
-			warn("EXPORT symbol \"%s\" [%s%s] version generation failed, symbol will not be versioned.\n",
-			     symname + strlen("__crc_"), mod->name, e);
+			warn("EXPORT symbol \"%s\" [%s%s] version generation failed, symbol will not be versioned.\n", symname + strlen(CRC_PFX), mod->name, e);
 		}
 		mod->unres = alloc_symbol(symname,
 					  ELF_ST_BIND(sym->st_info) == STB_WEAK,
@@ -690,13 +700,13 @@ static void handle_modversions(struct module *mod, struct elf_info *info,
 		break;
 	default:
 		/* All exported symbols */
-		if (strstarts(symname, "__ksymtab_")) {
-			sym_add_exported(symname + strlen("__ksymtab_"), mod,
+		if (strstarts(symname, KSYMTAB_PFX)) {
+			sym_add_exported(symname + strlen(KSYMTAB_PFX), mod,
 					export);
 		}
-		if (strcmp(symname, "init_module") == 0)
+		if (strcmp(symname, VMLINUX_SYMBOL_STR(init_module)) == 0)
 			mod->has_init = 1;
-		if (strcmp(symname, "cleanup_module") == 0)
+		if (strcmp(symname, VMLINUX_SYMBOL_STR(cleanup_module)) == 0)
 			mod->has_cleanup = 1;
 		break;
 	}
@@ -2230,7 +2240,7 @@ static int add_versions(struct buffer *b, struct module *mod)
 			err = 1;
 			break;
 		}
-		buf_printf(b, "\t{ %#8x, \"%s\" },\n",
+		buf_printf(b, "\t{ %#8x, __VMLINUX_SYMBOL_STR(%s) },\n",
 			   s->crc, s->name);
 	}
 
