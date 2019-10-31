@@ -2,3 +2,8 @@ Makefile.conf
 include/lkl_autoconf.h
 tests/autoconf.sh
 bin/stat
+tests/net-test
+tests/disk
+tests/boot
+tests/valgrind*.xml
+*.pyc
