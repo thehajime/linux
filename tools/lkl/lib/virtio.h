@@ -87,6 +87,28 @@ void virtio_req_complete(struct virtio_req *req, uint32_t len);
 void virtio_process_queue(struct virtio_dev *dev, uint32_t qidx);
 void virtio_set_queue_max_merge_len(struct virtio_dev *dev, int q, int len);
 
+#ifdef __arch_um__
+//#include <irq_kern.h>
+#include <irq_user.h>
+enum irqreturn {
+	IRQ_HANDLED		= (1 << 0),
+	IRQ_WAKE_THREAD		= (1 << 1),
+};
+
+typedef enum irqreturn irqreturn_t;
+typedef irqreturn_t (*irq_handler_t)(int, void *);
+
+#define IRQF_SHARED		0x00000080
+
+extern int um_request_irq(unsigned int irq, int fd, int type,
+			  irq_handler_t handler,
+			  unsigned long irqflags,  const char *devname,
+			  void *dev_id);
+
+long sys_virtio_mmio_device_add(long base, long size, unsigned int irq);
+#define lkl_sys_virtio_mmio_device_add sys_virtio_mmio_device_add
+#endif /* __arch_um__ */
+
 #define container_of(ptr, type, member) \
 	(type *)((char *)(ptr) - __builtin_offsetof(type, member))
 

@@ -306,10 +306,12 @@ static void timer_free(void *_timer)
 	timer_delete(timer);
 }
 
+#ifndef __arch_um__
 static void panic(void)
 {
 	assert(0);
 }
+#endif
 
 static long _gettid(void)
 {
@@ -321,7 +323,9 @@ static long _gettid(void)
 }
 
 struct lkl_host_operations lkl_host_ops = {
+#ifndef __arch_um__
 	.panic = panic,
+#endif
 	.thread_create = thread_create,
 	.thread_detach = thread_detach,
 	.thread_exit = thread_exit,

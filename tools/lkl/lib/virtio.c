@@ -46,6 +46,12 @@
 		lkl_host_ops.panic();					\
 	} while (0)
 
+#ifdef __arch_um__
+extern unsigned long uml_physmem;
+#else
+static unsigned long uml_physmem;
+#endif
+
 struct virtio_queue {
 	uint32_t num_max;
 	uint32_t num;
@@ -216,7 +222,8 @@ static void add_dev_buf_from_vring_desc(struct virtio_req *req,
 {
 	struct iovec *buf = &req->buf[req->buf_count++];
 
-	buf->iov_base = (void *)(uintptr_t)le64toh(vring_desc->addr);
+	buf->iov_base = (void *)(uintptr_t)le64toh(vring_desc->addr)
+		+ uml_physmem;
 	buf->iov_len = le32toh(vring_desc->len);
 
 	if (!(buf->iov_base && buf->iov_len))
@@ -304,8 +311,10 @@ void virtio_process_queue(struct virtio_dev *dev, uint32_t qidx)
 	if (!q->ready)
 		return;
 
+#ifndef __arch_um__
 	if (dev->ops->acquire_queue)
 		dev->ops->acquire_queue(dev, qidx);
+#endif
 
 	while (q->last_avail_idx != le16toh(q->avail->idx)) {
 		/*
@@ -319,8 +328,10 @@ void virtio_process_queue(struct virtio_dev *dev, uint32_t qidx)
 			virtio_set_avail_event(q, q->avail->idx);
 	}
 
+#ifndef __arch_um__
 	if (dev->ops->release_queue)
 		dev->ops->release_queue(dev, qidx);
+#endif
 }
 
 static inline uint32_t virtio_read_device_features(struct virtio_dev *dev)
@@ -406,7 +417,7 @@ static inline void set_ptr_low(void **ptr, uint32_t val)
 	uint64_t tmp = (uintptr_t)*ptr;
 
 	tmp = (tmp & 0xFFFFFFFF00000000) | val;
-	*ptr = (void *)(long)tmp;
+	*ptr = (void *)(long)tmp + uml_physmem;
 }
 
 static inline void set_ptr_high(void **ptr, uint32_t val)
@@ -579,6 +590,7 @@ int virtio_dev_setup(struct virtio_dev *dev, int queues, int num_max)
 
 int virtio_dev_cleanup(struct virtio_dev *dev)
 {
+#ifndef __arch_um__
 	char devname[100];
 	long fd, ret;
 	long mount_ret;
@@ -622,6 +634,7 @@ skip_unbind:
 	lkl_put_irq(dev->irq, "virtio");
 	unregister_iomem(dev->base);
 	lkl_host_ops.mem_free(dev->queue);
+#endif
 	return 0;
 }
 

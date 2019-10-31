@@ -147,3 +147,6 @@ archclean:
 		-o -name '*.gcov' \) -type f -print | xargs rm -f
 
 export HEADER_ARCH SUBARCH USER_CFLAGS CFLAGS_NO_HARDENING OS DEV_NULL_PATH
+
+core-y		       += $(srctree)/tools/lkl/lib/
+KBUILD_CPPFLAGS += -I$(srctree)/$(ARCH_DIR)/lkl/include -I$(srctree)/$(ARCH_DIR)/
