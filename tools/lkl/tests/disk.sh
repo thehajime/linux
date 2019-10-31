@@ -53,9 +53,16 @@ if [ -z $(which mkfs.$fstype) ]; then
     exit 0
 fi
 
-lkl_test_plan 1 "disk $fstype"
-lkl_test_run 1 prepfs $fstype
-lkl_test_exec $script_dir/disk -d $file -t $fstype $@
-lkl_test_plan 1 "disk $fstype"
-lkl_test_run 1 cleanfs $file
+if [ -n "$LKL_HOST_CONFIG_UML_DEV" ]; then
+    lkl_test_plan 1 "disk $fstype"
+    lkl_test_run 1 prepfs $fstype
+    lkl_test_exec $script_dir/disk -d $file -t $fstype $@
+    lkl_test_plan 1 "disk $fstype"
+    lkl_test_run 1 cleanfs $file
+fi
 
+lkl_test_plan 1 "disk $fstype-virtio"
+lkl_test_run 1 prepfs $fstype
+lkl_test_exec $script_dir/disk -d $file -t $fstype -b virtio $@
+lkl_test_plan 1 "disk $fstype-virtio"
+lkl_test_run 1 cleanfs $file

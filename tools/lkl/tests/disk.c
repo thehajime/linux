@@ -26,7 +26,7 @@ static struct {
 	int backend;
 } cla;
 
-const char *backends[] = { "um", NULL };
+const char *backends[] = { "um", "virtio", NULL };
 
 struct cl_arg args[] = {
 	{"disk", 'd', "disk file to use", 1, CL_ARG_STR, &cla.disk},
