@@ -357,6 +357,7 @@ struct lkl_dev_blk_ops;
 
 enum {
 	BLK_BACKEND_UM,
+	BLK_BACKEND_VIRTIO,
 };
 
 /**
@@ -408,6 +409,20 @@ int lkl_disk_remove(struct lkl_disk disk);
  */
 int lkl_encode_dev_from_sysfs(const char *sysfs_path, uint32_t *pdevid);
 
+/**
+ * lkl_get_virtio_blkdev - get device id of a disk (partition)
+ *
+ * This function returns the device id for the given disk.
+ *
+ * @disk_id - the disk id identifying the disk
+ * @part - disk partition or zero for full disk
+ * @pdevid - pointer to memory where dev id will be returned
+ * @returns - 0 on success, a negative value on error
+ */
+int lkl_get_virtio_blkdev(int disk_id, unsigned int part, uint32_t *pdevid);
+
+int lkl_disk_virtio_add(struct lkl_disk *disk);
+int lkl_disk_virtio_remove(struct lkl_disk disk);
 
 #ifdef LKL_HOST_CONFIG_UML_DEV
 int lkl_disk_um_add(struct lkl_disk *disk, const char *blkparams);

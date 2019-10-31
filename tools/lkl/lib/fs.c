@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <lkl_host.h>
 
+#include "virtio.h"
+
 #define MAX_FSTYPE_LEN 50
 
 static struct lkl_disk *lkl_disks[16];
@@ -16,6 +18,9 @@ int lkl_disk_add(struct lkl_disk *disk)
 	switch (disk->backend) {
 	case BLK_BACKEND_UM:
 		ret = lkl_disk_um_add(disk, disk->dev);
+		break;
+	case BLK_BACKEND_VIRTIO:
+		ret = lkl_disk_virtio_add(disk);
 		break;
 	default:
 		break;
@@ -29,6 +34,8 @@ int lkl_disk_add(struct lkl_disk *disk)
 int lkl_disk_remove(struct lkl_disk disk)
 {
 	switch (disk.backend) {
+	case BLK_BACKEND_VIRTIO:
+		return lkl_disk_virtio_remove(disk);
 	case BLK_BACKEND_UM:
 	default:
 		break;
@@ -145,6 +152,11 @@ out_close:
 	return ret;
 }
 
+#define SYSFS_DEV_VIRTIO_PLATFORM_PATH \
+	"/sysfs/devices/platform/virtio-mmio.%d.auto"
+#define SYSFS_DEV_VIRTIO_CMDLINE_PATH \
+	"/sysfs/devices/virtio-mmio-cmdline/virtio-mmio.%d"
+
 #define SYSFS_DEV_UMBLK_CMDLINE_PATH \
 	"/sysfs/devices/platform/uml-blkdev.%d"
 
@@ -232,6 +244,16 @@ int lkl_get_blkdev(int disk_id, unsigned int part, uint32_t *pdevid)
 		fmt = SYSFS_DEV_UMBLK_CMDLINE_PATH;
 		return __lkl_get_blkdev(disk_id, part, pdevid, fmt,
 					"", "ubd");
+	case BLK_BACKEND_VIRTIO:
+		if ((uint32_t) disk_id >= virtio_get_num_bootdevs()) {
+			fmt = SYSFS_DEV_VIRTIO_PLATFORM_PATH;
+			disk_id -= virtio_get_num_bootdevs();
+		} else {
+			fmt = SYSFS_DEV_VIRTIO_CMDLINE_PATH;
+		}
+
+		return __lkl_get_blkdev(disk_id, part, pdevid, fmt,
+					"virtio", "vd");
 	default:
 		break;
 	}
