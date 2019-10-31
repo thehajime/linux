@@ -156,6 +156,8 @@ export HEADER_ARCH SUBARCH USER_CFLAGS CFLAGS_NO_HARDENING OS DEV_NULL_PATH
 UMMODE ?= kernel
 LKL_DIR := $(ARCH_DIR)/lkl
 
+include $(ARCH_DIR)/lkl/auto.conf
+
 ifeq ($(UMMODE),kernel)
 	include $(ARCH_DIR)/Makefile.um
 else ifeq ($(UMMODE),library)

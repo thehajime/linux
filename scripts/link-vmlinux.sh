@@ -245,6 +245,7 @@ fi;
 # final build of init/
 ${MAKE} -f "${srctree}/scripts/Makefile.build" obj=init need-builtin=1
 
+if [ -e scripts/mod/modpost ]; then
 #link vmlinux.o
 info LD vmlinux.o
 modpost_link vmlinux.o
@@ -258,6 +259,7 @@ info GEN modules.builtin
 # The second line aids cases where multiple modules share the same object.
 tr '\0' '\n' < modules.builtin.modinfo | sed -n 's/^[[:alnum:]:_]*\.file=//p' |
 	tr ' ' '\n' | uniq | sed -e 's:^:kernel/:' -e 's/$/.ko/' > modules.builtin
+fi
 
 btf_vmlinux_bin_o=""
 if [ -n "${CONFIG_DEBUG_INFO_BTF}" ]; then
