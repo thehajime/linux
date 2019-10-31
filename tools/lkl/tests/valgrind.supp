@@ -1,0 +1,105 @@
+{
+   <unfinished timer 1>
+   Memcheck:Leak
+   match-leak-kinds: possible
+   ...
+   fun:pthread_create@@GLIBC_2.2.5
+   fun:__start_helper_thread
+   fun:__pthread_once_slow
+   fun:timer_create@@GLIBC_2.3.3
+   fun:timer_alloc
+   fun:clockevent_set_state_oneshot
+   ...
+   fun:__clockevents_switch_state
+   fun:clockevents_switch_state
+   fun:tick_setup_periodic
+   ...
+}
+
+{
+   <unfinished timer 2>
+   Memcheck:Leak
+   match-leak-kinds: possible
+   ...
+   fun:allocate_stack
+   fun:pthread_create@@GLIBC_2.2.5
+   fun:timer_helper_thread
+   fun:start_thread
+   ...
+}
+
+{
+   <pid1 kernel thread>
+   Memcheck:Leak
+   match-leak-kinds: possible
+   ...
+   fun:thread_create
+   fun:copy_thread
+   fun:copy_thread_tls
+   ...
+   fun:rest_init
+   ...
+   fun:start_kernel
+   ...
+}
+
+{
+   <xfs uninitialized buf error: delete this once upstream is fixed>
+   Memcheck:Value8
+   fun:crc32_body
+   fun:crc32_le_generic
+   fun:__crc32c_le
+   fun:chksum_update
+   fun:crypto_shash_update
+   fun:crc32c
+   fun:xlog_cksum
+}
+
+{
+   <xfs pwrite64 issue: delete this once upstream is fixed>
+   Memcheck:Param
+   pwrite64(buf)
+   ...
+   fun:blk_request
+   fun:blk_enqueue
+   fun:virtio_process_one
+   fun:virtio_process_queue
+   fun:virtio_write
+   fun:__raw_writel
+   fun:writel
+   fun:vm_notify
+   fun:virtqueue_notify
+   fun:virtio_queue_rq
+   fun:blk_mq_dispatch_rq_list
+   fun:blk_mq_sched_dispatch_requests
+}
+
+{
+   <virtio_net_pipe xmits>
+   Memcheck:Param
+   writev(vector[...])
+   ...
+   fun:fd_net_tx
+   fun:net_enqueue
+   fun:virtio_process_one
+   fun:virtio_process_queue
+   fun:virtio_write
+   fun:__raw_writel
+   fun:writel
+   fun:vm_notify
+   ...
+   fun:netdev_start_xmit
+   ...
+}
+
+{
+   <ubd_kern.c>
+   Memcheck:Param
+   read(buf)
+   ...
+   fun:read
+   fun:os_read_file
+   fun:bulk_req_safe_read.constprop.11
+   fun:io_thread
+   ...
+}
