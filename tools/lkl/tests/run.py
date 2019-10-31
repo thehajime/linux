@@ -58,6 +58,7 @@ tests = [
     'lklfuse.sh -t ext4',
     'lklfuse.sh -t vfat',
     'lklfuse.sh -t btrfs',
+    'hijack-test.sh'
 ]
 
 parser = argparse.ArgumentParser(description='LKL test runner')
