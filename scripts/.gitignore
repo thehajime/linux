@@ -4,7 +4,9 @@
 bin2c
 conmakehash
 kallsyms
+kallsyms.exe
 unifdef
+unifdef.exe
 recordmcount
 sortextable
 asn1_compiler

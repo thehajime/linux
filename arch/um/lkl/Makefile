@@ -20,7 +20,7 @@ ifneq ($(OUTPUT_FORMAT),pe-x86-64)
 prefix=_
 endif
 # workaround for #include_next<stdarg.h> errors
-LINUXINCLUDE := -isystem $(LKL_DIR)/include/system $(LINUXINCLUDE)
+LINUXINCLUDE := -isystem $(srctree)/$(LKL_DIR)/include/system $(LINUXINCLUDE)
 # workaround for https://gcc.gnu.org/bugzilla/show_bug.cgi?id=52991
 KBUILD_CFLAGS += -mno-ms-bitfields
 else

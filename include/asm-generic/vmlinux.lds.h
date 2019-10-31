@@ -539,7 +539,7 @@
 	NOTES								\
 									\
 	. = ALIGN((align));						\
-	__end_rodata = .;
+	VMLINUX_SYMBOL(__end_rodata) = .;
 
 /*
  * .text section. Map to function alignment to avoid address changes
