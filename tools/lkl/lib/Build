@@ -1,1 +1,8 @@
+CFLAGS_config.o += -I$(srctree)/tools/perf/pmu-events
 
+liblkl-y += jmp_buf.o
+liblkl-y += utils.o
+liblkl-y += dbg.o
+liblkl-y += dbg_handler.o
+liblkl-y += ../../perf/pmu-events/jsmn.o
+liblkl-y += config.o
