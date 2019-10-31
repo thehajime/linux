@@ -4,8 +4,10 @@
 bin2c
 conmakehash
 kallsyms
+kallsyms.exe
 pnmtologo
 unifdef
+unifdef.exe
 recordmcount
 sortextable
 asn1_compiler
