@@ -17,6 +17,10 @@ struct lkl_jmp_buf {
  * These operations must be provided by a host library or by the application
  * itself.
  *
+ * @virtio_devices - string containg the list of virtio devices in virtio mmio
+ * command line format. This string is appended to the kernel command line and
+ * is provided here for convenience to be implemented by the host library.
+ *
  * @um_devices - string containg the list of UML devices in command line
  * format. This string is appended to the kernel command line and
  * is provided here for convenience to be implemented by the host library.
@@ -84,6 +88,7 @@ struct lkl_jmp_buf {
  * @jmp_buf_longjmp - perform a jump back to the saved jump buffer
  */
 struct lkl_host_operations {
+	const char *virtio_devices;
 	const char *um_devices;
 
 	void (*print)(const char *str, int len);

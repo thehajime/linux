@@ -61,6 +61,10 @@ int __init lkl_start_kernel(struct lkl_host_operations *ops, const char *fmt,
 	ret = vsnprintf(boot_command_line, COMMAND_LINE_SIZE, fmt, ap);
 	va_end(ap);
 
+	if (ops->virtio_devices)
+		ret += strscpy(boot_command_line + ret, ops->virtio_devices,
+			       COMMAND_LINE_SIZE - ret);
+
 	if (ops->um_devices)
 		strscpy(boot_command_line + ret, ops->um_devices,
 			COMMAND_LINE_SIZE - ret);

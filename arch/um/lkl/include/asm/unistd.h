@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 #include <uapi/asm/unistd.h>
 
+__SYSCALL(__NR_virtio_mmio_device_add, sys_virtio_mmio_device_add)
+
 #define __SC_ASCII(t, a) #t "," #a
 
 #define __ASCII_MAP0(m, ...)
