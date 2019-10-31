@@ -349,6 +349,7 @@ struct lkl_host_operations lkl_host_ops = {
 	.mem_free = free,
 	.ioremap = lkl_ioremap,
 	.iomem_access = lkl_iomem_access,
+	.virtio_devices = lkl_virtio_devs,
 #ifdef LKL_HOST_CONFIG_UML_DEV
 	.um_devices = lkl_um_devs,
 #endif

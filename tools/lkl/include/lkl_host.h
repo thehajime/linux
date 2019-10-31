@@ -11,6 +11,7 @@ extern "C" {
 
 extern struct lkl_host_operations lkl_host_ops;
 extern char lkl_um_devs[4096];
+extern char lkl_virtio_devs[4096];
 
 /**
  * lkl_printf - print a message via the host print operation
