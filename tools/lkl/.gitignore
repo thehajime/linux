@@ -1,3 +1,5 @@
+*.exe
+*.dll
 Makefile.conf
 include/lkl_autoconf.h
 tests/autoconf.sh

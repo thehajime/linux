@@ -101,7 +101,9 @@ lkl_test_exec()
 
     file=${OUTPUT}/tests/$(basename $file)
 
-    if file $file | grep ARM; then
+    if file $file | grep PE32; then
+        WRAPPER="wine"
+    elif file $file | grep ARM; then
         WRAPPER="qemu-arm-static"
     elif file $file | grep "FreeBSD" ; then
         ssh_copy "$file" $BSD_WDIR
