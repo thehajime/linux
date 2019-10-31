@@ -117,8 +117,11 @@ programs_install: $(progs-y:%=$(OUTPUT)%$(EXESUF))
 install: headers_install libraries_install programs_install
 
 
+run-tests:
+	./tests/run.py $(tests)
+
 FORCE: ;
-.PHONY: all clean FORCE
+.PHONY: all clean FORCE run-tests
 .PHONY: headers_install libraries_install programs_install install
 .NOTPARALLEL : lib/lkl.o
 .SECONDARY:

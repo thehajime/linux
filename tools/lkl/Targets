@@ -1,3 +1,6 @@
 libs-y += lib/liblkl
 
+progs-y += tests/boot
+progs-y += tests/disk
+progs-y += tests/net-test
 
