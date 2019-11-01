@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0
 #
 # This file is included by the global makefile so that you can add your own
 # architecture-specific flags and dependencies.
@@ -44,7 +45,7 @@ HOST_DIR := arch/$(HEADER_ARCH)
 include $(ARCH_DIR)/Makefile-skas
 include $(HOST_DIR)/Makefile.um
 
-core-y += $(HOST_DIR)/um/
+
 
 SHARED_HEADERS	:= $(ARCH_DIR)/include/shared
 ARCH_INCLUDE	:= -I$(srctree)/$(SHARED_HEADERS)
@@ -144,5 +145,21 @@ CLEAN_FILES += linux x.i gmon.out
 archclean:
 	@find . \( -name '*.bb' -o -name '*.bbg' -o -name '*.da' \
 		-o -name '*.gcov' \) -type f -print | xargs rm -f
+	$(Q)rm -rf $(srctree)/$(LKL_DIR)/include/generated
 
 export HEADER_ARCH SUBARCH USER_CFLAGS CFLAGS_NO_HARDENING OS DEV_NULL_PATH
+
+
+
+# SPDX-License-Identifier: GPL-2.0
+# select mode of UML build
+UMMODE ?= kernel
+LKL_DIR := $(ARCH_DIR)/lkl
+
+ifeq ($(UMMODE),kernel)
+	include $(ARCH_DIR)/Makefile.um
+else ifeq ($(UMMODE),library)
+	include $(ARCH_DIR)/lkl/Makefile
+endif
+
+export UMMODE LKL_DIR
