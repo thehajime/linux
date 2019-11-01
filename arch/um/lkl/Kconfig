@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0
 
-config UML_LKL
+menu "LKL-specific options"
+
+config LKL
        def_bool y
        depends on !SMP && !MMU && !COREDUMP && !SECCOMP && !UPROBES && !COMPAT && !USER_RETURN_NOTIFIER
        select ARCH_THREAD_STACK_ALLOCATOR
@@ -59,7 +61,7 @@ config BIG_ENDIAN
        def_bool n
 
 config GENERIC_CSUM
-       def_bool y
+       def_bool LKL
 
 config GENERIC_HWEIGHT
        def_bool y
@@ -83,13 +85,4 @@ config HZ
         int
         default 100
 
-config CONSOLE_LOGLEVEL_QUIET
-	int "quiet console loglevel (1-15)"
-	range 1 15
-	default "4"
-	help
-	  loglevel to use when "quiet" is passed on the kernel commandline.
-
-	  When "quiet" is passed on the kernel commandline this loglevel
-	  will be used as the loglevel. IOW passing "quiet" will be the
-	  equivalent of passing "loglevel=<CONSOLE_LOGLEVEL_QUIET>"
+endmenu
