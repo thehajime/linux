@@ -516,6 +516,247 @@ int lkl_dirfd(struct lkl_dir *dir);
  */
 int lkl_mount_fs(char *fstype);
 
+/**
+ * lkl_if_up - activate network interface
+ *
+ * @ifindex - the ifindex of the interface
+ * @returns - return 0 if no error: otherwise negative value returns
+ */
+int lkl_if_up(int ifindex);
+
+/**
+ * lkl_if_down - deactivate network interface
+ *
+ * @ifindex - the ifindex of the interface
+ * @returns - return 0 if no error: otherwise negative value returns
+ */
+int lkl_if_down(int ifindex);
+
+/**
+ * lkl_if_set_mtu - set MTU on interface
+ *
+ * @ifindex - the ifindex of the interface
+ * @mtu - the requested MTU size
+ * @returns - return 0 if no error: otherwise negative value returns
+ */
+int lkl_if_set_mtu(int ifindex, int mtu);
+
+/**
+ * lkl_if_set_ipv4 - set IPv4 address on interface
+ *
+ * @ifindex - the ifindex of the interface
+ * @addr - 4-byte IP address (i.e., struct in_addr)
+ * @netmask_len - prefix length of the @addr
+ * @returns - return 0 if no error: otherwise negative value returns
+ */
+int lkl_if_set_ipv4(int ifindex, unsigned int addr, unsigned int netmask_len);
+
+/**
+ * lkl_set_ipv4_gateway - add an IPv4 default route
+ *
+ * @addr - 4-byte IP address of the gateway (i.e., struct in_addr)
+ * @returns - return 0 if no error: otherwise negative value returns
+ */
+int lkl_set_ipv4_gateway(unsigned int addr);
+
+/**
+ * lkl_if_set_ipv4_gateway - add an IPv4 default route in rule table
+ *
+ * @ifindex - the ifindex of the interface, used for tableid calculation
+ * @addr - 4-byte IP address of the interface
+ * @netmask_len - prefix length of the @addr
+ * @gw_addr - 4-byte IP address of the gateway
+ * @returns - return 0 if no error: otherwise negative value returns
+ */
+int lkl_if_set_ipv4_gateway(int ifindex, unsigned int addr,
+		unsigned int netmask_len, unsigned int gw_addr);
+
+/**
+ * lkl_if_set_ipv6 - set IPv6 address on interface
+ * must be called after interface is up.
+ *
+ * @ifindex - the ifindex of the interface
+ * @addr - 16-byte IPv6 address (i.e., struct in6_addr)
+ * @netprefix_len - prefix length of the @addr
+ * @returns - return 0 if no error: otherwise negative value returns
+ */
+int lkl_if_set_ipv6(int ifindex, void *addr, unsigned int netprefix_len);
+
+/**
+ * lkl_set_ipv6_gateway - add an IPv6 default route
+ *
+ * @addr - 16-byte IPv6 address of the gateway (i.e., struct in6_addr)
+ * @returns - return 0 if no error: otherwise negative value returns
+ */
+int lkl_set_ipv6_gateway(void *addr);
+
+/**
+ * lkl_if_set_ipv6_gateway - add an IPv6 default route in rule table
+ *
+ * @ifindex - the ifindex of the interface, used for tableid calculation
+ * @addr - 16-byte IP address of the interface
+ * @netmask_len - prefix length of the @addr
+ * @gw_addr - 16-byte IP address of the gateway (i.e., struct in_addr)
+ * @returns - return 0 if no error: otherwise negative value returns
+ */
+int lkl_if_set_ipv6_gateway(int ifindex, void *addr,
+		unsigned int netmask_len, void *gw_addr);
+
+/**
+ * lkl_ifname_to_ifindex - obtain ifindex of an interface by name
+ *
+ * @name - string of an interface
+ * @returns - return an integer of ifindex if no error
+ */
+int lkl_ifname_to_ifindex(const char *name);
+
+/**
+ * lkl_netdev_get_ifindex - retrieve the interface index for a given network
+ * device id
+ *
+ * @id - the network device id
+ * @returns the interface index or a stricly negative value in case of error
+ */
+int lkl_netdev_get_ifindex(int id);
+
+/**
+ * lkl_add_neighbor - add a permanent arp entry
+ * @ifindex - the ifindex of the interface
+ * @af - address family of the ip address. Must be LKL_AF_INET or LKL_AF_INET6
+ * @ip - ip address of the entry in network byte order
+ * @mac - mac address of the entry
+ */
+int lkl_add_neighbor(int ifindex, int af, void *addr, void *mac);
+
+/**
+ * lkl_if_add_ip - add an ip address
+ * @ifindex - the ifindex of the interface
+ * @af - address family of the ip address. Must be LKL_AF_INET or LKL_AF_INET6
+ * @addr - ip address of the entry in network byte order
+ * @netprefix_len - prefix length of the @addr
+ */
+int lkl_if_add_ip(int ifindex, int af, void *addr, unsigned int netprefix_len);
+
+/**
+ * lkl_if_del_ip - add an ip address
+ * @ifindex - the ifindex of the interface
+ * @af - address family of the ip address. Must be LKL_AF_INET or LKL_AF_INET6
+ * @addr - ip address of the entry in network byte order
+ * @netprefix_len - prefix length of the @addr
+ */
+int lkl_if_del_ip(int ifindex, int af, void *addr, unsigned int netprefix_len);
+
+/**
+ * lkl_add_gateway - add a gateway
+ * @af - address family of the ip address. Must be LKL_AF_INET or LKL_AF_INET6
+ * @gwaddr - 4-byte IP address of the gateway (i.e., struct in_addr)
+ */
+int lkl_add_gateway(int af, void *gwaddr);
+
+/**
+ * XXX Should I use OIF selector?
+ * temporary table idx = ifindex * 2 + 0 <- ipv4
+ * temporary table idx = ifindex * 2 + 1 <- ipv6
+ */
+/**
+ * lkl_if_add_rule_from_addr - create an ip rule table with "from" selector
+ * @ifindex - the ifindex of the interface, used for table id calculation
+ * @af - address family of the ip address. Must be LKL_AF_INET or LKL_AF_INET6
+ * @saddr - network byte order ip address, "from" selector address of this rule
+ */
+int lkl_if_add_rule_from_saddr(int ifindex, int af, void *saddr);
+
+/**
+ * lkl_if_add_gateway - add gateway to rule table
+ * @ifindex - the ifindex of the interface, used for table id calculation
+ * @af - address family of the ip address. Must be LKL_AF_INET or LKL_AF_INET6
+ * @gwaddr - 4-byte IP address of the gateway (i.e., struct in_addr)
+ */
+int lkl_if_add_gateway(int ifindex, int af, void *gwaddr);
+
+/**
+ * lkl_if_add_linklocal - add linklocal route to rule table
+ * @ifindex - the ifindex of the interface, used for table id calculation
+ * @af - address family of the ip address. Must be LKL_AF_INET or LKL_AF_INET6
+ * @addr - ip address of the entry in network byte order
+ * @netprefix_len - prefix length of the @addr
+ */
+int lkl_if_add_linklocal(int ifindex, int af,  void *addr, int netprefix_len);
+
+/**
+ * lkl_if_wait_ipv6_dad - wait for DAD to be done for a ipv6 address
+ * must be called after interface is up
+ *
+ * @ifindex - the ifindex of the interface
+ * @addr - ip address of the entry in network byte order
+ */
+int lkl_if_wait_ipv6_dad(int ifindex, void *addr);
+
+/**
+ * lkl_set_fd_limit - set the maximum number of file descriptors allowed
+ * @fd_limit - fd max limit
+ */
+int lkl_set_fd_limit(unsigned int fd_limit);
+
+/**
+ * lkl_qdisc_add - set qdisc rule onto an interface
+ *
+ * @ifindex - the ifindex of the interface
+ * @root - the name of root class (e.g., "root");
+ * @type - the type of qdisc (e.g., "fq")
+ */
+int lkl_qdisc_add(int ifindex, const char *root, const char *type);
+
+/**
+ * lkl_qdisc_parse_add - Add a qdisc entry for an interface with strings
+ *
+ * @ifindex - the ifindex of the interface
+ * @entries - strings of qdisc configurations in the form of
+ *            "root|type;root|type;..."
+ */
+void lkl_qdisc_parse_add(int ifindex, const char *entries);
+
+/**
+ * lkl_netdev - host network device handle, defined in lkl_host.h.
+ */
+struct lkl_netdev;
+
+/**
+ * lkl_netdev_args - arguments to lkl_netdev_add
+ * @mac - optional MAC address for the device
+ * @offload - offload bits for the device
+ */
+struct lkl_netdev_args {
+	void *mac;
+	unsigned int offload;
+};
+
+/*
+ * lkl_register_dbg_handler- register a signal handler that loads a debug lib.
+ *
+ * The signal handler is triggered by Ctrl-Z. It creates a new pthread which
+ * call dbg_entrance().
+ *
+ * If you run the program from shell script, make sure you ignore SIGTSTP by
+ * "trap '' TSTP" in the shell script.
+ */
+void lkl_register_dbg_handler(void);
+
+/**
+ * lkl_sysctl - write a sysctl value
+ *
+ * @path - the path to an sysctl entry (e.g., "net.ipv4.tcp_wmem");
+ * @value - the value of the sysctl (e.g., "4096 87380 2147483647")
+ */
+int lkl_sysctl(const char *path, const char *value);
+
+/**
+ * lkl_sysctl_parse_write - Configure sysctl parameters with strings
+ *
+ * @sysctls - Configure sysctl parameters as the form of "key=value;..."
+ */
+void lkl_sysctl_parse_write(const char *sysctls);
+
 #ifdef __cplusplus
 }
 #endif
