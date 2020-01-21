@@ -48,6 +48,16 @@ tests and a few of application examples:
   without root privileges, using FUSE
 
 
+Building LKL on FreeBSD
+-----------------------
+
+    $ pkg install binutils gcc gnubc gmake gsed coreutils bison flex python argp-standalone
+
+    #Prefer ports binutils and GNU bc(1):
+    $ export PATH=/sbin:/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/usr/lib64/ccache
+
+    $ gmake -C tools/lkl
+
 Building LKL on Ubuntu
 -----------------------
 
