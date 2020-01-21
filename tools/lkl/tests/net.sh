@@ -18,6 +18,17 @@ cleanup_backend()
 	fi
         tap_cleanup
         ;;
+    "tap")
+        tap_cleanup
+        ;;
+    "pipe")
+        rm -rf $work_dir
+        ;;
+    "raw")
+        ;;
+    "macvtap")
+        sudo ip link del dev $(tap_ifname) type macvtap
+        ;;
     "loopback")
         ;;
     "um")
@@ -80,6 +91,54 @@ setup_backend()
         fi
         tap_setup
         ;;
+    "pipe")
+        if [ -z $(lkl_test_cmd which mkfifo) ]; then
+            echo "no mkfifo command"
+            return $TEST_SKIP
+        else
+            work_dir=$(lkl_test_cmd mktemp -d)
+        fi
+        fifo1=$work_dir/fifo1
+        fifo2=$work_dir/fifo2
+        lkl_test_cmd mkfifo $fifo1
+        lkl_test_cmd mkfifo $fifo2
+        export_vars work_dir fifo1 fifo2
+        ;;
+    "tap")
+        tap_prepare
+        if ! lkl_test_cmd test -c /dev/net/tun; then
+            if [ -z "$LKL_HOST_CONFIG_BSD" ]; then
+                echo "missing /dev/net/tun"
+                return $TEST_SKIP
+            fi
+        fi
+        tap_setup
+        ;;
+    "raw")
+        if [ -n "$LKL_HOST_CONFIG_BSD" ]; then
+            return $TEST_SKIP
+        fi
+        get_test_ip
+        ;;
+    "macvtap")
+        get_test_ip
+        if ! lkl_test_cmd sudo ip link add link $HOST_IF \
+             name $(tap_ifname) type macvtap mode passthru; then
+            echo "failed to create macvtap, skipping"
+            return $TEST_SKIP
+        fi
+        MACVTAP=/dev/tap$(lkl_test_cmd ip link show dev $(tap_ifname) | \
+                                 grep -o ^[0-9]*)
+        lkl_test_cmd sudo ip link set dev $(tap_ifname) up
+        lkl_test_cmd sudo chown $USER $MACVTAP
+        export_vars MACVTAP
+        ;;
+    "dpdk")
+        if -z [ $LKL_TEST_NET_DPDK ]; then
+            echo "DPDK needs user setup"
+            return $TEST_SKIP
+        fi
+        ;;
     *)
         echo "don't know how to setup backend $1"
         return $TEST_FAILED
@@ -102,6 +161,43 @@ run_tests()
     "um-vector-tap")
         lkl_test_exec $script_dir/net-test --backend um-vector-tap \
                       --ifname $TEST_UM_VECTOR_TAP_PARMS \
+                      --ip $(ip_lkl) --netmask-len $TEST_IP_NETMASK \
+                      --dst $(ip_host)
+        ;;
+    "pipe")
+        VALGRIND="" lkl_test_exec $script_dir/net-test --backend pipe \
+                      --ifname "$fifo1|$fifo2" \
+                      --ip $(ip_host) --netmask-len $TEST_IP_NETMASK \
+                      --sleep 1800 >/dev/null &
+        cp $base_objdir/tests/net-test $base_objdir/tests/net-test2
+
+        sleep 10
+        lkl_test_exec $script_dir/net-test2 --backend pipe \
+                      --ifname "$fifo2|$fifo1" \
+                      --ip $(ip_lkl) --netmask-len $TEST_IP_NETMASK \
+                      --dst $(ip_host)
+        rm -f $script_dir/net-test2
+        kill $!
+        wait $! 2>/dev/null
+        ;;
+    "tap")
+        lkl_test_exec $script_dir/net-test --backend tap \
+                      --ifname $(tap_ifname) \
+                      --ip $(ip_lkl) --netmask-len $TEST_IP_NETMASK \
+                      --dst $(ip_host)
+        ;;
+    "raw")
+        lkl_test_exec sudo $script_dir/net-test --backend raw \
+                      --ifname $HOST_IF --dhcp --dst $TEST_IP_REMOTE
+        ;;
+    "macvtap")
+        lkl_test_exec $script_dir/net-test --backend macvtap \
+                      --ifname $MACVTAP \
+                      --dhcp --dst $TEST_IP_REMOTE
+        ;;
+    "dpdk")
+        lkl_test_exec sudo $script_dir/net-test --backend dpdk \
+                      --ifname dpdk0 \
                       --ip $(ip_lkl) --netmask-len $TEST_IP_NETMASK \
                       --dst $(ip_host)
         ;;
