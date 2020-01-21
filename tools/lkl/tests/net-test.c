@@ -23,9 +23,15 @@
 enum {
 	BACKEND_NONE,
 	BACKEND_UM,
+	BACKEND_TAP,
+	BACKEND_MACVTAP,
+	BACKEND_RAW,
+	BACKEND_DPDK,
+	BACKEND_PIPE,
 };
 
-const char *backends[] = { "loopback", "um", NULL };
+const char *backends[] = { "loopback", "um", "tap", "macvtap", "raw", "dpdk",
+			   "pipe", NULL };
 static struct {
 	int backend;
 	const char *ifname;
@@ -176,6 +182,21 @@ static int lkl_test_nd_create(void)
 		nd = lkl_um_netdev_create(cla.ifname);
 		nd_id = nd->id;
 		break;
+	case BACKEND_TAP:
+		nd = lkl_netdev_tap_create(cla.ifname, 0);
+		break;
+	case BACKEND_DPDK:
+		nd = lkl_netdev_dpdk_create(cla.ifname, 0, NULL);
+		break;
+	case BACKEND_RAW:
+		nd = lkl_netdev_raw_create(cla.ifname);
+		break;
+	case BACKEND_MACVTAP:
+		nd = lkl_netdev_macvtap_create(cla.ifname, 0);
+		break;
+	case BACKEND_PIPE:
+		nd = lkl_netdev_pipe_create(cla.ifname, 0);
+		break;
 	}
 
 	if (!nd) {
@@ -191,6 +212,13 @@ static int lkl_test_nd_add(void)
 	if (cla.backend == BACKEND_NONE || cla.backend == BACKEND_UM)
 		return TEST_SKIP;
 
+	nd_id = lkl_netdev_add(nd, NULL);
+	if (nd_id < 0) {
+		lkl_test_logf("failed to add netdev: %s\n",
+			      lkl_strerror(nd_id));
+		return TEST_BAILOUT;
+	}
+
 	return TEST_SUCCESS;
 }
 
@@ -199,6 +227,8 @@ static int lkl_test_nd_remove(void)
 	if (cla.backend == BACKEND_NONE || cla.backend == BACKEND_UM)
 		return TEST_SKIP;
 
+	lkl_netdev_remove(nd_id);
+	lkl_netdev_free(nd);
 	return TEST_SUCCESS;
 }
 

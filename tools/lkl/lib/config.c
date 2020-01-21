@@ -239,6 +239,7 @@ void lkl_show_config(struct lkl_config *cfg)
 int lkl_load_config_env(struct lkl_config *cfg)
 {
 	int ret;
+	char *envtap = getenv("LKL_HIJACK_NET_TAP");
 	char *enviftype = getenv("LKL_HIJACK_NET_IFTYPE");
 	char *envifparams = getenv("LKL_HIJACK_NET_IFPARAMS");
 	char *envmtu_str = getenv("LKL_HIJACK_NET_MTU");
@@ -264,12 +265,15 @@ int lkl_load_config_env(struct lkl_config *cfg)
 
 	if (!cfg)
 		return -1;
-	if (enviftype)
+	if (envtap || enviftype)
 		cfg->ifnum = 1;
 
 	iface = malloc(sizeof(struct lkl_config_iface));
 	memset(iface, 0, sizeof(struct lkl_config_iface));
 
+	ret = cfgcpy(&iface->iftap, envtap);
+	if (ret < 0)
+		return ret;
 	ret = cfgcpy(&iface->iftype, enviftype);
 	if (ret < 0)
 		return ret;
@@ -469,7 +473,37 @@ static int lkl_config_netdev_create(struct lkl_config *cfg,
 		offload = strtol(iface->ifoffload_str, NULL, 0);
 	memset(&nd_args, 0, sizeof(struct lkl_netdev_args));
 
+	if (iface->iftap) {
+		lkl_printf("WARN: LKL_HIJACK_NET_TAP is now obsoleted.\n");
+		lkl_printf("use LKL_HIJACK_NET_IFTYPE and PARAMS\n");
+		nd = lkl_netdev_tap_create(iface->iftap, offload);
+	}
+
 	if (!nd && iface->iftype && iface->ifparams) {
+		if ((strcmp(iface->iftype, "tap") == 0)) {
+			nd = lkl_netdev_tap_create(iface->ifparams, offload);
+		} else if ((strcmp(iface->iftype, "macvtap") == 0)) {
+			nd = lkl_netdev_macvtap_create(iface->ifparams,
+						       offload);
+		} else if ((strcmp(iface->iftype, "dpdk") == 0)) {
+			nd = lkl_netdev_dpdk_create(iface->ifparams, offload,
+						    mac);
+		} else if ((strcmp(iface->iftype, "pipe") == 0)) {
+			nd = lkl_netdev_pipe_create(iface->ifparams, offload);
+		} else {
+			if (offload) {
+				lkl_printf("WARN: %s isn't supported on %s\n",
+					   "LKL_HIJACK_OFFLOAD",
+					   iface->iftype);
+				lkl_printf(
+					"WARN: Disabling offload features.\n");
+			}
+			offload = 0;
+		}
+		if (strcmp(iface->iftype, "vde") == 0)
+			nd = lkl_netdev_vde_create(iface->ifparams);
+		if (strcmp(iface->iftype, "raw") == 0)
+			nd = lkl_netdev_raw_create(iface->ifparams);
 		if ((strcmp(iface->iftype, "um") == 0)) {
 			nd = lkl_um_netdev_create(iface->ifparams);
 			iface->nd = nd;
@@ -497,6 +531,13 @@ static int lkl_config_netdev_create(struct lkl_config *cfg,
 		}
 
 		nd_args.offload = offload;
+		ret = lkl_netdev_add(nd, &nd_args);
+		if (ret < 0) {
+			lkl_printf("failed to add netdev: %s\n",
+				   lkl_strerror(ret));
+			return -1;
+		}
+		nd->id = ret;
 		iface->nd = nd;
 	}
 	return 0;
@@ -623,6 +664,7 @@ static int lkl_clean_config(struct lkl_config *cfg)
 		return -1;
 
 	for (iface = cfg->ifaces; iface; iface = iface->next) {
+		free_cfgparam(iface->iftap);
 		free_cfgparam(iface->iftype);
 		free_cfgparam(iface->ifparams);
 		free_cfgparam(iface->ifmtu_str);
@@ -739,9 +781,19 @@ int lkl_load_config_post(struct lkl_config *cfg)
 
 int lkl_unload_config(struct lkl_config *cfg)
 {
+	struct lkl_config_iface *iface;
+
 	if (cfg) {
 		if (cfg->dump)
 			mount_cmds_exec(cfg->dump, dump_file);
+
+		for (iface = cfg->ifaces; iface; iface = iface->next) {
+			if (iface->nd && iface->nd->ops) {
+				if (iface->nd->id >= 0)
+					lkl_netdev_remove(iface->nd->id);
+				lkl_netdev_free(iface->nd);
+			}
+		}
 
 		lkl_clean_config(cfg);
 	}
