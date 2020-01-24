@@ -5128,7 +5128,8 @@ struct extent_buffer *alloc_extent_buffer(struct btrfs_fs_info *fs_info,
 
 	num_pages = num_extent_pages(eb);
 	for (i = 0; i < num_pages; i++, index++) {
-		p = find_or_create_page(mapping, index, GFP_NOFS|__GFP_NOFAIL);
+		p = find_or_create_page(mapping, index, GFP_NOFS|__GFP_NOFAIL|
+					__GFP_ZERO);
 		if (!p) {
 			exists = ERR_PTR(-ENOMEM);
 			goto free_eb;
