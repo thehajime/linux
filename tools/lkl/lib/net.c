@@ -179,6 +179,14 @@ int lkl_netdev_get_ifindex(int id)
 
 	snprintf(ifr.lkl_ifr_name, sizeof(ifr.lkl_ifr_name), "eth%d", id);
 	ret = lkl_sys_ioctl(sock, LKL_SIOCGIFINDEX, (long)&ifr);
+
+	/* retry with vector device */
+	if (ret < 0) {
+		snprintf(ifr.lkl_ifr_name, sizeof(ifr.lkl_ifr_name),
+			 "vec%d",id);
+		ret = lkl_sys_ioctl(sock, LKL_SIOCGIFINDEX, (long)&ifr);
+	}
+
 	lkl_sys_close(sock);
 
 	return ret < 0 ? ret : ifr.lkl_ifr_ifindex;

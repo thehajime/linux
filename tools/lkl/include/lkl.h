@@ -731,6 +731,15 @@ struct lkl_netdev_args {
 	unsigned int offload;
 };
 
+#ifdef LKL_HOST_CONFIG_UML_DEV
+struct lkl_netdev *lkl_um_netdev_create(const char *ifparams);
+#else
+static inline struct lkl_netdev *lkl_um_netdev_create(const char *ifparams)
+{
+	return NULL;
+}
+#endif
+
 /*
  * lkl_register_dbg_handler- register a signal handler that loads a debug lib.
  *

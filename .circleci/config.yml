@@ -43,6 +43,8 @@ do_steps: &do_steps
   - run:
       name: run tests
       command: |
+        sudo apt-get update
+        sudo apt-get install -y slirp
         mkdir -p ~/junit
         make -C tools/lkl run-tests tests="--junit-dir ~/junit"
       no_output_timeout: "90m"

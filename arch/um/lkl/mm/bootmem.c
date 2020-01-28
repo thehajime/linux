@@ -64,3 +64,36 @@ void free_mem(void)
 {
 	lkl_ops->mem_free((void *)_memory_start);
 }
+
+void *uml_kmalloc(int size, int flags)
+{
+	return kmalloc(size, flags);
+}
+
+char *uml_strdup(const char *string)
+{
+	return kstrdup(string, GFP_KERNEL);
+}
+
+void free_stack(unsigned long stack, int order)
+{
+	free_pages(stack, order);
+}
+
+unsigned long alloc_stack(int order, int atomic)
+{
+	unsigned long page;
+	gfp_t flags = GFP_KERNEL;
+
+	if (atomic)
+		flags = GFP_ATOMIC;
+	page = __get_free_pages(flags, order);
+
+	return page;
+}
+
+int __cant_sleep(void)
+{
+	return in_atomic() || irqs_disabled() || in_interrupt();
+	/* Is in_interrupt() really needed? */
+}

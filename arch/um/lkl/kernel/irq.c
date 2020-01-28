@@ -11,6 +11,11 @@
 #include <asm/host_ops.h>
 #include <asm/cpu.h>
 
+#if defined(__linux) && (defined(__i386) || defined(__x86_64))
+#include <os.h>
+#endif
+void *um_os_signal(int signum, void *handler);
+
 /*
  * To avoid much overhead we use an indirect approach: the irqs are marked using
  * a bitmap (array of longs) and a summary of the modified bits is kept in a
@@ -174,6 +179,16 @@ void arch_local_irq_restore(unsigned long flags)
 	irqs_enabled = flags;
 }
 
+#if defined(__linux) && (defined(__i386) || defined(__x86_64))
+static void sig_handler(int sig)
+{
+	if (sig != SIGIO)
+		return;
+
+	sigio_handler(sig, NULL, NULL);
+}
+#endif
+
 void init_IRQ(void)
 {
 	int i;
@@ -181,6 +196,11 @@ void init_IRQ(void)
 	for (i = 0; i < NR_IRQS; i++)
 		irq_set_chip_and_handler(i, &dummy_irq_chip, handle_simple_irq);
 
+#if defined(__linux) && (defined(__i386) || defined(__x86_64))
+	/* Initialize EPOLL Loop */
+	os_setup_epoll();
+	um_os_signal(SIGIO, sig_handler);
+#endif
 	pr_info("lkl: irqs initialized\n");
 }
 
@@ -188,3 +208,16 @@ void cpu_yield_to_irqs(void)
 {
 	cpu_relax();
 }
+
+#if defined(__linux) && (defined(__i386) || defined(__x86_64))
+unsigned int do_IRQ(int irq, struct uml_pt_regs *regs)
+{
+	/*
+	 * this might be called in signal handler, so dispatch to different
+	 * thread to avoid race
+	 */
+	set_irq_pending(irq);
+
+	return 1;
+}
+#endif

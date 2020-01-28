@@ -346,6 +346,9 @@ struct lkl_host_operations lkl_host_ops = {
 	.print = print,
 	.mem_alloc = (void *)malloc,
 	.mem_free = free,
+#ifdef LKL_HOST_CONFIG_UML_DEV
+	.um_devices = lkl_um_devs,
+#endif
 	.gettid = _gettid,
 	.jmp_buf_set = jmp_buf_set,
 	.jmp_buf_longjmp = jmp_buf_longjmp,

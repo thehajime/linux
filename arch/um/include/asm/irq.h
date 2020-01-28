@@ -32,6 +32,8 @@
 
 #endif
 
+#ifdef CONFIG_UMMODE_KERN
 #define NR_IRQS (LAST_IRQ + 1)
+#endif /* CONFIG_UMMODE_KERN */
 
 #endif

@@ -37,7 +37,9 @@ $(obj)/vde.o: $(obj)/vde_kern.o $(obj)/vde_user.o
 # When the above is fixed, don't forget to add this too!
 #targets += $(obj)/pcap.o
 
+ifeq ($(UMMODE),kernel)
 obj-y := stdio_console.o fd.o chan_kern.o chan_user.o line.o
+endif
 obj-$(CONFIG_SSL) += ssl.o
 obj-$(CONFIG_STDERR_CONSOLE) += stderr_console.o
 

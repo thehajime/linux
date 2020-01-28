@@ -81,3 +81,5 @@ config HZ
         default 100
 
 endmenu
+
+source "arch/um/drivers/Kconfig"
