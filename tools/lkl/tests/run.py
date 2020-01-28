@@ -54,6 +54,7 @@ tests = [
     'disk.sh -t vfat',
     'disk.sh -t btrfs',
     'net.sh -b loopback',
+    'net.sh -b um',
     'lklfuse.sh -t ext4',
     'lklfuse.sh -t vfat',
     'lklfuse.sh -t btrfs',

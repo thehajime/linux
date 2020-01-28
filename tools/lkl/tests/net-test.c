@@ -22,9 +22,10 @@
 
 enum {
 	BACKEND_NONE,
+	BACKEND_UM,
 };
 
-const char *backends[] = { "loopback", NULL };
+const char *backends[] = { "loopback", "um", NULL };
 static struct {
 	int backend;
 	const char *ifname;
@@ -164,12 +165,17 @@ static int lkl_test_icmp(void)
 }
 
 static struct lkl_netdev *nd;
+static int nd_id;
 
 static int lkl_test_nd_create(void)
 {
 	switch (cla.backend) {
 	case BACKEND_NONE:
 		return TEST_SKIP;
+	case BACKEND_UM:
+		nd = lkl_um_netdev_create(cla.ifname);
+		nd_id = nd->id;
+		break;
 	}
 
 	if (!nd) {
@@ -180,11 +186,9 @@ static int lkl_test_nd_create(void)
 	return TEST_SUCCESS;
 }
 
-static int nd_id;
-
 static int lkl_test_nd_add(void)
 {
-	if (cla.backend == BACKEND_NONE)
+	if (cla.backend == BACKEND_NONE || cla.backend == BACKEND_UM)
 		return TEST_SKIP;
 
 	return TEST_SUCCESS;
@@ -192,7 +196,7 @@ static int lkl_test_nd_add(void)
 
 static int lkl_test_nd_remove(void)
 {
-	if (cla.backend == BACKEND_NONE)
+	if (cla.backend == BACKEND_NONE || cla.backend == BACKEND_UM)
 		return TEST_SKIP;
 
 	return TEST_SUCCESS;

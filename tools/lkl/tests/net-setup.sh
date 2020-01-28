@@ -8,6 +8,7 @@ TEST_IP6_NETMASK=64
 TEST_MAC0="aa:bb:cc:dd:ee:ff"
 TEST_MAC1="aa:bb:cc:dd:ee:aa"
 TEST_NETSERVER_PORT=11223
+TEST_UM_SLIRP_PARMS="slirp,,`which slirp`"
 
 # $1 - count
 # $2 - netcount

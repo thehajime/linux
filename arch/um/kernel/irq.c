@@ -406,6 +406,7 @@ int deactivate_all_fds(void)
 	return 0;
 }
 
+#ifdef CONFIG_UMMODE_KERN
 /*
  * do_IRQ handles all normal device IRQs (the special
  * SMP cross-CPU interrupts have their own specific
@@ -420,6 +421,7 @@ unsigned int do_IRQ(int irq, struct uml_pt_regs *regs)
 	set_irq_regs(old_regs);
 	return 1;
 }
+#endif /* !CONFIG_UMMODE_KERN */
 
 void um_free_irq(unsigned int irq, void *dev)
 {
@@ -446,6 +448,7 @@ int um_request_irq(unsigned int irq, int fd, int type,
 
 EXPORT_SYMBOL(um_request_irq);
 
+#ifdef CONFIG_UMMODE_KERN
 /*
  * irq_chip must define at least enable/disable and ack when
  * the edge handler is used.
@@ -597,3 +600,4 @@ unsigned long from_irq_stack(int nested)
 	return mask & ~1;
 }
 
+#endif /* !CONFIG_UMMODE_KERN */

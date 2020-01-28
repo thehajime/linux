@@ -11,6 +11,10 @@
 #include <asm/host_ops.h>
 #include <asm/cpu.h>
 
+#if defined(__linux) && (defined(__i386) || defined(__x86_64))
+#include <os.h>
+#endif
+
 /*
  * To avoid much overhead we use an indirect approach: the irqs are marked using
  * a bitmap (array of longs) and a summary of the modified bits is kept in a
@@ -184,6 +188,10 @@ void init_IRQ(void)
 	for (i = 0; i < NR_IRQS; i++)
 		irq_set_chip_and_handler(i, &dummy_irq_chip, handle_simple_irq);
 
+#if defined(__linux) && (defined(__i386) || defined(__x86_64))
+	/* Initialize EPOLL Loop */
+	os_setup_epoll();
+#endif
 	pr_info("lkl: irqs initialized\n");
 }
 
@@ -191,3 +199,11 @@ void cpu_yield_to_irqs(void)
 {
 	cpu_relax();
 }
+
+#if defined(__linux) && (defined(__i386) || defined(__x86_64))
+unsigned int do_IRQ(int irq, struct uml_pt_regs *regs)
+{
+	lkl_trigger_irq(irq);
+	return 1;
+}
+#endif

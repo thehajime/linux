@@ -13,6 +13,8 @@ cleanup_backend()
     case "$1" in
     "loopback")
         ;;
+    "um")
+        ;;
     esac
 }
 
@@ -47,6 +49,16 @@ setup_backend()
     case "$1" in
     "loopback")
         ;;
+    "um")
+	# only intel arch is capable with um-net backent
+	if [ -z "$LKL_HOST_CONFIG_UML_DEV" ]; then
+            return $TEST_SKIP
+	fi
+	# slirp's helper process doesn't work with valgrind
+	if [ -n "$VALGRIND" ]; then
+            return $TEST_SKIP
+	fi
+        ;;
     *)
         echo "don't know how to setup backend $1"
         return $TEST_FAILED
@@ -59,6 +71,12 @@ run_tests()
     case "$1" in
     "loopback")
         lkl_test_exec $script_dir/net-test --dst 127.0.0.1
+        ;;
+    "um")
+        lkl_test_exec $script_dir/net-test --backend um \
+                      --ifname $TEST_UM_SLIRP_PARMS \
+                      --ip 10.0.2.15 --netmask-len 8 \
+                      --dst 10.0.2.2
         ;;
     esac
 }

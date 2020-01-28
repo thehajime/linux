@@ -41,6 +41,8 @@ define posix_host
   $(if $(strip $(call find_include,archive.h)),$(call set_autoconf_var,ARCHIVE,y))
   $(if $(filter $(1),elf64-x86-64-freebsd),$(call set_autoconf_var,NEEDS_LARGP,y))
   $(if $(filter $(1),elf32-i386),$(call set_autoconf_var,I386,y))
+  $(if $(filter $(1),elf64-x86-64),$(call set_autoconf_var,UML_DEV,y))
+  $(if $(filter $(1),elf32-i386),$(call set_autoconf_var,UML_DEV,y))
 endef
 
 define do_autoconf

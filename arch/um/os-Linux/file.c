@@ -397,6 +397,14 @@ int os_pipe(int *fds, int stream, int close_on_exec)
 	return err;
 }
 
+static void sig_handler(int sig)
+{
+	if (sig != SIGIO)
+		return;
+
+	sigio_handler(sig, NULL, NULL);
+}
+
 int os_set_fd_async(int fd)
 {
 	int err, flags;
@@ -413,6 +421,7 @@ int os_set_fd_async(int fd)
 		return err;
 	}
 
+	signal(SIGIO, sig_handler);
 	if ((fcntl(fd, F_SETSIG, SIGIO) < 0) ||
 	    (fcntl(fd, F_SETOWN, os_getpid()) < 0)) {
 		err = -errno;

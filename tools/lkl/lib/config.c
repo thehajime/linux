@@ -470,6 +470,12 @@ static int lkl_config_netdev_create(struct lkl_config *cfg,
 	memset(&nd_args, 0, sizeof(struct lkl_netdev_args));
 
 	if (!nd && iface->iftype && iface->ifparams) {
+		if ((strcmp(iface->iftype, "um") == 0)) {
+			nd = lkl_um_netdev_create(iface->ifparams);
+			iface->nd = nd;
+			/* um_netdev doesn't use virtio device */
+			return 0;
+		}
 	}
 
 	if (nd) {

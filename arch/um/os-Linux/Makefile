@@ -6,9 +6,14 @@
 # Don't instrument UML-specific code
 KCOV_INSTRUMENT                := n
 
+ifeq ($(UMMODE),kernel)
 obj-y = execvp.o file.o helper.o irq.o main.o mem.o process.o \
 	registers.o sigio.o signal.o start_up.o time.o tty.o \
 	umid.o user_syms.o util.o drivers/ skas/
+else
+obj-y = execvp.o file.o helper.o irq.o drivers/
+endif
+
 
 obj-$(CONFIG_ARCH_REUSE_HOST_VSYSCALL_AREA) += elf_aux.o
 
