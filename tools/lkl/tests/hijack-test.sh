@@ -697,6 +697,12 @@ export LD_LIBRARY_PATH=${base_objdir}/lib/hijack/:$LD_LIBRARY_PATH
 # And make sure we clean up when we're done
 trap "clear_wdir &>/dev/null" EXIT
 
+if [ -z "$LKL_HOST_CONFIG_I386" ]; then
+    lkl_test_plan 0 "hijack tests on non-i386 platform"
+    echo "XXX: temporary disabled"
+    exit
+fi
+
 lkl_test_plan 5 "hijack basic tests"
 lkl_test_run 1 run_hijack ip addr
 lkl_test_run 2 run_hijack ip route
