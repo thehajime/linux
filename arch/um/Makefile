@@ -41,7 +41,7 @@ ifneq ($(filter $(SUBARCH),x86 x86_64 i386),)
 endif
 
 ifdef CONFIG_X86_64
-	KBUILD_CFLAGS += -mcmodel=large
+#	KBUILD_CFLAGS += -mcmodel=large
 endif
 
 HOST_DIR := arch/$(HEADER_ARCH)
