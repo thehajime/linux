@@ -24,9 +24,13 @@ OS := $(shell uname -s)
 # features.
 SHELL := /bin/bash
 
+include $(ARCH_DIR)/lkl/auto.conf
+
+ifneq (,$(filter $(OUTPUT_FORMAT),elf64-x86-64 elf32-i386))
 core-y			+= $(ARCH_DIR)/kernel/		\
 			   $(ARCH_DIR)/drivers/		\
 			   $(ARCH_DIR)/os-$(OS)/
+endif
 
 MODE_INCLUDE	+= -I$(srctree)/$(ARCH_DIR)/include/shared/skas
 
@@ -43,8 +47,9 @@ endif
 HOST_DIR := arch/$(HEADER_ARCH)
 
 include $(ARCH_DIR)/Makefile-skas
+ifneq (,$(filter $(OUTPUT_FORMAT),elf64-x86-64 elf32-i386))
 include $(HOST_DIR)/Makefile.um
-
+endif
 
 
 SHARED_HEADERS	:= $(ARCH_DIR)/include/shared
@@ -113,10 +118,14 @@ define archhelp
 endef
 
 archheaders:
+ifneq (,$(filter $(OUTPUT_FORMAT),elf64-x86-64 elf32-i386))
 	$(Q)$(MAKE) -f $(srctree)/Makefile ARCH=$(HEADER_ARCH) asm-generic archheaders
+endif
 
 archprepare:
+ifneq (,$(filter $(OUTPUT_FORMAT),elf64-x86-64 elf32-i386))
 	$(Q)$(MAKE) $(build)=$(HOST_DIR)/um include/generated/user_constants.h
+endif
 
 LINK-$(CONFIG_LD_SCRIPT_STATIC) += -static
 LINK-$(CONFIG_LD_SCRIPT_DYN) += -Wl,-rpath,/lib $(call cc-option, -no-pie)
@@ -155,8 +164,6 @@ export HEADER_ARCH SUBARCH USER_CFLAGS CFLAGS_NO_HARDENING OS DEV_NULL_PATH
 # select mode of UML build
 UMMODE ?= kernel
 LKL_DIR := $(ARCH_DIR)/lkl
-
-include $(ARCH_DIR)/lkl/auto.conf
 
 ifeq ($(UMMODE),kernel)
 	include $(ARCH_DIR)/Makefile.um
