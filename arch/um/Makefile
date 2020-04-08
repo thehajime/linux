@@ -105,10 +105,18 @@ linux.o: vmlinux
 	@echo '  LINK $@'
 	$(Q)ln -f $< $@
 
-install: linux.o
+install: linux.o $(objtree)/$(ARCH_DIR)/include/generated/uapi/asm/syscall_defs.h headers
 	@echo "  INSTALL	$(INSTALL_PATH)/lib/linux.o"
 	@mkdir -p $(INSTALL_PATH)/lib/
 	@cp linux.o $(INSTALL_PATH)/lib/
+	$(Q)$(srctree)/$(ARCH_DIR)/scripts/headers_install.py \
+		$(subst -j,-j$(NPROC),$(findstring -j,$(MAKEFLAGS))) \
+		$(INSTALL_PATH)/include
+
+$(objtree)/$(ARCH_DIR)/include/generated/uapi/asm/syscall_defs.h: vmlinux
+	$(OBJCOPY) -j .syscall_defs -O binary --set-section-flags .syscall_defs=alloc $< $@
+	$(Q) export tmpfile=$(shell mktemp); \
+	sed 's/\x0//g' $@ > $$tmpfile; mv $$tmpfile $@ ; rm -f $$tmpfile
 
 define archhelp
   echo '* linux		- Binary kernel image (./linux) - for backward'

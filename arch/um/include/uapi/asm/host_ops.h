@@ -10,6 +10,8 @@
  *
  */
 struct lkl_host_operations {
+	int (*register_irq_fd)(int irq, int fd, int type, void *dev_id);
+	void (*unregister_irq_fd)(int irq, int fd);
 };
 
 #endif

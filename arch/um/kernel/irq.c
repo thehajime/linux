@@ -19,6 +19,7 @@
 #include <kern_util.h>
 #include <os.h>
 #include <irq_user.h>
+#include <asm/host_ops.h>
 
 
 extern void free_irqs(void);
@@ -353,9 +354,12 @@ static void free_irq_by_irq_and_dev(unsigned int irq, void *dev)
 	spin_unlock_irqrestore(&irq_lock, flags);
 }
 
-
+//#define USE_LKL_OPS
 void deactivate_fd(int fd, int irqnum)
 {
+#ifdef USE_LKL_OPS
+	lkl_ops->unregister_irq_fd(irqnum, fd);
+#else
 	struct irq_entry *to_free;
 	unsigned long flags;
 
@@ -373,6 +377,7 @@ void deactivate_fd(int fd, int irqnum)
 	garbage_collect_irq_entries();
 	spin_unlock_irqrestore(&irq_lock, flags);
 	ignore_sigio_fd(fd);
+#endif
 }
 EXPORT_SYMBOL(deactivate_fd);
 
@@ -436,7 +441,11 @@ int um_request_irq(unsigned int irq, int fd, int type,
 	int err;
 
 	if (fd != -1) {
+#ifdef USE_LKL_OPS
+		err = lkl_ops->register_irq_fd(irq, fd, type, dev_id);
+#else
 		err = activate_fd(irq, fd, type, dev_id);
+#endif
 		if (err)
 			return err;
 	}
@@ -597,3 +606,6 @@ unsigned long from_irq_stack(int nested)
 	return mask & ~1;
 }
 
+int lkl_trigger_irq(int irq)
+{
+}

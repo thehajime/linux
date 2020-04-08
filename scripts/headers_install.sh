@@ -99,6 +99,9 @@ include/uapi/linux/raw.h:CONFIG_MAX_RAW_DEVS
 for c in $configs
 do
 	warn=1
+	if [ "$SRCARCH" = "um" ] ; then
+		break
+	fi
 
 	for ignore in $config_leak_ignores
 	do
