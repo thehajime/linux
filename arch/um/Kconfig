@@ -21,6 +21,7 @@ config UML
 	select HAVE_GCC_PLUGINS
 	select TTY # Needed for line.c
 	select MODULE_REL_CRCS if MODVERSIONS
+	select ARCH_HAS_SYSCALL_WRAPPER
 
 config MMU
 	bool
