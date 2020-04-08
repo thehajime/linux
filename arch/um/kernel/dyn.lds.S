@@ -48,12 +48,14 @@ SECTIONS
   .rela.got       : { *(.rela.got) }
   .rel.bss        : { *(.rel.bss .rel.bss.* .rel.gnu.linkonce.b.*) }
   .rela.bss       : { *(.rela.bss .rela.bss.* .rela.gnu.linkonce.b.*) }
+#ifdef CONFIG_X86_32
   .rel.plt : {
 	*(.rel.plt)
 	PROVIDE_HIDDEN(__rel_iplt_start = .);
 	*(.rel.iplt)
 	PROVIDE_HIDDEN(__rel_iplt_end = .);
   }
+#endif
   .rela.plt : {
 	*(.rela.plt)
 	PROVIDE_HIDDEN(__rela_iplt_start = .);
@@ -105,10 +107,16 @@ SECTIONS
   .preinit_array     : { *(.preinit_array) }
   .init_array     : { *(.init_array) }
   .fini_array     : { *(.fini_array) }
-  .data           : {
+  . = ALIGN(KERNEL_STACK_SIZE);
+  .data..init_task     : {
     INIT_TASK_DATA(KERNEL_STACK_SIZE)
     . = ALIGN(KERNEL_STACK_SIZE);
+  }
+  .data..init_irqstack     : {
+    . = ALIGN(KERNEL_STACK_SIZE);
     *(.data..init_irqstack)
+  }
+  .data           : {
     DATA_DATA
     *(.data.* .gnu.linkonce.d.*)
     SORT(CONSTRUCTORS)

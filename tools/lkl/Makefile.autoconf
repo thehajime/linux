@@ -30,10 +30,10 @@ endef
 
 define posix_host
   $(call set_autoconf_var,POSIX,y)
-  LDFLAGS += -pie
-  CFLAGS += -fPIC -pthread
+  LDFLAGS += -no-pie
+  CFLAGS += -pthread
   SOSUF := .so
-  LDLIBS += -lrt -lpthread
+  LDLIBS += -lrt -lpthread -lutil
   $(if $(filter $(1),elf64-x86-64-freebsd),$(call bsd_host))
   $(if $(filter $(1),elf32-littlearm),$(call arm_host))
   $(if $(filter $(1),elf64-littleaarch64),$(call aarch64_host))

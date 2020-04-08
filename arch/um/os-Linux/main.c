@@ -104,7 +104,7 @@ static void setup_env_path(void)
 
 extern void scan_elf_aux( char **envp);
 
-int __init main(int argc, char **argv, char **envp)
+int __init uml_main(int argc, char **argv, char **envp)
 {
 	char **new_argv;
 	int ret, i, err;

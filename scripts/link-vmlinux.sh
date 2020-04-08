@@ -69,34 +69,17 @@ vmlinux_link()
 	# skip output file argument
 	shift
 
-	if [ "${SRCARCH}" != "um" ]; then
-		objects="--whole-archive			\
-			${KBUILD_VMLINUX_OBJS}			\
-			--no-whole-archive			\
-			--start-group				\
-			${KBUILD_VMLINUX_LIBS}			\
-			--end-group				\
-			${@}"
+	objects="--whole-archive			\
+		${KBUILD_VMLINUX_OBJS}			\
+		--no-whole-archive			\
+		--start-group				\
+		${KBUILD_VMLINUX_LIBS}			\
+		--end-group				\
+		${@}"
 
-		${LD} ${KBUILD_LDFLAGS} ${LDFLAGS_vmlinux}	\
-			-o ${output}				\
-			-T ${lds} ${objects}
-	else
-		objects="-Wl,--whole-archive			\
-			${KBUILD_VMLINUX_OBJS}			\
-			-Wl,--no-whole-archive			\
-			-Wl,--start-group			\
-			${KBUILD_VMLINUX_LIBS}			\
-			-Wl,--end-group				\
-			${@}"
-
-		${CC} ${CFLAGS_vmlinux}				\
-			-o ${output}				\
-			-Wl,-T,${lds}				\
-			${objects}				\
-			-lutil -lrt -lpthread
-		rm -f linux
-	fi
+	${LD} ${KBUILD_LDFLAGS} ${LDFLAGS_vmlinux}	\
+		-o ${output}				\
+		-T ${lds} ${objects}
 }
 
 # generate .BTF typeinfo from DWARF debuginfo

@@ -1,0 +1,2 @@
+progs-y += uml
+LDFLAGS_uml-y := -Wl,--wrap,malloc -Wl,--wrap,free -Wl,--wrap,calloc -Wl,-T$(srctree)/tools/lkl/uml-bin.lds

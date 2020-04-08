@@ -68,6 +68,10 @@ $(OUTPUT)lib/lkl.o: bin/stat
 	$(Q)export PATH=$(shell pwd)/bin/:${PATH} ;\
 	$(MAKE) -C $(srctree) ARCH=um UMMODE=library $(KOPT) install INSTALL_PATH=$(OUTPUT)
 
+$(OUTPUT)lib/linux.o:
+	$(MAKE) -C $(srctree) ARCH=um $(KOPT) $(KCONFIG)
+	$(MAKE) -C $(srctree) ARCH=um UMMODE=kernel $(KOPT) CFLAGS="" install INSTALL_PATH=$(OUTPUT)
+
 # rules to link libs
 $(OUTPUT)%$(SOSUF): LDFLAGS += -shared
 $(OUTPUT)%$(SOSUF): $(OUTPUT)%-in.o $(OUTPUT)liblkl.a
@@ -75,15 +79,15 @@ $(OUTPUT)%$(SOSUF): $(OUTPUT)%-in.o $(OUTPUT)liblkl.a
 
 # liblkl is special
 $(OUTPUT)liblkl$(SOSUF): $(OUTPUT)%-in.o $(OUTPUT)lib/lkl.o
-$(OUTPUT)liblkl.a: $(OUTPUT)lib/liblkl-in.o $(OUTPUT)lib/lkl.o
+$(OUTPUT)liblkl.a: $(OUTPUT)lib/linux.o
 	$(QUIET_AR)$(AR) -rc $@ $^
 
 # rule to link programs
-$(OUTPUT)%$(EXESUF): $(OUTPUT)%-in.o $(OUTPUT)liblkl.a
-	$(QUIET_LINK)$(CC) $(LDFLAGS) $(LDFLAGS_$*-y) -o $@ $^ $(LDLIBS) $(LDLIBS_$*-y)
+$(OUTPUT)%$(EXESUF): $(OUTPUT)liblkl.a $(OUTPUT)%-in.o
+	$(QUIET_LINK)$(CC) $(LDFLAGS) $(LDFLAGS_$*-y) -o $@ -Wl,--whole-archive $^ $(LDLIBS) $(LDLIBS_$*-y) -Wl,--no-whole-archive
 
 # rule to build objects
-$(OUTPUT)%-in.o: $(OUTPUT)lib/lkl.o FORCE
+$(OUTPUT)%-in.o: $(OUTPUT)lib/linux.o FORCE
 	$(Q)$(MAKE) -f $(srctree)/tools/build/Makefile.build dir=$(patsubst %/,%,$(dir $*)) obj=$(notdir $*)
 
 
