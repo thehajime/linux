@@ -1,1 +1,2 @@
 liblkl-$(LKL_HOST_CONFIG_POSIX) += posix-host.o
+liblkl-y += um/
