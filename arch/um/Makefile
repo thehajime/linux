@@ -95,14 +95,20 @@ KBUILD_CPPFLAGS += -I$(srctree)/$(HOST_DIR)/include \
 KERNEL_DEFINES = $(strip -Derrno=kernel_errno -Dsigprocmask=kernel_sigprocmask \
 			 -Dmktime=kernel_mktime $(ARCH_KERNEL_DEFINES))
 KBUILD_CFLAGS += $(KERNEL_DEFINES)
+LDFLAGS_vmlinux += -r
 
-PHONY += linux
+PHONY += linux.o
 
-all: linux
+all: linux.o
 
-linux: vmlinux
+linux.o: vmlinux
 	@echo '  LINK $@'
-	$(Q)ln -f $< $@
+	$(Q)$(OBJCOPY) -R .eh_frame $< $@
+
+install: linux.o
+	@echo "  INSTALL $(INSTALL_PATH)/lib/$<"
+	@mkdir -p $(INSTALL_PATH)/lib/
+	@cp $< $(INSTALL_PATH)/lib/
 
 define archhelp
   echo '* linux		- Binary kernel image (./linux) - for backward'
