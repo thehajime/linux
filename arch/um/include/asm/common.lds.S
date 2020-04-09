@@ -45,8 +45,37 @@
   PERCPU_SECTION(32)
 	
   .initcall.init : {
-	INIT_CALLS
+	__initcall_start = .;
+	KEEP(*(.initcallearly.init))
   }
+  .initcall0.init : {
+	INIT_CALLS_LEVEL(0)
+  }
+  .initcall1.init : {
+	INIT_CALLS_LEVEL(1)
+  }
+  .initcall2.init : {
+	INIT_CALLS_LEVEL(2)
+  }
+  .initcall3.init : {
+	INIT_CALLS_LEVEL(3)
+  }
+  .initcall4.init : {
+	INIT_CALLS_LEVEL(4)
+  }
+  .initcall5.init : {
+	INIT_CALLS_LEVEL(5)
+  }
+  .initcallrootfs.init : {
+	INIT_CALLS_LEVEL(rootfs)
+  }
+  .initcall6.init : {
+	INIT_CALLS_LEVEL(6)
+  }
+  .initcall7.init : {
+	INIT_CALLS_LEVEL(7)
+  }
+  __initcall_end = .;
 
   .con_initcall.init : {
 	CON_INITCALL

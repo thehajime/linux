@@ -173,6 +173,44 @@ SECTIONS
     . = ALIGN(KERNEL_STACK_SIZE);
     *(.data..init_irqstack)
   }
+  .initcall.init : {
+	__initcall_start = .;
+	KEEP(*(.initcallearly.init))
+	*(.initcall0.init)
+  }
+  .initcall1.init : {
+	__initcall1_start = .;
+	*(.initcall1.init)
+  }
+  .initcall2.init : {
+	*(.initcall2.init)
+	*(.initcall3.init)
+	*(.initcall4.init)
+	*(.initcall5.init)
+	*(.initcallrootfs.init)
+	*(.initcall6.init)
+	*(.initcall7.init)
+  }
+  .uml.setup.init : {
+	__uml_setup_start = .;
+	*(.uml.setup.init)
+	__uml_setup_end = .;
+  }
+  .uml.help.init : {
+	__uml_help_start = .;
+	*(.uml.help.init)
+	__uml_help_end = .;
+  }
+  .uml.postsetup.init : {
+	__uml_postsetup_start = .;
+	*(.uml.postsetup.init)
+	__uml_postsetup_end = .;
+  }
+  .uml.exitcall : {
+	__uml_exitcall_begin = .;
+	*(.uml.exitcall.exit)
+	__uml_exitcall_end = .;
+  }
   .data           :
   {
     *(.data .data.* .gnu.linkonce.d.*)
