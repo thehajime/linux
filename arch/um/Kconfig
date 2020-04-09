@@ -20,6 +20,7 @@ config UML
 	select GENERIC_CLOCKEVENTS
 	select HAVE_GCC_PLUGINS
 	select TTY # Needed for line.c
+	select MODULE_REL_CRCS if MODVERSIONS
 
 config MMU
 	bool
@@ -72,17 +73,6 @@ config STATIC_LINK
 	  you probably want to say Y here.
 	  Additionally, this option enables using higher memory spaces (up to
 	  2.75G) for UML.
-
-config LD_SCRIPT_STATIC
-	bool
-	default y
-	depends on STATIC_LINK
-
-config LD_SCRIPT_DYN
-	bool
-	default y
-	depends on !LD_SCRIPT_STATIC
-	select MODULE_REL_CRCS if MODVERSIONS
 
 config HOSTFS
 	tristate "Host filesystem"
