@@ -14,6 +14,7 @@ liblinux-y += execvp.o file.o helper.o irq.o main.o mem.o process.o \
 
 CFLAGS_signal.o += -Wframe-larger-than=4096
 
+liblinux-y += x86/
 liblinux-$(CONFIG_ARCH_REUSE_HOST_VSYSCALL_AREA) += elf_aux.o
 
 export O = $(srctree)
