@@ -13,6 +13,7 @@
 #undef strstr
 #undef memcpy
 #undef memset
+#define EXPORT_SYMBOL(x)
 
 extern size_t strlen(const char *);
 extern void *memmove(void *, const void *, size_t);

@@ -41,7 +41,9 @@
 typedef int (*initcall_t)(void);
 typedef void (*exitcall_t)(void);
 
-#include <linux/compiler_types.h>
+//#include <linux/compiler_types.h>
+#define __used                          __attribute__((__used__))
+#define __section(S)                    __attribute__((__section__(#S)))
 
 /* These are for everybody (although not all archs will actually
    discard it in modules) */

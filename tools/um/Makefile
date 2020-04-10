@@ -49,7 +49,7 @@ $(OUTPUT)lib/linux.o:
 	$(Q)CFLAGS= $(MAKE) -C ../.. ARCH=um $(KOPT) $(KCONFIG)
 	$(Q)CFLAGS= $(MAKE) -C ../.. ARCH=um $(KOPT) install INSTALL_PATH=$(OUTPUT)
 
-$(OUTPUT)liblinux.a: $(OUTPUT)lib/linux.o
+$(OUTPUT)liblinux.a: $(OUTPUT)lib/liblinux-in.o $(OUTPUT)lib/linux.o
 	$(QUIET_AR)$(AR) -rc $@ $^
 
 # rule to link programs
@@ -57,6 +57,10 @@ $(OUTPUT)%: $(OUTPUT)%-in.o $(OUTPUT)liblinux.a
 	$(QUIET_LINK)$(CC) $(LDFLAGS) $(LDFLAGS_$(notdir $*)-y) -o $@ $^ $(LDLIBS) $(LDLIBS_$(notdir $*)-y)
 
 $(OUTPUT)%-in.o: $(OUTPUT)liblinux.a FORCE
+	$(Q)$(MAKE) -f $(srctree)/tools/build/Makefile.build dir=$(patsubst %/,%,$(dir $*)) obj=$(notdir $*)
+
+# rule to build objects
+$(OUTPUT)%-in.o: $(OUTPUT)lib/linux.o
 	$(Q)$(MAKE) -f $(srctree)/tools/build/Makefile.build dir=$(patsubst %/,%,$(dir $*)) obj=$(notdir $*)
 
 clean:
@@ -67,3 +71,4 @@ clean:
 
 FORCE: ;
 .PHONY: all clean FORCE
+.IGNORE: clean
