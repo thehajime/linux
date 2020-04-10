@@ -6,6 +6,42 @@
 #include <asm/cache.h>
 #include <linux/export.h>
 
+#undef INIT_CALLS_LEVEL
+#define INIT_CALLS_LEVEL(level)						\
+	.initcall##level##.init : {					\
+		__initcall##level##_start = .;				\
+		KEEP(*(.initcall##level##.init))			\
+		KEEP(*(.initcall##level##s.init))			\
+	}								\
+
+#undef INIT_CALLS
+#define INIT_CALLS						\
+	.initcall.start : {					\
+		__initcall_start = .;				\
+		KEEP(*(.initcallearly.init))			\
+	}							\
+	INIT_CALLS_LEVEL(0)					\
+	INIT_CALLS_LEVEL(1)					\
+	INIT_CALLS_LEVEL(2)					\
+	INIT_CALLS_LEVEL(3)					\
+	INIT_CALLS_LEVEL(4)					\
+	INIT_CALLS_LEVEL(5)					\
+	INIT_CALLS_LEVEL(rootfs)				\
+	INIT_CALLS_LEVEL(6)					\
+	INIT_CALLS_LEVEL(7)					\
+	__initcall_end = .;
+
+#define UM_INIT_DATA_SECTION(initsetup_align)				\
+	.init.data : AT(ADDR(.init.data) - LOAD_OFFSET) {		\
+		INIT_DATA						\
+		INIT_SETUP(initsetup_align)				\
+	}								\
+	INIT_CALLS						\
+	.init.data2 : AT(ADDR(.init.data2) - LOAD_OFFSET) {		\
+		CON_INITCALL						\
+		INIT_RAM_FS						\
+	}								\
+
 OUTPUT_FORMAT(ELF_FORMAT)
 jiffies = jiffies_64;
 
@@ -15,7 +51,7 @@ SECTIONS
 	__init_begin = . ;
 	HEAD_TEXT_SECTION
 	INIT_TEXT_SECTION(PAGE_SIZE)
-	INIT_DATA_SECTION(16)
+	UM_INIT_DATA_SECTION(16)
 	PERCPU_SECTION(L1_CACHE_BYTES)
 	__init_end = . ;
 
