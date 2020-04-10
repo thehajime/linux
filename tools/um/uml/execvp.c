@@ -26,12 +26,8 @@
 #include <errno.h>
 #include <limits.h>
 
-#ifndef TEST
-#include <um_malloc.h>
-#else
 #include <stdio.h>
 #define um_kmalloc malloc
-#endif
 #include <os.h>
 
 /* Execute FILE, searching in the `PATH' environment variable if it contains
