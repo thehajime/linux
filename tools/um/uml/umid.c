@@ -218,13 +218,14 @@ static int umdir_take_if_dead(char *dir)
 static void __init create_pid_file(void)
 {
 	char pid[sizeof("nnnnn\0")], *file;
-	int fd, n;
+	int fd, n, len;
 
-	file = malloc(strlen(uml_dir) + UMID_LEN + sizeof("/pid\0"));
+	len = strlen(uml_dir) + UMID_LEN + sizeof("/pid\0");
+	file = malloc(len);
 	if (!file)
 		return;
 
-	if (umid_file_name("pid", file, sizeof(file)))
+	if (umid_file_name("pid", file, len))
 		goto out;
 
 	fd = open(file, O_RDWR | O_CREAT | O_EXCL, 0644);
