@@ -513,3 +513,14 @@ static int init_pm_wake_signal(void)
 
 late_initcall(init_pm_wake_signal);
 #endif
+
+int __weak os_initcalls(void)
+{
+	return 0;
+}
+
+int __init run_os_initcalls(void)
+{
+	return os_initcalls();
+}
+early_initcall(run_os_initcalls);
