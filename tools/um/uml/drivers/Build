@@ -6,5 +6,5 @@
 include $(O)/include/config/auto.conf
 
 
-linux-$(CONFIG_UML_NET_ETHERTAP) += ethertap_user.o
-linux-$(CONFIG_UML_NET_TUNTAP) += tuntap_user.o
+liblinux-$(CONFIG_UML_NET_ETHERTAP) += ethertap_user.o
+liblinux-$(CONFIG_UML_NET_TUNTAP) += tuntap_user.o

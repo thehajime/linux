@@ -49,7 +49,7 @@ $(OUTPUT)lib/linux.o:
 	$(Q)CFLAGS= $(MAKE) -C ../.. ARCH=um $(KOPT) $(KCONFIG)
 	$(Q)CFLAGS= $(MAKE) -C ../.. ARCH=um $(KOPT) install INSTALL_PATH=$(OUTPUT)
 
-$(OUTPUT)liblinux.a: $(OUTPUT)lib/liblinux-in.o $(OUTPUT)lib/linux.o
+$(OUTPUT)liblinux.a: $(OUTPUT)lib/liblinux-in.o $(OUTPUT)uml/liblinux-in.o $(OUTPUT)lib/linux.o
 	$(QUIET_AR)$(AR) -rc $@ $^
 
 # rule to link programs
