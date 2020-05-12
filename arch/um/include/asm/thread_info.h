@@ -15,6 +15,7 @@
 #include <asm/page.h>
 #include <asm/segment.h>
 #include <sysdep/ptrace_user.h>
+#include <asm/host_ops.h>
 
 struct thread_info {
 	struct task_struct	*task;		/* main task structure */
@@ -26,9 +27,17 @@ struct thread_info {
 					 	   0-0xBFFFFFFF for user
 						   0-0xFFFFFFFF for kernel */
 	struct thread_info	*real_thread;    /* Points to non-IRQ stack */
+	struct lkl_sem *sched_sem;
+	bool dead;
+	lkl_thread_t tid;
+	struct task_struct *prev_sched;
 	unsigned long aux_fp_regs[FP_SIZE];	/* auxiliary fp_regs to save/restore
 						   them out-of-band */
+	unsigned long stackend;
 };
+
+void threads_init(void);
+void threads_cleanup(void);
 
 #define INIT_THREAD_INFO(tsk)			\
 {						\
@@ -40,6 +49,7 @@ struct thread_info {
 	.real_thread = NULL,			\
 }
 
+#ifdef CONFIG_MMU
 /* how to get the thread information struct from C */
 static inline struct thread_info *current_thread_info(void)
 {
@@ -51,6 +61,22 @@ static inline struct thread_info *current_thread_info(void)
 	ti = (struct thread_info *) (((unsigned long)p) & ~mask);
 	return ti;
 }
+#else
+#define __HAVE_THREAD_FUNCTIONS
+#define task_thread_info(task)	((struct thread_info *)(task)->stack)
+#define task_stack_page(task)	((task)->stack)
+void setup_thread_stack(struct task_struct *p, struct task_struct *org);
+#define end_of_stack(p) (&task_thread_info(p)->stackend)
+
+unsigned long *alloc_thread_stack_node(struct task_struct *, int node);
+void free_thread_stack(struct task_struct *tsk);
+
+extern struct thread_info *_current_thread_info;
+static inline struct thread_info *current_thread_info(void)
+{
+	return _current_thread_info;
+}
+#endif /* CONFIG_MMU */
 
 #endif
 

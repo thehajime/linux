@@ -58,23 +58,6 @@ int pid_to_processor_id(int pid)
 	return -1;
 }
 
-void free_stack(unsigned long stack, int order)
-{
-	free_pages(stack, order);
-}
-
-unsigned long alloc_stack(int order, int atomic)
-{
-	unsigned long page;
-	gfp_t flags = GFP_KERNEL;
-
-	if (atomic)
-		flags = GFP_ATOMIC;
-	page = __get_free_pages(flags, order);
-
-	return page;
-}
-
 static inline void set_current(struct task_struct *task)
 {
 	cpu_tasks[task_thread_info(task)->cpu] = ((struct cpu_task)
@@ -83,6 +66,7 @@ static inline void set_current(struct task_struct *task)
 
 extern void arch_switch_to(struct task_struct *to);
 
+#ifdef CONFIG_MMU
 void *__switch_to(struct task_struct *from, struct task_struct *to)
 {
 	to->thread.prev_sched = from;
@@ -93,6 +77,7 @@ void *__switch_to(struct task_struct *from, struct task_struct *to)
 
 	return current->thread.prev_sched;
 }
+#endif /* CONFIG_MMU */
 
 void interrupt_end(void)
 {
@@ -137,7 +122,9 @@ void new_thread_handler(void)
 /* Called magically, see new_thread_handler above */
 void fork_handler(void)
 {
+#ifdef CONFIG_MMU
 	force_flush_all();
+#endif
 
 	schedule_tail(current->thread.prev_sched);
 
@@ -153,6 +140,7 @@ void fork_handler(void)
 	userspace(&current->thread.regs.regs, current_thread_info()->aux_fp_regs);
 }
 
+#ifdef CONFIG_MMU
 int copy_thread_tls(unsigned long clone_flags, unsigned long sp,
 		unsigned long arg, struct task_struct * p, unsigned long tls)
 {
@@ -181,6 +169,7 @@ int copy_thread_tls(unsigned long clone_flags, unsigned long sp,
 
 	new_thread(task_stack_page(p), &p->thread.switch_buf, handler);
 
+#ifdef CONFIG_MMU
 	if (!kthread) {
 		clear_flushed_tls(p);
 
@@ -190,16 +179,20 @@ int copy_thread_tls(unsigned long clone_flags, unsigned long sp,
 		if (clone_flags & CLONE_SETTLS)
 			ret = arch_set_tls(p, tls);
 	}
+#endif /* CONFIG_MMU */
 
 	return ret;
 }
+#endif /* CONFIG_MMU */
 
 void initial_thread_cb(void (*proc)(void *), void *arg)
 {
 	int save_kmalloc_ok = kmalloc_ok;
 
 	kmalloc_ok = 0;
+#ifdef CONFIG_MMU
 	initial_thread_cb_skas(proc, arg);
+#endif /* CONFIG_MMU */
 	kmalloc_ok = save_kmalloc_ok;
 }
 
@@ -281,12 +274,6 @@ void do_uml_exitcalls(void)
 	while (--call >= &__uml_exitcall_begin)
 		(*call)();
 }
-
-char *uml_strdup(const char *string)
-{
-	return kstrdup(string, GFP_KERNEL);
-}
-EXPORT_SYMBOL(uml_strdup);
 
 int copy_to_user_proc(void __user *to, void *from, int size)
 {

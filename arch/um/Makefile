@@ -26,6 +26,10 @@ SHELL := /bin/bash
 core-y			+= $(ARCH_DIR)/kernel/		\
 			   $(ARCH_DIR)/drivers/
 
+ifdef CONFIG_MMU
+core-y			+= $(ARCH_DIR)/os-$(OS)/skas/
+endif
+
 MODE_INCLUDE	+= -I$(srctree)/$(ARCH_DIR)/include/shared/skas
 
 HEADER_ARCH 	:= $(SUBARCH)
@@ -43,7 +47,9 @@ HOST_DIR := arch/$(HEADER_ARCH)
 include $(ARCH_DIR)/Makefile-skas
 include $(HOST_DIR)/Makefile.um
 
+ifdef CONFIG_MMU
 core-y += $(HOST_DIR)/um/
+endif
 
 SHARED_HEADERS	:= $(ARCH_DIR)/include/shared
 ARCH_INCLUDE	:= -I$(srctree)/$(SHARED_HEADERS)
@@ -102,7 +108,7 @@ all: linux.o
 
 linux.o: vmlinux
 	@echo '  LINK $@'
-	$(Q)$(OBJCOPY) -R .eh_frame $< $@
+	$(OBJCOPY) -R .eh_frame -L sem_init -L sem_post -L sem_wait -L sem_destroy vmlinux linux.o
 
 install: linux.o $(objtree)/$(ARCH_DIR)/include/generated/uapi/asm/syscall_defs.h headers
 	@echo "  INSTALL $(INSTALL_PATH)/lib/$<"

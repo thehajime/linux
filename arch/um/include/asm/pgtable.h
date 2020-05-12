@@ -8,6 +8,7 @@
 #ifndef __UM_PGTABLE_H
 #define __UM_PGTABLE_H
 
+
 #include <asm/fixmap.h>
 
 #define _PAGE_PRESENT	0x001
@@ -21,6 +22,11 @@
 #define _PAGE_PROTNONE	0x010	/* if the user mapped it with PROT_NONE;
 				   pte_present gives true */
 
+/* zero page used for uninitialized stuff */
+extern unsigned long *empty_zero_page;
+
+#ifdef CONFIG_MMU
+
 #ifdef CONFIG_3_LEVEL_PGTABLES
 #include <asm/pgtable-3level.h>
 #else
@@ -28,9 +34,6 @@
 #endif
 
 extern pgd_t swapper_pg_dir[PTRS_PER_PGD];
-
-/* zero page used for uninitialized stuff */
-extern unsigned long *empty_zero_page;
 
 /* Just any arbitrary offset to the start of the vmalloc VM area: the
  * current 8MB value just means that there will be a 8MB "hole" after the
@@ -371,5 +374,41 @@ do {						\
 	pte_clear(&init_mm, (vaddr), (ptep));	\
 	__flush_tlb_one((vaddr));		\
 } while (0)
+
+#else
+
+#include <asm-generic/pgtable-nopud.h>
+#include <asm-generic/pgtable.h>
+
+#define swapper_pg_dir		((pgd_t *)0)
+
+/*
+ * ZERO_PAGE is a global shared page that is always zero: used
+ * for zero-mapped memory areas etc..
+ */
+#define ZERO_PAGE(vaddr)	(virt_to_page(empty_zero_page))
+
+
+extern unsigned long end_iomem;
+
+#define VMALLOC_OFFSET	(__va_space)
+#define VMALLOC_START ((end_iomem + VMALLOC_OFFSET) & ~(VMALLOC_OFFSET-1))
+#define PKMAP_BASE ((FIXADDR_START - LAST_PKMAP * PAGE_SIZE) & PMD_MASK)
+#define VMALLOC_END	(FIXADDR_START-2*PAGE_SIZE)
+#define MODULES_VADDR	VMALLOC_START
+#define MODULES_END	VMALLOC_END
+#define MODULES_LEN	(MODULES_VADDR - MODULES_END)
+
+#define _PAGE_TABLE	(_PAGE_PRESENT | _PAGE_RW | _PAGE_USER | _PAGE_ACCESSED | _PAGE_DIRTY)
+#define _KERNPG_TABLE	(_PAGE_PRESENT | _PAGE_RW | _PAGE_ACCESSED | _PAGE_DIRTY)
+#define _PAGE_CHG_MASK	(PAGE_MASK | _PAGE_ACCESSED | _PAGE_DIRTY)
+#define PAGE_NONE	__pgprot(_PAGE_PROTNONE | _PAGE_ACCESSED)
+#define PAGE_SHARED	__pgprot(_PAGE_PRESENT | _PAGE_RW | _PAGE_USER | _PAGE_ACCESSED)
+#define PAGE_COPY	__pgprot(_PAGE_PRESENT | _PAGE_USER | _PAGE_ACCESSED)
+#define PAGE_READONLY	__pgprot(_PAGE_PRESENT | _PAGE_USER | _PAGE_ACCESSED)
+#define PAGE_KERNEL	__pgprot(_PAGE_PRESENT | _PAGE_RW | _PAGE_DIRTY | _PAGE_ACCESSED)
+
+#endif /* !CONFIG_MMU */
+
 
 #endif

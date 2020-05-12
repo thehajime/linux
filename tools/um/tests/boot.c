@@ -55,18 +55,22 @@ LKL_TEST_CALL(getpid, lkl_sys_getpid, 1)
 void check_latency(long (*f)(void), long *min, long *max, long *avg)
 {
 	int i;
-	unsigned long long start, stop, sum = 0;
-	static const int count = 1000;
+	struct timespec start, stop;
+	unsigned long long sum = 0;
+	static const int count = 20;
 	long delta;
 
 	*min = 1000000000;
 	*max = -1;
 
 	for (i = 0; i < count; i++) {
-		start = lkl_host_ops.time();
+		clock_gettime(CLOCK_MONOTONIC, &start);
 		f();
-		stop = lkl_host_ops.time();
-		delta = stop - start;
+		clock_gettime(CLOCK_MONOTONIC, &stop);
+
+		delta = 1e9*(stop.tv_sec - start.tv_sec) +
+			(stop.tv_nsec - start.tv_nsec);
+
 		if (*min > delta)
 			*min = delta;
 		if (*max < delta)
@@ -105,7 +109,7 @@ int lkl_test_syscall_latency(void)
 
 #define access_rights 0721
 
-LKL_TEST_CALL(creat, lkl_sys_creat, 0, "/file", access_rights)
+LKL_TEST_CALL(creat, lkl_sys_creat, 3, "/file", access_rights)
 LKL_TEST_CALL(close, lkl_sys_close, 0, 0);
 LKL_TEST_CALL(failopen, lkl_sys_open, -LKL_ENOENT, "/file2", 0, 0);
 LKL_TEST_CALL(umask, lkl_sys_umask, 022,  0777);
@@ -134,12 +138,12 @@ int lkl_test_read(void)
 
 int lkl_test_fstat(void)
 {
-	struct __lkl__old_kernel_stat stat;
+	struct lkl_stat stat;
 	long ret;
 
-	ret = lkl_sys_fstat(0, &stat);
+	ret = lkl_sys_fstat(0, (void *)&stat);
 
-	lkl_test_logf("lkl_sys_fstat=%ld mode=%o size=%d\n", ret, stat.st_mode,
+	lkl_test_logf("lkl_sys_fstat=%ld mode=%o size=%ld\n", ret, stat.st_mode,
 		      stat.st_size);
 
 	if (ret == 0 && stat.st_size == sizeof(wrbuf) &&
@@ -149,16 +153,16 @@ int lkl_test_fstat(void)
 	return TEST_FAILURE;
 }
 
-LKL_TEST_CALL(mkdir, lkl_sys_mkdir, 0, "/mnt", access_rights)
+LKL_TEST_CALL(mkdir, lkl_sys_mkdir, 0, "/proc", access_rights)
 
 int lkl_test_stat(void)
 {
-	struct __lkl__old_kernel_stat stat;
+	struct lkl_stat stat;
 	long ret;
 
-	ret = lkl_sys_stat("/mnt", &stat);
+	ret = lkl_sys_stat("/proc", (void *)&stat);
 
-	lkl_test_logf("lkl_sys_stat(\"/mnt\")=%ld mode=%o\n", ret,
+	lkl_test_logf("lkl_sys_stat(\"/proc\")=%ld mode=%o\n", ret,
 		      stat.st_mode);
 
 	if (ret == 0 && stat.st_mode == (access_rights | LKL_S_IFDIR))
@@ -339,6 +343,8 @@ static int lkl_test_getdents64(void)
 
 LKL_TEST_CALL(close_dir_fd, lkl_sys_close, 0, dir_fd);
 LKL_TEST_CALL(chdir_root, lkl_sys_chdir, 0, "/");
+LKL_TEST_CALL(mount_fs_proc, lkl_sys_mount, 0, "none", "/proc", "proc", 0, NULL);
+LKL_TEST_CALL(umount_fs_proc, lkl_sys_umount, 0, "/proc", 0);
 
 LKL_TEST_CALL(start_kernel, lkl_start_kernel, 0, &lkl_host_ops,
 	     "mem=16M loglevel=8");
@@ -367,11 +373,13 @@ struct lkl_test tests[] = {
 #endif
 	LKL_TEST(pipe2),
 	LKL_TEST(epoll),
+	LKL_TEST(mount_fs_proc),
 	LKL_TEST(chdir_proc),
 	LKL_TEST(open_cwd),
 	LKL_TEST(getdents64),
 	LKL_TEST(close_dir_fd),
 	LKL_TEST(chdir_root),
+	LKL_TEST(umount_fs_proc),
 	LKL_TEST(stop_kernel),
 };
 

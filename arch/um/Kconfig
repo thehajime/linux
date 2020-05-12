@@ -14,7 +14,7 @@ config UML
 	select HAVE_FUTEX_CMPXCHG if FUTEX
 	select HAVE_DEBUG_KMEMLEAK
 	select HAVE_DEBUG_BUGVERBOSE
-	select HAVE_COPY_THREAD_TLS
+	select HAVE_COPY_THREAD_TLS if MMU
 	select GENERIC_IRQ_SHOW
 	select GENERIC_CPU_DEVICES
 	select GENERIC_CLOCKEVENTS
@@ -22,10 +22,17 @@ config UML
 	select TTY # Needed for line.c
 	select MODULE_REL_CRCS if MODVERSIONS
 	select ARCH_HAS_SYSCALL_WRAPPER
+	select UACCESS_MEMCPY
 
 config MMU
 	bool
-	default y
+	default n
+
+config GENERIC_CSUM
+       def_bool y if !MMU
+
+config ARCH_THREAD_STACK_ALLOCATOR
+       def_bool y if !MMU
 
 config NO_IOMEM
 	def_bool y
@@ -51,7 +58,7 @@ config STACKTRACE_SUPPORT
 
 config GENERIC_CALIBRATE_DELAY
 	bool
-	default y
+	default n if !MMU
 
 config HZ
 	int

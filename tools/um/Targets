@@ -1,6 +1,6 @@
-progs-y += uml/linux
+progs-$(CONFIG_MMU) += uml/linux
 progs-y += tests/boot
 
 LDLIBS := -lrt -lpthread -lutil
-LDFLAGS := -no-pie -Wl,--wrap,malloc -Wl,--wrap,free -Wl,--wrap,calloc
+LDFLAGS_linux := -no-pie -Wl,--wrap,malloc -Wl,--wrap,free -Wl,--wrap,calloc
 LDFLAGS_linux-$(UML_STATIC) += -static
