@@ -537,6 +537,9 @@ static unsigned long pending_mask;
 
 unsigned long to_irq_stack(unsigned long *mask_out)
 {
+#ifndef CONFIG_MMU
+	return 0;
+#endif
 	struct thread_info *ti;
 	unsigned long mask, old;
 	int nested;
@@ -581,6 +584,9 @@ unsigned long to_irq_stack(unsigned long *mask_out)
 
 unsigned long from_irq_stack(int nested)
 {
+#ifndef CONFIG_MMU
+	return 0;
+#endif
 	struct thread_info *ti, *to;
 	unsigned long mask;
 

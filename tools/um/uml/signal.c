@@ -136,6 +136,19 @@ void set_sigstack(void *sig_stack, int size)
 		panic("enabling signal stack failed, errno = %d\n", errno);
 }
 
+void lkl_syscall_real_handler(int sig, struct siginfo *unused_si, struct uml_pt_regs *regs);
+void lkl_syscall_handler(int sig, struct siginfo *unused_si, mcontext_t *mc)
+{
+	struct uml_pt_regs regs;
+
+	if (mc != NULL)
+		get_regs_from_mc(&regs, mc);
+	else
+		memset(&regs, 0, sizeof(regs));
+
+	lkl_syscall_real_handler(sig, unused_si, &regs);
+}
+
 static void (*handlers[_NSIG])(int sig, struct siginfo *si, mcontext_t *mc) = {
 	[SIGSEGV] = sig_handler,
 	[SIGBUS] = sig_handler,
@@ -145,7 +158,8 @@ static void (*handlers[_NSIG])(int sig, struct siginfo *si, mcontext_t *mc) = {
 
 	[SIGIO] = sig_handler,
 	[SIGWINCH] = sig_handler,
-	[SIGALRM] = timer_alarm_handler
+	[SIGALRM] = timer_alarm_handler,
+	[SIGUSR2] = lkl_syscall_handler
 };
 
 static void hard_handler(int sig, siginfo_t *si, void *p)
@@ -204,6 +218,7 @@ void set_handler(int sig)
 	sigaddset(&action.sa_mask, SIGIO);
 	sigaddset(&action.sa_mask, SIGWINCH);
 	sigaddset(&action.sa_mask, SIGALRM);
+	sigaddset(&action.sa_mask, SIGUSR2);
 
 	if (sig == SIGSEGV)
 		flags |= SA_NODEFER;
