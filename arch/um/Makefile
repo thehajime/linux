@@ -106,7 +106,7 @@ all: linux.o
 
 linux.o: vmlinux
 	@echo '  LINK $@'
-	$(OBJCOPY) -R .eh_frame -L sem_init -L sem_post -L sem_wait -L sem_destroy vmlinux linux.o
+	$(Q)$(OBJCOPY) -R .eh_frame -L sem_init -L sem_post -L sem_wait -L sem_destroy $< $@
 
 ifeq ($(UMMODE),library)
 install: linux.o $(objtree)/$(HOST_DIR)/include/generated/uapi/asm/syscall_defs.h headers

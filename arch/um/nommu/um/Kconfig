@@ -1,15 +1,16 @@
 config UML_NOMMU
-       def_bool y
-       depends on !SMP && !MMU
-       select UACCESS_MEMCPY
-       select ARCH_THREAD_STACK_ALLOCATOR
+	def_bool y
+	depends on !SMP && !MMU
+	select UACCESS_MEMCPY
+	select ARCH_THREAD_STACK_ALLOCATOR
+	select ARCH_HAS_SYSCALL_WRAPPER
 
 config 64BIT
-       bool
-       default y
+	bool
+	default y
 
 config GENERIC_CSUM
-       def_bool y
+	def_bool y
 
 config GENERIC_ATOMIC64
 	bool
@@ -20,7 +21,7 @@ config SECCOMP
 	default n
 
 config GENERIC_HWEIGHT
-       def_bool y
+	def_bool y
 
 config GENERIC_CALIBRATE_DELAY
 	bool
