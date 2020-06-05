@@ -1,4 +1,5 @@
+include $(O)/include/config/auto.conf
 CFLAGS_posix-host.o += -D_FILE_OFFSET_BITS=64
 
-liblinux-y += utils.o
-liblinux-y += posix-host.o
+liblinux-$(CONFIG_UMMODE_LIB) += utils.o
+liblinux-$(CONFIG_UMMODE_LIB) += posix-host.o

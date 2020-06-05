@@ -5,5 +5,5 @@ progs-y += uml/linux
 endif
 
 LDLIBS := -lrt -lpthread -lutil
-LDFLAGS_linux := -no-pie -Wl,--wrap,malloc -Wl,--wrap,free -Wl,--wrap,calloc
+LDFLAGS_linux-y := -no-pie -Wl,--wrap,malloc -Wl,--wrap,free -Wl,--wrap,calloc
 LDFLAGS_linux-$(UML_STATIC) += -static
