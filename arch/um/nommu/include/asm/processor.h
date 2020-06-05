@@ -1,7 +1,14 @@
 #ifndef _ASM_LKL_PROCESSOR_H
 #define _ASM_LKL_PROCESSOR_H
 
+#include <asm/host_ops.h>
+
 struct arch_thread {
+	struct lkl_sem *sched_sem;
+	bool dead;
+	lkl_thread_t tid;
+	struct task_struct *prev_sched;
+	unsigned long stackend;
 };
 
 #include <asm/ptrace-generic.h>
