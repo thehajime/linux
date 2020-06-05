@@ -54,8 +54,41 @@ typedef __kernel_long_t	__kernel_old_time_t;
 #undef __NR_name_to_handle_at
 #undef __NR_open_by_handle_at
 
+/* deprecated system calls */
+#undef __NR_access
+#undef __NR_chmod
+#undef __NR_chown
+#undef __NR_lchown
+#undef __NR_open
+#undef __NR_creat
+#undef __NR_readlink
+#undef __NR_pipe
+#undef __NR_mknod
+#undef __NR_mkdir
+#undef __NR_rmdir
+#undef __NR_unlink
+#undef __NR_symlink
+#undef __NR_link
+#undef __NR_rename
+#undef __NR_getdents
+#undef __NR_select
+#undef __NR_poll
+#undef __NR_dup2
+#undef __NR_sysfs
+#undef __NR_ustat
+#undef __NR_inotify_init
+#undef __NR_epoll_create
+#undef __NR_epoll_wait
+#undef __NR_signalfd
+#undef __NR_eventfd
+
 #undef __NR_umount
 #define __NR_umount __NR_umount2
+
+#ifdef CONFIG_64BIT
+#define __NR_newfstat __NR3264_fstat
+#define __NR_newfstatat __NR3264_fstatat
+#endif
 
 #include <linux/time.h>
 #include <linux/times.h>

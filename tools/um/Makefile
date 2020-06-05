@@ -5,6 +5,7 @@
 MAKEFLAGS += -r --no-print-directory
 
 KCONFIG?=defconfig
+UMMODE?=kernel
 
 ifneq ($(silent),1)
   ifneq ($(V),1)
@@ -34,7 +35,7 @@ export OUTPUT
 
 all:
 
-export CFLAGS += -I$(OUTPUT)/include -I$(OUTPUT)/include/arch/x86 -Iinclude -Wall -g -O2 -Wextra \
+export CFLAGS += -I$(OUTPUT)/include -Iinclude -Wall -g -O2 -Wextra \
 	 -Wno-unused-parameter \
 	 -Wno-missing-field-initializers -fno-strict-aliasing
 
@@ -46,8 +47,9 @@ all: $(TARGETS)
 
 # rule to build linux.o
 $(OUTPUT)lib/linux.o:
-	$(Q)CFLAGS= $(MAKE) -C ../.. ARCH=um $(KOPT) $(KCONFIG)
-	$(Q)CFLAGS= $(MAKE) -C ../.. ARCH=um $(KOPT) install INSTALL_PATH=$(OUTPUT)
+	$(Q)CFLAGS= $(MAKE) -C ../.. ARCH=um UMMODE=$(UMMODE) $(KOPT) $(KCONFIG)
+	$(Q)CFLAGS= $(MAKE) -C ../.. ARCH=um UMMODE=$(UMMODE) $(KOPT) install \
+	INSTALL_PATH=$(OUTPUT)
 
 $(OUTPUT)liblinux.a: $(OUTPUT)lib/liblinux-in.o $(OUTPUT)uml/liblinux-in.o $(OUTPUT)lib/linux.o
 	$(QUIET_AR)$(AR) -rc $@ $^

@@ -9,11 +9,6 @@
  * __always_inline to avoid problems with older gcc's inlining heuristics.
  */
 
-
-#ifndef CONFIG_MMU
-#include <asm-generic/bitops.h>
-#else
-
 #ifndef _LINUX_BITOPS_H
 #error only <linux/bitops.h> can be included directly
 #endif
@@ -402,5 +397,4 @@ static __always_inline int fls64(__u64 x)
 #include <asm-generic/bitops/ext2-atomic-setbit.h>
 
 #endif /* __KERNEL__ */
-#endif /* CONFIG_MMU */
 #endif /* _ASM_X86_BITOPS_H */

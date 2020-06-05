@@ -27,17 +27,14 @@ struct thread_info {
 					 	   0-0xBFFFFFFF for user
 						   0-0xFFFFFFFF for kernel */
 	struct thread_info	*real_thread;    /* Points to non-IRQ stack */
+	unsigned long aux_fp_regs[FP_SIZE];	/* auxiliary fp_regs to save/restore
+						   them out-of-band */
 	struct lkl_sem *sched_sem;
 	bool dead;
 	lkl_thread_t tid;
 	struct task_struct *prev_sched;
-	unsigned long aux_fp_regs[FP_SIZE];	/* auxiliary fp_regs to save/restore
-						   them out-of-band */
 	unsigned long stackend;
 };
-
-void threads_init(void);
-void threads_cleanup(void);
 
 #define INIT_THREAD_INFO(tsk)			\
 {						\
@@ -67,6 +64,9 @@ static inline struct thread_info *current_thread_info(void)
 #define task_stack_page(task)	((task)->stack)
 void setup_thread_stack(struct task_struct *p, struct task_struct *org);
 #define end_of_stack(p) (&task_thread_info(p)->stackend)
+
+void threads_init(void);
+void threads_cleanup(void);
 
 unsigned long *alloc_thread_stack_node(struct task_struct *, int node);
 void free_thread_stack(struct task_struct *tsk);

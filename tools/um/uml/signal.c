@@ -18,6 +18,7 @@
 #include <sysdep/mcontext.h>
 #include <um_malloc.h>
 #include <sys/ucontext.h>
+#include <generated/autoconf.h>
 
 void (*sig_info[NSIG])(int, struct siginfo *, struct uml_pt_regs *) = {
 	[SIGTRAP]	= relay_signal,
@@ -136,6 +137,7 @@ void set_sigstack(void *sig_stack, int size)
 		panic("enabling signal stack failed, errno = %d\n", errno);
 }
 
+#ifndef CONFIG_MMU
 void lkl_syscall_real_handler(int sig, struct siginfo *unused_si, struct uml_pt_regs *regs);
 void lkl_syscall_handler(int sig, struct siginfo *unused_si, mcontext_t *mc)
 {
@@ -148,6 +150,7 @@ void lkl_syscall_handler(int sig, struct siginfo *unused_si, mcontext_t *mc)
 
 	lkl_syscall_real_handler(sig, unused_si, &regs);
 }
+#endif /* CONFIG_MMU */
 
 static void (*handlers[_NSIG])(int sig, struct siginfo *si, mcontext_t *mc) = {
 	[SIGSEGV] = sig_handler,
@@ -159,7 +162,9 @@ static void (*handlers[_NSIG])(int sig, struct siginfo *si, mcontext_t *mc) = {
 	[SIGIO] = sig_handler,
 	[SIGWINCH] = sig_handler,
 	[SIGALRM] = timer_alarm_handler,
+#ifndef CONFIG_MMU
 	[SIGUSR2] = lkl_syscall_handler
+#endif
 };
 
 static void hard_handler(int sig, siginfo_t *si, void *p)

@@ -22,17 +22,14 @@ config UML
 	select TTY # Needed for line.c
 	select MODULE_REL_CRCS if MODVERSIONS
 	select ARCH_HAS_SYSCALL_WRAPPER
-	select UACCESS_MEMCPY
+
+config UMMODE_LIB
+       bool "UML mode: library mode"
+       default y if "$(UMMODE)" = "library"
 
 config MMU
 	bool
-	default n
-
-config GENERIC_CSUM
-       def_bool y if !MMU
-
-config ARCH_THREAD_STACK_ALLOCATOR
-       def_bool y if !MMU
+	default y if !UMMODE_LIB
 
 config NO_IOMEM
 	def_bool y
@@ -53,12 +50,12 @@ config LOCKDEP_SUPPORT
 
 config STACKTRACE_SUPPORT
 	bool
-	default y
+	default y if MMU
 	select STACKTRACE
 
 config GENERIC_CALIBRATE_DELAY
 	bool
-	default n if !MMU
+	default y if MMU
 
 config HZ
 	int

@@ -37,6 +37,8 @@ static inline int __access_ok(unsigned long addr, unsigned long size);
 #define INLINE_COPY_FROM_USER
 #define INLINE_COPY_TO_USER
 
+#include <asm-generic/uaccess.h>
+
 static inline int __access_ok(unsigned long addr, unsigned long size)
 {
 	return __addr_range_nowrap(addr, size) &&
@@ -44,8 +46,10 @@ static inline int __access_ok(unsigned long addr, unsigned long size)
 		__access_ok_vsyscall(addr, size) ||
 		uaccess_kernel());
 }
+
+#else
+#include <asm-generic/uaccess.h>
 #endif /* CONFIG_MMU */
 
-#include <asm-generic/uaccess.h>
 
 #endif

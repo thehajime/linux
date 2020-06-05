@@ -10,7 +10,6 @@
 #include <asm/host_ops.h>
 #include <asm/irq.h>
 #include <asm/unistd.h>
-#include <as-layout.h>
 #include <os.h>
 
 #include <linux/kernel.h>
@@ -26,18 +25,10 @@ struct lkl_host_operations *lkl_ops;
 
 static void __init *lkl_run_kernel(void *arg)
 {
-	cpu_tasks[0].task = &init_task;
-	cpu_tasks[0].pid = 1;
-
 	threads_init();
 	start_kernel();
 
 	return NULL;
-}
-
-void new_thread(void *stack, jmp_buf *buf, void (*handler)(void))
-{
-	lkl_ops->thread_create((void *)(void *)handler, stack);
 }
 
 int __init lkl_start_kernel(struct lkl_host_operations *ops,

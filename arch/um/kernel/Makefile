@@ -14,16 +14,15 @@ CPPFLAGS_vmlinux.lds := -DSTART=$(LDS_START)		\
 			$(LDS_EXTRA)
 extra-y := vmlinux.lds
 
-obj-y = config.o exitcode.o irq.o ksyms.o mem.o \
-	physmem.o process.o reboot.o sigio.o \
+obj-y = config.o exitcode.o irq.o ksyms.o \
+	process.o reboot.o sigio.o \
 	signal.o syscall.o time.o \
-	um_arch.o umid.o maccess.o kmsg_dump.o \
-	syscalls.o
+	um_arch.o umid.o maccess.o kmsg_dump.o
 
 ifdef CONFIG_MMU
-obj-y += exec.o ptrace.o sysrq.o tlb.o trap.o skas/
+obj-y += exec.o mem.o ptrace.o physmem.o sysrq.o tlb.o trap.o skas/
 else
-obj-y += lkl_setup.o lkl_threads.o
+obj-y += lkl_setup.o
 endif
 
 obj-$(CONFIG_BLK_DEV_INITRD) += initrd.o

@@ -1,6 +1,2 @@
-# UAPI Header export list
-
-generic-y += siginfo.h
-
 # no generated-y since we need special user headers handling
 # see arch/um/script/headers_install.py

@@ -11,7 +11,6 @@
 #include <asm/tlbflush.h>
 #include <as-layout.h>
 #include <mem_user.h>
-#include <mem.h>
 #include <os.h>
 #include <skas.h>
 #include <kern_util.h>

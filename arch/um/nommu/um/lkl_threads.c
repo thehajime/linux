@@ -197,3 +197,16 @@ void threads_cleanup(void)
 
 	lkl_ops->sem_free(init_thread_union.thread_info.sched_sem);
 }
+
+void new_thread(void *stack, jmp_buf *buf, void (*handler)(void))
+{
+	lkl_ops->thread_create((void *)(void *)handler, stack);
+}
+
+void arch_switch_to(struct task_struct *to)
+{
+}
+
+void initial_thread_cb_skas(void (*proc)(void *), void *arg)
+{
+}

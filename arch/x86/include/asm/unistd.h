@@ -55,8 +55,6 @@
 # define __ARCH_WANT_SYS_FORK
 # define __ARCH_WANT_SYS_VFORK
 # define __ARCH_WANT_SYS_CLONE
-#ifdef CONFIG_MMU
 # define __ARCH_WANT_SYS_CLONE3
-#endif
 
 #endif /* _ASM_X86_UNISTD_H */

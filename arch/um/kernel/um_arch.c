@@ -13,9 +13,6 @@
 #include <linux/sched.h>
 #include <linux/sched/task.h>
 #include <linux/kmsg_dump.h>
-#include <linux/binfmts.h>
-#include <linux/personality.h>
-#include <linux/syscalls.h>
 
 #include <asm/pgtable.h>
 #include <asm/processor.h>
@@ -345,19 +342,14 @@ int __init __weak read_initrd(void)
 	return 0;
 }
 
-void bootmem_init(unsigned long mem_sz);
 void __init setup_arch(char **cmdline_p)
 {
-#ifdef CONFIG_MMU
 	stack_protections((unsigned long) &init_thread_info);
 	setup_physmem(uml_physmem, uml_reserved, physmem_size, highmem);
 	mem_total_pages(physmem_size, iomem_size, highmem);
 	read_initrd();
 
 	paging_init();
-#else
-	bootmem_init(physmem_size);
-#endif /* CONFIG_MMU */
 	strlcpy(boot_command_line, command_line, COMMAND_LINE_SIZE);
 	*cmdline_p = command_line;
 	setup_hostinfo(host_info, sizeof host_info);

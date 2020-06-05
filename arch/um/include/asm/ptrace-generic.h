@@ -14,6 +14,8 @@ struct pt_regs {
 	struct uml_pt_regs regs;
 };
 
+#define arch_has_single_step()	(1)
+
 #define EMPTY_REGS { .regs = EMPTY_UML_PT_REGS }
 
 #define PT_REGS_IP(r) UPT_IP(&(r)->regs)
@@ -39,23 +41,6 @@ extern void clear_flushed_tls(struct task_struct *task);
 extern int syscall_trace_enter(struct pt_regs *regs);
 extern void syscall_trace_leave(struct pt_regs *regs);
 
-#endif
-
-#ifdef CONFIG_MMU
-#define arch_has_single_step()	(1)
-#else
-#include <linux/errno.h>
-
-static inline long arch_ptrace(struct task_struct *child,
-			       long request, unsigned long addr,
-			       unsigned long data)
-{
-	return -EINVAL;
-}
-
-static inline void ptrace_disable(struct task_struct *child)
-{
-}
 #endif
 
 #endif

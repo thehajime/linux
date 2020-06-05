@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0
+#ifdef CONFIG_ARCH_HAS_SYSCALL_WRAPPER
+#undef CONFIG_ARCH_HAS_SYSCALL_WRAPPER
 #include <linux/syscalls.h>
+#define CONFIG_ARCH_HAS_SYSCALL_WRAPPER
+#endif
+
 #include <linux/stat.h>
 #include <linux/irq.h>
 #include <linux/sched.h>
@@ -9,7 +14,7 @@
 #include <linux/types.h>
 #include <linux/net.h>
 #include <linux/task_work.h>
-#include <asm/unistd.h>
+
 #include <asm/host_ops.h>
 #include <kern_util.h>
 #include <os.h>
@@ -17,26 +22,22 @@
 asmlinkage long sys_ni_syscall(void);
 void os_sig_usr2(int pid);
 
-typedef long (*syscall_handler_t)(long arg1, ...);
-
-#define __SYSCALL_X32(nr, sym)
-#define __SYSCALL_COMMON(nr, sym) __SYSCALL_64(nr, sym)
-
-#define __SYSCALL_64(nr, sym) extern long sym(long, ...);
-#include <asm/syscalls_64.h>
-#undef __SYSCALL_64
-
 #define sys_mmap sys_ni_syscall
 #define sys_rt_sigreturn sys_ni_syscall
 #define sys_arch_prctl sys_ni_syscall
 #define sys_iopl sys_ni_syscall
 #define sys_ioperm sys_ni_syscall
+#define sys_clone sys_ni_syscall
 
-#define __SYSCALL_64(nr, sym) [nr] = (syscall_handler_t)sym,
+typedef long (*syscall_handler_t)(long arg1, ...);
 
-syscall_handler_t syscall_table[NR_syscalls] = {
-	[0 ... NR_syscalls - 1] =  (syscall_handler_t)sys_ni_syscall,
-#include <asm/syscalls_64.h>
+#undef __SYSCALL
+#define __SYSCALL(nr, sym) [nr] = (syscall_handler_t)sym,
+
+syscall_handler_t syscall_table[__NR_syscalls] = {
+	[0 ... __NR_syscalls - 1] =  (syscall_handler_t)sys_ni_syscall,
+#undef _ASM_UAPI_LKL_UNISTD_H
+#include <asm/unistd.h>
 
 #if __BITS_PER_LONG == 32
 #include <asm/unistd_32.h>
@@ -64,7 +65,7 @@ static long run_syscall(struct syscall *s)
 {
 	int ret;
 
-	if (s->no < 0 || s->no >= NR_syscalls || !syscall_table[s->no])
+	if (s->no < 0 || s->no >= __NR_syscalls || !syscall_table[s->no])
 		ret = -ENOSYS;
 	else
 		ret = syscall_table[s->no](s->params[0], s->params[1],

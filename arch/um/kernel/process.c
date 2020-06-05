@@ -58,6 +58,23 @@ int pid_to_processor_id(int pid)
 	return -1;
 }
 
+void free_stack(unsigned long stack, int order)
+{
+	free_pages(stack, order);
+}
+
+unsigned long alloc_stack(int order, int atomic)
+{
+	unsigned long page;
+	gfp_t flags = GFP_KERNEL;
+
+	if (atomic)
+		flags = GFP_ATOMIC;
+	page = __get_free_pages(flags, order);
+
+	return page;
+}
+
 static inline void set_current(struct task_struct *task)
 {
 	cpu_tasks[task_thread_info(task)->cpu] = ((struct cpu_task)
@@ -169,7 +186,6 @@ int copy_thread_tls(unsigned long clone_flags, unsigned long sp,
 
 	new_thread(task_stack_page(p), &p->thread.switch_buf, handler);
 
-#ifdef CONFIG_MMU
 	if (!kthread) {
 		clear_flushed_tls(p);
 
@@ -179,7 +195,6 @@ int copy_thread_tls(unsigned long clone_flags, unsigned long sp,
 		if (clone_flags & CLONE_SETTLS)
 			ret = arch_set_tls(p, tls);
 	}
-#endif /* CONFIG_MMU */
 
 	return ret;
 }
@@ -190,9 +205,7 @@ void initial_thread_cb(void (*proc)(void *), void *arg)
 	int save_kmalloc_ok = kmalloc_ok;
 
 	kmalloc_ok = 0;
-#ifdef CONFIG_MMU
 	initial_thread_cb_skas(proc, arg);
-#endif /* CONFIG_MMU */
 	kmalloc_ok = save_kmalloc_ok;
 }
 
@@ -274,6 +287,12 @@ void do_uml_exitcalls(void)
 	while (--call >= &__uml_exitcall_begin)
 		(*call)();
 }
+
+char *uml_strdup(const char *string)
+{
+	return kstrdup(string, GFP_KERNEL);
+}
+EXPORT_SYMBOL(uml_strdup);
 
 int copy_to_user_proc(void __user *to, void *from, int size)
 {

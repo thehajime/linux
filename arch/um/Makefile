@@ -17,6 +17,10 @@ else
         KBUILD_DEFCONFIG := $(SUBARCH)_defconfig
 endif
 
+ifeq ($(UMMODE),library)
+  SUBARCH := um/nommu
+endif
+
 ARCH_DIR := arch/um
 OS := $(shell uname -s)
 # We require bash because the vmlinux link and loader script cpp use bash
@@ -25,10 +29,6 @@ SHELL := /bin/bash
 
 core-y			+= $(ARCH_DIR)/kernel/		\
 			   $(ARCH_DIR)/drivers/
-
-ifdef CONFIG_MMU
-core-y			+= $(ARCH_DIR)/os-$(OS)/skas/
-endif
 
 MODE_INCLUDE	+= -I$(srctree)/$(ARCH_DIR)/include/shared/skas
 
@@ -47,9 +47,7 @@ HOST_DIR := arch/$(HEADER_ARCH)
 include $(ARCH_DIR)/Makefile-skas
 include $(HOST_DIR)/Makefile.um
 
-ifdef CONFIG_MMU
 core-y += $(HOST_DIR)/um/
-endif
 
 SHARED_HEADERS	:= $(ARCH_DIR)/include/shared
 ARCH_INCLUDE	:= -I$(srctree)/$(SHARED_HEADERS)
@@ -110,15 +108,22 @@ linux.o: vmlinux
 	@echo '  LINK $@'
 	$(OBJCOPY) -R .eh_frame -L sem_init -L sem_post -L sem_wait -L sem_destroy vmlinux linux.o
 
-install: linux.o $(objtree)/$(ARCH_DIR)/include/generated/uapi/asm/syscall_defs.h headers
+ifeq ($(UMMODE),library)
+install: linux.o $(objtree)/$(HOST_DIR)/include/generated/uapi/asm/syscall_defs.h headers
 	@echo "  INSTALL $(INSTALL_PATH)/lib/$<"
 	@mkdir -p $(INSTALL_PATH)/lib/
 	@cp $< $(INSTALL_PATH)/lib/
 	$(Q)$(srctree)/$(ARCH_DIR)/scripts/headers_install.py \
 		$(subst -j,-j$(NPROC),$(findstring -j,$(MAKEFLAGS))) \
 		$(INSTALL_PATH)/include
+else
+install: linux.o
+	@echo "  INSTALL $(INSTALL_PATH)/lib/$<"
+	@mkdir -p $(INSTALL_PATH)/lib/
+	@cp $< $(INSTALL_PATH)/lib/
+endif
 
-$(objtree)/$(ARCH_DIR)/include/generated/uapi/asm/syscall_defs.h: vmlinux
+$(objtree)/$(HOST_DIR)/include/generated/uapi/asm/syscall_defs.h: vmlinux
 	$(OBJCOPY) -j .syscall_defs -O binary --set-section-flags .syscall_defs=alloc $< $@
 	$(Q) export tmpfile=$(shell mktemp); \
 	sed 's/\x0//g' $@ > $$tmpfile; mv $$tmpfile $@ ; rm -f $$tmpfile

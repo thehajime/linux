@@ -25,7 +25,7 @@ config X86_32
 
 config X86_64
 	def_bool 64BIT
-	select MODULES_USE_ELF_RELA if MMU
+	select MODULES_USE_ELF_RELA
 
 config 3_LEVEL_PGTABLES
 	bool "Three-level pagetables" if !64BIT

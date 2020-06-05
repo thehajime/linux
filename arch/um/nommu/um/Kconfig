@@ -1,0 +1,31 @@
+config UML_NOMMU
+       def_bool y
+       depends on !SMP && !MMU
+       select UACCESS_MEMCPY
+       select ARCH_THREAD_STACK_ALLOCATOR
+
+config 64BIT
+       bool
+       default y
+
+config GENERIC_CSUM
+       def_bool y
+
+config GENERIC_ATOMIC64
+	bool
+	default y if !64BIT
+
+config SECCOMP
+	bool
+	default n
+
+config GENERIC_HWEIGHT
+       def_bool y
+
+config GENERIC_CALIBRATE_DELAY
+	bool
+	default n
+
+config STACKTRACE_SUPPORT
+	bool
+	default n

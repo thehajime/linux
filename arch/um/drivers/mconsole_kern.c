@@ -35,7 +35,6 @@
 #include "mconsole.h"
 #include "mconsole_kern.h"
 #include <os.h>
-#include <mem.h>
 
 static struct vfsmount *proc_mnt = NULL;
 

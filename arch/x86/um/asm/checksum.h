@@ -2,10 +2,6 @@
 #ifndef __UM_CHECKSUM_H
 #define __UM_CHECKSUM_H
 
-#ifdef CONFIG_GENERIC_CSUM
-#include <asm-generic/checksum.h>
-#else
-
 #include <linux/string.h>
 #include <linux/in6.h>
 #include <linux/uaccess.h>
@@ -156,5 +152,4 @@ static inline __sum16 ip_fast_csum(const void *iph, unsigned int ihl)
 # include "checksum_64.h"
 #endif
 
-#endif /* CONFIG_GENERIC_CSUM */
 #endif

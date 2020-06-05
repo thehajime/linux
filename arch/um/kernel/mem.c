@@ -23,19 +23,16 @@
 unsigned long *empty_zero_page = NULL;
 EXPORT_SYMBOL(empty_zero_page);
 
-int kmalloc_ok = 0;
-
-/* Initialized at boot time, and readonly after that */
-unsigned long long highmem;
-EXPORT_SYMBOL(highmem);
-
-#ifdef CONFIG_MMU
-
 /*
  * Initialized during boot, and readonly for initializing page tables
  * afterwards
  */
 pgd_t swapper_pg_dir[PTRS_PER_PGD];
+
+/* Initialized at boot time, and readonly after that */
+unsigned long long highmem;
+EXPORT_SYMBOL(highmem);
+int kmalloc_ok = 0;
 
 /* Used during early boot */
 static unsigned long brk_end;
@@ -187,6 +184,15 @@ void __init paging_init(void)
 	fixaddr_user_init();
 }
 
+/*
+ * This can't do anything because nothing in the kernel image can be freed
+ * since it's not in kernel physical memory.
+ */
+
+void free_initmem(void)
+{
+}
+
 /* Allocate and free page tables. */
 
 pgd_t *pgd_alloc(struct mm_struct *mm)
@@ -219,94 +225,7 @@ pmd_t *pmd_alloc_one(struct mm_struct *mm, unsigned long address)
 }
 #endif
 
-#else
-unsigned long memory_start, memory_end;
-static unsigned long _memory_start, mem_size;
-
-void __init bootmem_init(unsigned long mem_sz)
-{
-	mem_size = mem_sz;
-
-	_memory_start = (unsigned long)lkl_ops->mem_alloc(mem_size);
-	memory_start = _memory_start;
-	BUG_ON(!memory_start);
-	memory_end = memory_start + mem_size;
-
-	if (PAGE_ALIGN(memory_start) != memory_start) {
-		mem_size -= PAGE_ALIGN(memory_start) - memory_start;
-		memory_start = PAGE_ALIGN(memory_start);
-		mem_size = (mem_size / PAGE_SIZE) * PAGE_SIZE;
-	}
-	pr_info("memblock address range: 0x%lx - 0x%lx\n", memory_start,
-		memory_start+mem_size);
-	/*
-	 * Give all the memory to the bootmap allocator, tell it to put the
-	 * boot mem_map at the start of memory.
-	 */
-	max_low_pfn = virt_to_pfn(memory_end);
-	min_low_pfn = virt_to_pfn(memory_start);
-	memblock_add(memory_start, mem_size);
-
-	empty_zero_page = memblock_alloc(PAGE_SIZE, PAGE_SIZE);
-	memset((void *)empty_zero_page, 0, PAGE_SIZE);
-
-	{
-		unsigned long zones_size[MAX_NR_ZONES] = {0, };
-
-		zones_size[ZONE_NORMAL] = (mem_size) >> PAGE_SHIFT;
-		free_area_init(zones_size);
-	}
-}
-
-void __init mem_init(void)
-{
-	max_mapnr = (((unsigned long)high_memory) - PAGE_OFFSET) >> PAGE_SHIFT;
-	/* this will put all memory onto the freelists */
-	totalram_pages_add(memblock_free_all());
-	pr_info("Memory available: %luk/%luk RAM\n",
-		(nr_free_pages() << PAGE_SHIFT) >> 10, mem_size >> 10);
-}
-
-void free_mem(void)
-{
-	lkl_ops->mem_free((void *)_memory_start);
-}
-
-#endif /* !CONFIG_MMU */
-
-/*
- * This can't do anything because nothing in the kernel image can be freed
- * since it's not in kernel physical memory.
- */
-
-void free_initmem(void)
-{
-}
-
 void *uml_kmalloc(int size, int flags)
 {
 	return kmalloc(size, flags);
-}
-
-char *uml_strdup(const char *string)
-{
-	return kstrdup(string, GFP_KERNEL);
-}
-EXPORT_SYMBOL(uml_strdup);
-
-void free_stack(unsigned long stack, int order)
-{
-	free_pages(stack, order);
-}
-
-unsigned long alloc_stack(int order, int atomic)
-{
-	unsigned long page;
-	gfp_t flags = GFP_KERNEL;
-
-	if (atomic)
-		flags = GFP_ATOMIC;
-	page = __get_free_pages(flags, order);
-
-	return page;
 }

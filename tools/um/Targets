@@ -1,5 +1,8 @@
-progs-$(CONFIG_MMU) += uml/linux
+ifeq ($(UMMODE),library)
 progs-y += tests/boot
+else
+progs-y += uml/linux
+endif
 
 LDLIBS := -lrt -lpthread -lutil
 LDFLAGS_linux := -no-pie -Wl,--wrap,malloc -Wl,--wrap,free -Wl,--wrap,calloc

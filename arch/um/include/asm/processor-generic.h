@@ -100,10 +100,4 @@ extern struct cpuinfo_um boot_cpu_data;
 #define KSTK_REG(tsk, reg) get_thread_reg(reg, &tsk->thread.switch_buf)
 extern unsigned long get_wchan(struct task_struct *p);
 
-#ifndef CONFIG_MMU
-static inline void trap_init(void)
-{
-}
-#endif /* CONFIG_MMU */
-
 #endif

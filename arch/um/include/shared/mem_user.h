@@ -54,7 +54,6 @@ extern void mem_total_pages(unsigned long physmem, unsigned long iomem,
 extern unsigned long get_vm(unsigned long len);
 extern void setup_physmem(unsigned long start, unsigned long usable,
 			  unsigned long len, unsigned long long highmem);
-extern int phys_mapping(unsigned long phys, unsigned long long *offset_out);
 extern void add_iomem(char *name, int fd, unsigned long size);
 extern unsigned long phys_offset(unsigned long phys);
 extern void map_memory(unsigned long virt, unsigned long phys,
