@@ -247,6 +247,7 @@ EXPORT_SYMBOL(end_iomem);
 
 #define MIN_VMALLOC (32 * 1024 * 1024)
 
+#ifdef CONFIG_MMU
 int __init linux_main(int argc, char **argv)
 {
 	unsigned long avail, diff;
@@ -334,6 +335,7 @@ int __init linux_main(int argc, char **argv)
 
 	return start_uml();
 }
+#endif /* !CONFIG_MMU */
 
 int __init __weak read_initrd(void)
 {

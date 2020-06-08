@@ -5,6 +5,7 @@
 MAKEFLAGS += -r --no-print-directory
 
 KCONFIG?=defconfig
+UMMODE?=kernel
 
 ifneq ($(silent),1)
   ifneq ($(V),1)
@@ -46,18 +47,16 @@ all: $(TARGETS)
 
 # rule to build linux.o
 $(OUTPUT)lib/linux.o:
-	$(Q)CFLAGS= $(MAKE) -C ../.. ARCH=um $(KOPT) $(KCONFIG)
-	$(Q)CFLAGS= $(MAKE) -C ../.. ARCH=um $(KOPT) install INSTALL_PATH=$(OUTPUT)
+	$(Q)CFLAGS= $(MAKE) -C ../.. ARCH=um UMMODE=$(UMMODE) $(KOPT) $(KCONFIG)
+	$(Q)CFLAGS= $(MAKE) -C ../.. ARCH=um UMMODE=$(UMMODE) $(KOPT) install \
+	INSTALL_PATH=$(OUTPUT)
 
-$(OUTPUT)liblinux.a: $(OUTPUT)lib/liblinux-in.o $(OUTPUT)lib/linux.o
+$(OUTPUT)liblinux.a: $(OUTPUT)lib/liblinux-in.o $(OUTPUT)uml/liblinux-in.o $(OUTPUT)lib/linux.o
 	$(QUIET_AR)$(AR) -rc $@ $^
 
 # rule to link programs
 $(OUTPUT)%: $(OUTPUT)%-in.o $(OUTPUT)liblinux.a
 	$(QUIET_LINK)$(CC) $(LDFLAGS) $(LDFLAGS_$(notdir $*)-y) -o $@ $^ $(LDLIBS) $(LDLIBS_$(notdir $*)-y)
-
-$(OUTPUT)%-in.o: $(OUTPUT)liblinux.a FORCE
-	$(Q)$(MAKE) -f $(srctree)/tools/build/Makefile.build dir=$(patsubst %/,%,$(dir $*)) obj=$(notdir $*)
 
 # rule to build objects
 $(OUTPUT)%-in.o: $(OUTPUT)lib/linux.o FORCE
@@ -66,6 +65,7 @@ $(OUTPUT)%-in.o: $(OUTPUT)lib/linux.o FORCE
 clean:
 	$(call QUIET_CLEAN, objects)find $(OUTPUT) -name '*.o' -delete -o -name '\.*.cmd'\
 	 -delete -o -name '\.*.d' -delete
+	$(call QUIET_CLEAN, headers)$(RM) -r $(OUTPUT)/include/lkl/
 	$(call QUIET_CLEAN, liblinux.a)$(RM) $(OUTPUT)/liblinux.a
 	$(call QUIET_CLEAN, $(TARGETS))$(RM) $(TARGETS)
 

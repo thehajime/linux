@@ -83,6 +83,7 @@ static inline void set_current(struct task_struct *task)
 
 extern void arch_switch_to(struct task_struct *to);
 
+#ifdef CONFIG_MMU
 void *__switch_to(struct task_struct *from, struct task_struct *to)
 {
 	to->thread.prev_sched = from;
@@ -93,6 +94,7 @@ void *__switch_to(struct task_struct *from, struct task_struct *to)
 
 	return current->thread.prev_sched;
 }
+#endif /* CONFIG_MMU */
 
 void interrupt_end(void)
 {
@@ -153,6 +155,7 @@ void fork_handler(void)
 	userspace(&current->thread.regs.regs, current_thread_info()->aux_fp_regs);
 }
 
+#ifdef CONFIG_MMU
 int copy_thread_tls(unsigned long clone_flags, unsigned long sp,
 		unsigned long arg, struct task_struct * p, unsigned long tls)
 {
@@ -193,6 +196,7 @@ int copy_thread_tls(unsigned long clone_flags, unsigned long sp,
 
 	return ret;
 }
+#endif /* CONFIG_MMU */
 
 void initial_thread_cb(void (*proc)(void *), void *arg)
 {
