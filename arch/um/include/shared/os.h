@@ -197,6 +197,7 @@ extern void os_alarm_process(int pid);
 extern void os_stop_process(int pid);
 extern void os_kill_process(int pid, int reap_child);
 extern void os_kill_ptraced_process(int pid, int reap_child);
+extern void os_sig_usr2(int pid);
 
 extern int os_getpid(void);
 extern int os_getpgrp(void);
