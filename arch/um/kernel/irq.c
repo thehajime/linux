@@ -533,7 +533,6 @@ void __init init_IRQ(void)
  * set up and the handler can run.
  */
 
-#ifdef CONFIG_MMU
 static unsigned long pending_mask;
 
 unsigned long to_irq_stack(unsigned long *mask_out)
@@ -597,15 +596,4 @@ unsigned long from_irq_stack(int nested)
 	mask = xchg(&pending_mask, 0);
 	return mask & ~1;
 }
-#else /* CONFIG_MMU */
-unsigned long to_irq_stack(unsigned long *mask_out)
-{
-	return 0;
-}
-
-unsigned long from_irq_stack(int nested)
-{
-	return 0;
-}
-#endif
 

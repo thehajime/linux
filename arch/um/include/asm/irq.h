@@ -18,7 +18,6 @@
 #define XTERM_IRQ 		13
 #define RANDOM_IRQ 		14
 #define VIRTIO_IRQ		15
-#define LKL_SYSCALL_IRQ		16
 
 #ifdef CONFIG_UML_NET_VECTOR
 
@@ -29,7 +28,7 @@
 
 #else
 
-#define LAST_IRQ LKL_SYSCALL_IRQ
+#define LAST_IRQ VIRTIO_IRQ
 
 #endif
 

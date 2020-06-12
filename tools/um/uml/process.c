@@ -100,11 +100,6 @@ void os_stop_process(int pid)
 	kill(pid, SIGSTOP);
 }
 
-void os_sig_usr2(int pid)
-{
-	kill(pid, SIGUSR2);
-}
-
 void os_kill_process(int pid, int reap_child)
 {
 	kill(pid, SIGKILL);
