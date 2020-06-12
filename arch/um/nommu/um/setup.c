@@ -13,11 +13,10 @@
 #include <asm/host_ops.h>
 #include <asm/irq.h>
 #include <asm/unistd.h>
+#include <asm/syscalls.h>
+#include <asm/cpu.h>
 #include <os.h>
 
-#include "syscalls.h"
-
-long lkl_syscall(long, long *);
 
 static void *init_sem;
 static int is_running;
@@ -25,10 +24,22 @@ static int is_running;
 
 struct lkl_host_operations *lkl_ops;
 
+long lkl_panic_blink(int state)
+{
+        lkl_ops->panic();
+        return 0;
+}
+
 static void __init *lkl_run_kernel(void *arg)
 {
+
+	panic_blink = lkl_panic_blink;
+
 	threads_init();
+	lkl_cpu_get();
 	start_kernel();
+
+	os_thread_sig_block(SIGALRM);
 
 	return NULL;
 }
@@ -44,8 +55,12 @@ int __init lkl_start_kernel(struct lkl_host_operations *ops,
 	if (!init_sem)
 		return -ENOMEM;
 
+	ret = lkl_cpu_init();
+	if (ret)
+		goto out_free_init_sem;
+
 	change_sig(SIGIO, 0);
-	set_handler(SIGUSR2);
+	os_thread_sig_block(SIGALRM);
 
 	ret = lkl_ops->thread_create(lkl_run_kernel, NULL);
 	if (!ret) {
@@ -55,7 +70,10 @@ int __init lkl_start_kernel(struct lkl_host_operations *ops,
 
 	lkl_ops->sem_down(init_sem);
 	lkl_ops->sem_free(init_sem);
+	current_thread_info()->task->thread.arch.tid = lkl_ops->thread_self();
+	lkl_cpu_change_owner(current_thread_info()->task->thread.arch.tid);
 
+	lkl_cpu_put();
 	is_running = 1;
 
 	return 0;
@@ -71,6 +89,7 @@ int lkl_is_running(void)
 	return is_running;
 }
 
+
 long lkl_sys_halt(void)
 {
 	long err;
@@ -83,12 +102,18 @@ long lkl_sys_halt(void)
 
 	is_running = false;
 
+	lkl_cpu_wait_shutdown();
+
+	syscalls_cleanup();
 	threads_cleanup();
 	/* Shutdown the clockevents source. */
 	tick_suspend_local();
+	free_mem();
+	lkl_ops->thread_join(current_thread_info()->task->thread.arch.tid);
 
 	return 0;
 }
+
 
 static int lkl_run_init(struct linux_binprm *bprm);
 
@@ -115,12 +140,14 @@ static int lkl_run_init(struct linux_binprm *bprm)
 
 	init_pid_ns.child_reaper = 0;
 
+	syscalls_init();
+
 	lkl_ops->sem_up(init_sem);
-	run_syscalls();
 	lkl_ops->thread_exit();
 
 	return 0;
 }
+
 
 /* skip mounting the "real" rootfs. ramfs is good enough. */
 static int __init fs_setup(void)

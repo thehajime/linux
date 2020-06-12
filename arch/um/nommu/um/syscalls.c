@@ -16,9 +16,11 @@
 #include <linux/task_work.h>
 
 #include <asm/host_ops.h>
+#include <asm/syscalls.h>
+#include <asm/cpu.h>
+#include <asm/sched.h>
 #include <kern_util.h>
 #include <os.h>
-#include "syscalls.h"
 
 typedef long (*syscall_handler_t)(long arg1, ...);
 
@@ -36,131 +38,162 @@ syscall_handler_t syscall_table[__NR_syscalls] = {
 };
 
 
-struct syscall {
-	long no, *params, ret;
-	void *sem;
-};
-
-static struct syscall_thread_data {
-	wait_queue_head_t wqh;
-	struct syscall *s;
-	void *mutex, *completion;
-} syscall_thread_data;
-
-static struct syscall *dequeue_syscall(struct syscall_thread_data *data)
+static long run_syscall(long no, long *params)
 {
-	return (struct syscall *)__sync_fetch_and_and((long *)&data->s, 0);
-}
+	long ret;
 
-static long run_syscall(struct syscall *s)
-{
-	int ret;
+	if (no < 0 || no >= __NR_syscalls)
+		return -ENOSYS;
 
-	if (s->no < 0 || s->no >= __NR_syscalls || !syscall_table[s->no])
-		ret = -ENOSYS;
-	else
-		ret = syscall_table[s->no](s->params[0], s->params[1],
-					   s->params[2], s->params[3],
-					   s->params[4], s->params[5]);
-	s->ret = ret;
+	ret = syscall_table[no](params[0], params[1], params[2], params[3],
+				params[4], params[5]);
 
 	task_work_run();
 
 	return ret;
 }
 
-int run_syscalls(void)
+
+#define CLONE_FLAGS (CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_THREAD |	\
+		     CLONE_SIGHAND | SIGCHLD)
+
+static int host_task_id;
+static struct task_struct *host0;
+
+static int new_host_task(struct task_struct **task)
 {
-	struct syscall_thread_data *data = &syscall_thread_data;
-	struct syscall *s;
+	pid_t pid;
 
-	current->flags &= ~PF_KTHREAD;
+	switch_to_host_task(host0);
 
-	snprintf(current->comm, sizeof(current->comm), "init");
+	pid = kernel_thread(host_task_stub, NULL, CLONE_FLAGS);
+	if (pid < 0)
+		return pid;
 
-	while (1) {
-		wait_event(data->wqh, (s = dequeue_syscall(data)) != NULL);
+	rcu_read_lock();
+	*task = find_task_by_pid_ns(pid, &init_pid_ns);
+	rcu_read_unlock();
 
-		run_syscall(s);
-		lkl_ops->sem_up(s->sem);
-	}
+	host_task_id++;
 
-	s->ret = 0;
-	lkl_ops->sem_up(data->completion);
+	snprintf((*task)->comm, sizeof((*task)->comm), "host%d", host_task_id);
 
 	return 0;
 }
-
-static irqreturn_t syscall_irq_handler(int irq, void *dev_id)
+static void exit_task(void)
 {
-	wake_up(&syscall_thread_data.wqh);
-	return IRQ_HANDLED;
+	do_exit(0);
 }
 
-static struct irqaction syscall_irqaction  = {
-	.handler = syscall_irq_handler,
-	.flags = IRQF_NOBALANCING,
-	.dev_id = &syscall_irqaction,
-	.name = "syscall"
-};
-
-void lkl_syscall_real_handler(int sig, struct siginfo *unused_si,
-			      struct uml_pt_regs *regs)
+static void del_host_task(void *arg)
 {
-	unsigned long flags;
+	struct task_struct *task = (struct task_struct *)arg;
+	struct thread_info *ti = task_thread_info(task);
 
-	local_irq_save(flags);
-	do_IRQ(LKL_SYSCALL_IRQ, regs);
-	local_irq_restore(flags);
+	if (lkl_cpu_get() < 0)
+		return;
+
+	switch_to_host_task(task);
+	host_task_id--;
+	set_ti_thread_flag(ti, TIF_SCHED_JB);
+	lkl_ops->jmp_buf_set(&ti->task->thread.arch.sched_jb, exit_task);
 }
 
-static int syscall_irq;
+static struct lkl_tls_key *task_key;
 
-int lkl_trigger_irq(int irq)
+long lkl_syscall(long no, long *params)
 {
-	int ret = 0;
+	struct task_struct *task = host0;
+	long ret;
 
-	if (irq >= NR_IRQS)
-		return -EINVAL;
+	ret = lkl_cpu_get();
+	if (ret < 0)
+		return ret;
 
-	os_sig_usr2(os_getpid());
+	if (lkl_ops->tls_get) {
+		task = lkl_ops->tls_get(task_key);
+		if (!task) {
+			ret = new_host_task(&task);
+			if (ret)
+				goto out;
+			lkl_ops->tls_set(task_key, task);
+		}
+	}
+
+	switch_to_host_task(task);
+
+	ret = run_syscall(no, params);
+
+	if (no == __NR_reboot) {
+		thread_sched_jb();
+		return ret;
+	}
+
+out:
+	lkl_cpu_put();
 
 	return ret;
 }
 
-long lkl_syscall(long no, long *params)
+static struct task_struct *idle_host_task;
+
+/* called from idle, don't failed, don't block */
+void wakeup_idle_host_task(void)
 {
-	struct syscall_thread_data *data = &syscall_thread_data;
-	struct syscall s;
-
-	s.no = no;
-	s.params = params;
-	s.sem = data->completion;
-
-	lkl_ops->sem_down(data->mutex);
-	data->s = &s;
-	lkl_trigger_irq(syscall_irq);
-
-	lkl_ops->sem_down(data->completion);
-	lkl_ops->sem_up(data->mutex);
-
-	return s.ret;
+	if (!need_resched() && idle_host_task)
+		wake_up_process(idle_host_task);
 }
 
-
-int __init syscall_init(void)
+static int idle_host_task_loop(void *unused)
 {
-	struct syscall_thread_data *data = &syscall_thread_data;
+	struct thread_info *ti = task_thread_info(current);
 
-	init_waitqueue_head(&data->wqh);
-	data->mutex = lkl_ops->sem_alloc(1);
-	data->completion = lkl_ops->sem_alloc(0);
-	WARN_ON(!data->mutex || !data->completion);
+	snprintf(current->comm, sizeof(current->comm), "idle_host_task");
+	set_thread_flag(TIF_HOST_THREAD);
+	idle_host_task = current;
 
-	syscall_irq = LKL_SYSCALL_IRQ; //lkl_get_free_irq("syscall");
-	setup_irq(syscall_irq, &syscall_irqaction);
+	for (;;) {
+		lkl_cpu_put();
+		lkl_ops->sem_down(ti->task->thread.arch.sched_sem);
+		if (idle_host_task == NULL) {
+			lkl_ops->thread_exit();
+			return 0;
+		}
+		schedule_tail(ti->task->thread.prev_sched);
+	}
+}
 
-	pr_info("lkl: syscall interface initialized (irq%d)\n", syscall_irq);
+int syscalls_init(void)
+{
+	snprintf(current->comm, sizeof(current->comm), "host0");
+	set_thread_flag(TIF_HOST_THREAD);
+	host0 = current;
+
+	if (lkl_ops->tls_alloc) {
+		task_key = lkl_ops->tls_alloc(del_host_task);
+		if (!task_key)
+			return -1;
+	}
+
+	if (kernel_thread(idle_host_task_loop, NULL, CLONE_FLAGS) < 0) {
+		if (lkl_ops->tls_free)
+			lkl_ops->tls_free(task_key);
+		return -1;
+	}
+
 	return 0;
 }
-late_initcall(syscall_init);
+
+void syscalls_cleanup(void)
+{
+	if (idle_host_task) {
+		struct thread_info *ti = task_thread_info(idle_host_task);
+
+		idle_host_task = NULL;
+		lkl_ops->sem_up(ti->task->thread.arch.sched_sem);
+		lkl_ops->thread_join(ti->task->thread.arch.tid);
+	}
+
+	if (lkl_ops->tls_free)
+		lkl_ops->tls_free(task_key);
+}

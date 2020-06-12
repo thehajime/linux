@@ -21,8 +21,6 @@ obj-y = config.o exitcode.o irq.o ksyms.o \
 
 ifdef CONFIG_MMU
 obj-y += exec.o mem.o physmem.o ptrace.o sysrq.o tlb.o trap.o skas/
-else
-obj-y += lkl_setup.o
 endif
 
 obj-$(CONFIG_BLK_DEV_INITRD) += initrd.o

@@ -130,6 +130,7 @@ extern unsigned long uml_physmem;
 
 #ifndef __ASSEMBLY__
 #include <mem.h>
+void free_mem(void);
 #endif
 
 #endif /* !CONFIG_MMU  */

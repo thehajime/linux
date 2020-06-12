@@ -8,6 +8,7 @@ struct arch_thread {
 	struct lkl_sem *sched_sem;
 	bool dead;
 	lkl_thread_t tid;
+	struct lkl_jmp_buf sched_jb;
 	unsigned long stackend;
 };
 

@@ -355,3 +355,13 @@ int os_is_signal_stack(void)
 
 	return ss.ss_flags & SS_ONSTACK;
 }
+
+int os_thread_sig_block(int sig)
+{
+	sigset_t sigmask;
+
+	sigemptyset(&sigmask);
+	sigaddset(&sigmask, sig);
+	if(pthread_sigmask(SIG_BLOCK, &sigmask, NULL) != 0)
+		return -errno;
+}

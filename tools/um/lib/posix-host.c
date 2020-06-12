@@ -7,6 +7,7 @@
 #include <assert.h>
 #include <sys/syscall.h>
 #include <lkl_host.h>
+#include "jmp_buf.h"
 
 /* Let's see if the host has semaphore.h */
 #include <unistd.h>
@@ -32,6 +33,10 @@ struct lkl_sem {
 	int count;
 	pthread_cond_t cond;
 #endif /* _POSIX_SEMAPHORES */
+};
+
+struct lkl_tls_key {
+	pthread_key_t key;
 };
 
 static void print(const char *str, int len)
@@ -228,6 +233,35 @@ static long _gettid(void)
 #endif
 }
 
+static struct lkl_tls_key *tls_alloc(void (*destructor)(void *))
+{
+	struct lkl_tls_key *ret = malloc(sizeof(struct lkl_tls_key));
+
+	if (WARN_PTHREAD(pthread_key_create(&ret->key, destructor))) {
+		free(ret);
+		return NULL;
+	}
+	return ret;
+}
+
+static void tls_free(struct lkl_tls_key *key)
+{
+	WARN_PTHREAD(pthread_key_delete(key->key));
+	free(key);
+}
+
+static int tls_set(struct lkl_tls_key *key, void *data)
+{
+	if (WARN_PTHREAD(pthread_setspecific(key->key, data)))
+		return -1;
+	return 0;
+}
+
+static void *tls_get(struct lkl_tls_key *key)
+{
+	return pthread_getspecific(key->key);
+}
+
 struct lkl_host_operations lkl_host_ops = {
 	.panic = panic,
 	.print = print,
@@ -248,5 +282,11 @@ struct lkl_host_operations lkl_host_ops = {
 	.mutex_lock = mutex_lock,
 	.mutex_unlock = mutex_unlock,
 	.gettid = _gettid,
+	.tls_alloc = tls_alloc,
+	.tls_free = tls_free,
+	.tls_set = tls_set,
+	.tls_get = tls_get,
+	.jmp_buf_set = jmp_buf_set,
+	.jmp_buf_longjmp = jmp_buf_longjmp,
 };
 

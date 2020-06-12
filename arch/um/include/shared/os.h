@@ -240,6 +240,7 @@ extern int set_signals(int enable);
 extern int set_signals_trace(int enable);
 extern int os_is_signal_stack(void);
 extern void deliver_alarm(void);
+extern int os_thread_sig_block(int sig);
 
 /* util.c */
 extern void stack_protections(unsigned long address);

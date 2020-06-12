@@ -6,6 +6,9 @@
 struct lkl_mutex;
 struct lkl_sem;
 typedef unsigned long lkl_thread_t;
+struct lkl_jmp_buf {
+	unsigned long buf[128];
+};
 
 /**
  * lkl_host_operations - host operations used by the Linux kernel
@@ -63,11 +66,21 @@ struct lkl_host_operations {
 	int (*thread_equal)(lkl_thread_t a, lkl_thread_t b);
 	long (*gettid)(void);
 
+	struct lkl_tls_key *(*tls_alloc)(void (*destructor)(void *));
+	void (*tls_free)(struct lkl_tls_key *key);
+	int (*tls_set)(struct lkl_tls_key *key, void *data);
+	void *(*tls_get)(struct lkl_tls_key *key);
+
 	void *(*mem_alloc)(unsigned long mem);
 	void (*mem_free)(void *mem);
+
+	void (*jmp_buf_set)(struct lkl_jmp_buf *jmpb, void (*f)(void));
+	void (*jmp_buf_longjmp)(struct lkl_jmp_buf *jmpb, int val);
 };
 
 int lkl_start_kernel(struct lkl_host_operations *ops,
 		     const char *fmt, ...);
+
+void lkl_bug(const char *, ...);
 
 #endif

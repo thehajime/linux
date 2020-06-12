@@ -3,8 +3,11 @@
 #include <linux/sched/task.h>
 #include <linux/sched/signal.h>
 #include <asm/host_ops.h>
+#include <asm/cpu.h>
+#include <asm/sched.h>
 
-static volatile int threads_counter;
+#include <os.h>
+#include <as-layout.h>
 
 static int init_ti(struct thread_info *ti)
 {
@@ -58,9 +61,11 @@ void setup_thread_stack(struct task_struct *p, struct task_struct *org)
 
 static void kill_thread(struct thread_info *ti)
 {
-	ti->task->thread.arch.dead = true;
-	lkl_ops->sem_up(ti->task->thread.arch.sched_sem);
-	lkl_ops->thread_join(ti->task->thread.arch.tid);
+	if (!test_ti_thread_flag(ti, TIF_HOST_THREAD)) {
+		ti->task->thread.arch.dead = true;
+		lkl_ops->sem_up(ti->task->thread.arch.sched_sem);
+		lkl_ops->thread_join(ti->task->thread.arch.tid);
+	}
 	lkl_ops->sem_free(ti->task->thread.arch.sched_sem);
 }
 
@@ -72,14 +77,13 @@ void free_thread_stack(struct task_struct *tsk)
 	kfree(ti);
 }
 
-
 struct thread_info *_current_thread_info = &init_thread_union.thread_info;
+
 /*
  * schedule() expects the return of this function to be the task that we
- * switched away from. Returning prev is not going to work because we
- * are actually going to return the previous taks that was scheduled
- * before the task we are going to wake up, and not the current task,
- * e.g.:
+ * switched away from. Returning prev is not going to work because we are
+ * actually going to return the previous taks that was scheduled before the
+ * task we are going to wake up, and not the current task, e.g.:
  *
  * swapper -> init: saved prev on swapper stack is swapper
  * init -> ksoftirqd0: saved prev on init stack is init
@@ -92,20 +96,58 @@ struct task_struct *__switch_to(struct task_struct *prev,
 {
 	struct arch_thread *_prev = &prev->thread.arch;
 	struct arch_thread *_next = &next->thread.arch;
+	unsigned long _prev_flags = task_thread_info(prev)->flags;
+	struct lkl_jmp_buf *_prev_jb;
+
+	/* XXX: for irq handling */
+	cpu_tasks[task_thread_info(next)->cpu] = ((struct cpu_task)
+		{ 0, next });
 
 	_current_thread_info = task_thread_info(next);
 	next->thread.prev_sched = prev;
 	abs_prev = prev;
 
-	lkl_ops->sem_up(_next->sched_sem);
-	lkl_ops->sem_down(_prev->sched_sem);
+	WARN_ON(!_next->tid);
+	lkl_cpu_change_owner(_next->tid);
 
-	if (_prev->dead) {
-		__sync_fetch_and_sub(&threads_counter, 1);
-		lkl_ops->thread_exit();
+	if (test_bit(TIF_SCHED_JB, &_prev_flags)) {
+		/* Atomic. Must be done before wakeup next */
+		clear_ti_thread_flag(task_thread_info(prev), TIF_SCHED_JB);
+		_prev_jb = &_prev->sched_jb;
 	}
 
+	lkl_ops->sem_up(_next->sched_sem);
+	if (test_bit(TIF_SCHED_JB, &_prev_flags)) {
+		lkl_ops->jmp_buf_longjmp(_prev_jb, 1);
+	} else {
+		lkl_ops->sem_down(_prev->sched_sem);
+	}
+
+	if (_prev->dead)
+		lkl_ops->thread_exit();
+
 	return abs_prev;
+}
+
+int host_task_stub(void *unused)
+{
+	return 0;
+}
+
+void switch_to_host_task(struct task_struct *task)
+{
+	if (WARN_ON(!test_tsk_thread_flag(task, TIF_HOST_THREAD)))
+		return;
+
+	task->thread.arch.tid = lkl_ops->thread_self();
+
+	if (current == task)
+		return;
+
+	wake_up_process(task);
+	thread_sched_jb();
+	lkl_ops->sem_down(task->thread.arch.sched_sem);
+	schedule_tail(abs_prev);
 }
 
 struct thread_bootstrap_arg {
@@ -120,6 +162,8 @@ static void *thread_bootstrap(void *_tba)
 	struct thread_info *ti = tba->ti;
 	int (*f)(void *) = tba->f;
 	void *arg = tba->arg;
+
+	os_thread_sig_block(SIGALRM);
 
 	lkl_ops->sem_down(ti->task->thread.arch.sched_sem);
 	kfree(tba);
@@ -138,6 +182,11 @@ int copy_thread(unsigned long clone_flags, unsigned long esp,
 	struct thread_info *ti = task_thread_info(p);
 	struct thread_bootstrap_arg *tba;
 
+	if ((int (*)(void *))esp == host_task_stub) {
+		set_ti_thread_flag(ti, TIF_HOST_THREAD);
+		return 0;
+	}
+
 	tba = kmalloc(sizeof(*tba), GFP_KERNEL);
 	if (!tba)
 		return -ENOMEM;
@@ -151,8 +200,6 @@ int copy_thread(unsigned long clone_flags, unsigned long esp,
 		kfree(tba);
 		return -ENOMEM;
 	}
-
-	__sync_fetch_and_add(&threads_counter, 1);
 
 	return 0;
 }
@@ -173,8 +220,8 @@ static inline void pr_early(const char *str)
  */
 void threads_init(void)
 {
-	struct thread_info *ti = &init_thread_union.thread_info;
 	int ret;
+	struct thread_info *ti = &init_thread_union.thread_info;
 
 	ret = init_ti(ti);
 	if (ret < 0)
@@ -185,22 +232,19 @@ void threads_init(void)
 
 void threads_cleanup(void)
 {
-	struct task_struct *p;
+	struct task_struct *p, *t;
 
-	for_each_process(p) {
-		struct thread_info *ti = task_thread_info(p);
+	for_each_process_thread(p, t) {
+		struct thread_info *ti = task_thread_info(t);
 
-		if (p->pid != 1)
-			WARN(!(p->flags & PF_KTHREAD),
-			     "non kernel thread task %p\n", p->comm);
-		WARN(p->state == TASK_RUNNING,
-		     "thread %s still running while halting\n", p->comm);
+		if (t->pid != 1 && !test_ti_thread_flag(ti, TIF_HOST_THREAD))
+			WARN(!(t->flags & PF_KTHREAD),
+			     "non kernel thread task %s\n", t->comm);
+		WARN(t->state == TASK_RUNNING,
+		     "thread %s still running while halting\n", t->comm);
 
 		kill_thread(ti);
 	}
-
-	while (threads_counter)
-		;
 
 	lkl_ops->sem_free(
 		init_thread_union.thread_info.task->thread.arch.sched_sem);
@@ -208,12 +252,15 @@ void threads_cleanup(void)
 
 void new_thread(void *stack, jmp_buf *buf, void (*handler)(void))
 {
+	panic("unimplemented %s", __func__);
 }
 
 void arch_switch_to(struct task_struct *to)
 {
+	panic("unimplemented %s", __func__);
 }
 
 void initial_thread_cb_skas(void (*proc)(void *), void *arg)
 {
+	pr_warn("unimplemented %s", __func__);
 }
