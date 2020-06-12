@@ -7,7 +7,6 @@
 #include <asm/sched.h>
 
 #include <os.h>
-#include <as-layout.h>
 
 static int init_ti(struct thread_info *ti)
 {
@@ -79,6 +78,12 @@ void free_thread_stack(struct task_struct *tsk)
 
 struct thread_info *_current_thread_info = &init_thread_union.thread_info;
 
+
+void switch_threads(jmp_buf *me, jmp_buf *you)
+{
+	/* NOP */
+}
+
 /*
  * schedule() expects the return of this function to be the task that we
  * switched away from. Returning prev is not going to work because we are
@@ -91,17 +96,13 @@ struct thread_info *_current_thread_info = &init_thread_union.thread_info;
  */
 static struct task_struct *abs_prev = &init_task;
 
-struct task_struct *__switch_to(struct task_struct *prev,
-				struct task_struct *next)
+void arch_switch_to(struct task_struct *prev,
+		    struct task_struct *next)
 {
 	struct arch_thread *_prev = &prev->thread.arch;
 	struct arch_thread *_next = &next->thread.arch;
 	unsigned long _prev_flags = task_thread_info(prev)->flags;
 	struct lkl_jmp_buf *_prev_jb;
-
-	/* XXX: for irq handling */
-	cpu_tasks[task_thread_info(next)->cpu] = ((struct cpu_task)
-		{ 0, next });
 
 	_current_thread_info = task_thread_info(next);
 	next->thread.prev_sched = prev;
@@ -126,7 +127,8 @@ struct task_struct *__switch_to(struct task_struct *prev,
 	if (_prev->dead)
 		lkl_ops->thread_exit();
 
-	return abs_prev;
+	/* __switch_to (arch/um) returns this value */
+	current->thread.prev_sched = abs_prev;
 }
 
 int host_task_stub(void *unused)
@@ -251,11 +253,6 @@ void threads_cleanup(void)
 }
 
 void new_thread(void *stack, jmp_buf *buf, void (*handler)(void))
-{
-	panic("unimplemented %s", __func__);
-}
-
-void arch_switch_to(struct task_struct *to)
 {
 	panic("unimplemented %s", __func__);
 }
