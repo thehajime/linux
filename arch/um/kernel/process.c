@@ -153,12 +153,12 @@ void fork_handler(void)
 	userspace(&current->thread.regs.regs, current_thread_info()->aux_fp_regs);
 }
 
-#ifdef CONFIG_MMU
 int copy_thread_tls(unsigned long clone_flags, unsigned long sp,
 		unsigned long arg, struct task_struct * p, unsigned long tls)
 {
 	void (*handler)(void);
-	int kthread = current->flags & PF_KTHREAD;
+	int kthread = current->flags & PF_KTHREAD ||
+		test_ti_thread_flag(current_thread_info(), TIF_HOST_THREAD);
 	int ret = 0;
 
 	p->thread = (struct thread_struct) INIT_THREAD;
@@ -194,7 +194,6 @@ int copy_thread_tls(unsigned long clone_flags, unsigned long sp,
 
 	return ret;
 }
-#endif /* CONFIG_MMU */
 
 void initial_thread_cb(void (*proc)(void *), void *arg)
 {

@@ -20,6 +20,7 @@ struct task_struct;
 /* unused */
 struct uml_pt_regs {
 	unsigned long gp[1];
+	unsigned long fp[1];
 	long faultinfo;
 	long syscall;
 	int is_user;

@@ -37,4 +37,10 @@ static inline void trap_init(void)
 {
 }
 
+static inline void arch_copy_thread(struct arch_thread *from,
+                                    struct arch_thread *to)
+{
+	panic("unimplemented %s: fork isn't supported yet", __func__);
+}
+
 #endif

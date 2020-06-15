@@ -8,14 +8,14 @@
 
 #include <os.h>
 
-static int init_ti(struct thread_info *ti)
+static int init_arch_thread(struct arch_thread *thread)
 {
-	ti->task->thread.arch.sched_sem = lkl_ops->sem_alloc(0);
-	if (!ti->task->thread.arch.sched_sem)
+	thread->sched_sem = lkl_ops->sem_alloc(0);
+	if (!thread->sched_sem)
 		return -ENOMEM;
 
-	ti->task->thread.arch.dead = false;
-	ti->task->thread.arch.tid = 0;
+	thread->dead = false;
+	thread->tid = 0;
 
 	return 0;
 }
@@ -29,19 +29,7 @@ unsigned long *alloc_thread_stack_node(struct task_struct *task, int node)
 		return NULL;
 
 	ti->task = task;
-	if (init_ti(ti)) {
-		kfree(ti);
-		return NULL;
-	}
-
 	return (unsigned long *)ti;
-}
-
-/* need to avoid overwriting struct arch_thread */
-int arch_dup_task_struct(struct task_struct *dst, struct task_struct *src)
-{
-	memcpy(dst, src, arch_task_struct_size - sizeof(struct thread_struct));
-	return 0;
 }
 
 /*
@@ -178,20 +166,28 @@ static void *thread_bootstrap(void *_tba)
 	return NULL;
 }
 
-int copy_thread(unsigned long clone_flags, unsigned long esp,
-		unsigned long unused, struct task_struct *p)
+void new_thread(void *stack, jmp_buf *buf, void (*handler)(void))
 {
-	struct thread_info *ti = task_thread_info(p);
+	struct thread_info *ti = (struct thread_info *)stack;
+	struct task_struct *p = ti->task;
 	struct thread_bootstrap_arg *tba;
+	int ret;
+
+	unsigned long esp = (unsigned long)p->thread.request.u.thread.proc;
+	unsigned long unused = (unsigned long)p->thread.request.u.thread.arg;
+
+	ret = init_arch_thread(&p->thread.arch);
+	if (ret < 0)
+		panic("%s: init_arch_thread", __func__);
 
 	if ((int (*)(void *))esp == host_task_stub) {
 		set_ti_thread_flag(ti, TIF_HOST_THREAD);
-		return 0;
+		return;
 	}
 
 	tba = kmalloc(sizeof(*tba), GFP_KERNEL);
 	if (!tba)
-		return -ENOMEM;
+		return;
 
 	tba->f = (int (*)(void *))esp;
 	tba->arg = (void *)unused;
@@ -200,10 +196,10 @@ int copy_thread(unsigned long clone_flags, unsigned long esp,
 	p->thread.arch.tid = lkl_ops->thread_create(thread_bootstrap, tba);
 	if (!p->thread.arch.tid) {
 		kfree(tba);
-		return -ENOMEM;
+		return;
 	}
 
-	return 0;
+	return;
 }
 
 void show_stack(struct task_struct *task, unsigned long *esp)
@@ -225,7 +221,8 @@ void threads_init(void)
 	int ret;
 	struct thread_info *ti = &init_thread_union.thread_info;
 
-	ret = init_ti(ti);
+	ti->task->thread = (struct thread_struct) INIT_THREAD;
+	ret = init_arch_thread(&ti->task->thread.arch);
 	if (ret < 0)
 		pr_early("lkl: failed to allocate init schedule semaphore\n");
 
@@ -252,12 +249,16 @@ void threads_cleanup(void)
 		init_thread_union.thread_info.task->thread.arch.sched_sem);
 }
 
-void new_thread(void *stack, jmp_buf *buf, void (*handler)(void))
-{
-	panic("unimplemented %s", __func__);
-}
-
 void initial_thread_cb_skas(void (*proc)(void *), void *arg)
 {
 	pr_warn("unimplemented %s", __func__);
+}
+
+int arch_set_tls(struct task_struct *new, unsigned long tls)
+{
+	panic("unimplemented %s", __func__);
+}
+void clear_flushed_tls(struct task_struct *task)
+{
+	panic("unimplemented %s", __func__);
 }

@@ -16,6 +16,7 @@
 #include <asm/syscalls.h>
 #include <asm/cpu.h>
 #include <os.h>
+#include <as-layout.h>
 
 
 static void *init_sem;
@@ -34,6 +35,9 @@ static void __init *lkl_run_kernel(void *arg)
 {
 
 	panic_blink = lkl_panic_blink;
+
+	cpu_tasks[0].pid = 0;
+	cpu_tasks[0].task = &init_task;
 
 	threads_init();
 	lkl_cpu_get();
