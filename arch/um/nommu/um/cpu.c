@@ -214,8 +214,10 @@ void subarch_cpu_idle(void)
 		lkl_ops->thread_exit();
 	}
 
+#ifdef doesntwork
 	/* switch to idle_host_task */
 	wakeup_idle_host_task();
+#endif
 }
 
 int lkl_cpu_init(void)

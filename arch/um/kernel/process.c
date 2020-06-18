@@ -259,9 +259,9 @@ void __weak subarch_cpu_idle(void)
 void arch_cpu_idle(void)
 {
 	cpu_tasks[current_thread_info()->cpu].pid = os_getpid();
-	um_idle_sleep();
 	local_irq_enable();
 	subarch_cpu_idle();
+	um_idle_sleep();
 }
 
 int __cant_sleep(void) {
