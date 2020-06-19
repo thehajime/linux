@@ -32,7 +32,9 @@ CFLAGS := -g -O2
 # from arch/um/Makefile
 ARCH_DIR := arch/um
 HOST_DIR := arch/$(HEADER_ARCH)
-KBUILD_CFLAGS += -mcmodel=large
+ifdef CONFIG_64BIT
+  KBUILD_CFLAGS += -mcmodel=large
+endif
 KBUILD_CFLAGS += $(CFLAGS) $(CFLAGS-y) -D__arch_um__ \
 	$(ARCH_INCLUDE) $(MODE_INCLUDE) -Dvmap=kernel_vmap	\
 	-Dlongjmp=kernel_longjmp -Dsetjmp=kernel_setjmp \
@@ -45,7 +47,7 @@ ARCH_INCLUDE	+= -I$(srctree)/$(HOST_DIR)/um/shared
 KBUILD_CPPFLAGS += -I$(srctree)/$(HOST_DIR)/um
 USER_CFLAGS := $(patsubst $(KERNEL_DEFINES),,$(patsubst -I%,,$(KBUILD_CFLAGS))) \
 		$(ARCH_INCLUDE) $(MODE_INCLUDE) $(filter -I%,$(CFLAGS)) \
-		-D_FILE_OFFSET_BITS=64 -idirafter $(srctree)/include \
+		-D_FILE_OFFSET_BITS=64 -idirafter $(srctree)/include/uapi \
 		-idirafter $(objtree)/include -D__KERNEL__ -D__UM_HOST__
 
 # from Makefile-os-Linux
