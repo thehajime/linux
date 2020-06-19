@@ -31,6 +31,7 @@ else
   OUTPUT := $(CURDIR)/
 endif
 export OUTPUT
+export objtree := $(OUTPUT)/../..
 
 
 all:
