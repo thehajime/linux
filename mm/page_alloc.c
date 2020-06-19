@@ -3125,8 +3125,13 @@ void split_page(struct page *page, unsigned int order)
 	VM_BUG_ON_PAGE(PageCompound(page), page);
 	VM_BUG_ON_PAGE(!page_count(page), page);
 
-	for (i = 1; i < (1 << order); i++)
-		set_page_refcounted(page + i);
+	/*
+	 * rkj: XXX: bugfix! this is walking one passed the last page
+	 * at least based on __isolate_free_page
+	 */
+	int endpage = (1 << order) - 1;
+	for (i = 1; i < endpage; i++)
+		set_page_count(page + i, 1);
 	split_page_owner(page, order);
 }
 EXPORT_SYMBOL_GPL(split_page);

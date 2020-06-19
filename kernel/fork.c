@@ -1847,10 +1847,16 @@ static __latent_entropy struct task_struct *copy_process(
 	if (!(clone_flags & CLONE_THREAD))
 		hlist_add_head(&delayed.node, &current->signal->multiprocess);
 	recalc_sigpending();
+	// XXX: rkj: suspicious
+	clear_thread_flag(TIF_SIGPENDING);
+
 	spin_unlock_irq(&current->sighand->siglock);
 	retval = -ERESTARTNOINTR;
+#ifdef CONFIG_MMU
+	// XXX: rkj: suspicious
 	if (signal_pending(current))
 		goto fork_out;
+#endif
 
 	retval = -ENOMEM;
 	p = dup_task_struct(current, node);
@@ -2160,7 +2166,9 @@ static __latent_entropy struct task_struct *copy_process(
 	 * Copy seccomp details explicitly here, in case they were changed
 	 * before holding sighand lock.
 	 */
+#ifdef CONFIG_MMU
 	copy_seccomp(p);
+#endif
 
 	rseq_fork(p, clone_flags);
 
@@ -2384,13 +2392,37 @@ long _do_fork(struct kernel_clone_args *args)
 	if (clone_flags & CLONE_PARENT_SETTID)
 		put_user(nr, args->parent_tid);
 
+	unsigned char *stack_copy;
+	struct uml_pt_regs *regs = &current->thread.regs.regs;
+
+	long sp1, sp2, sp3, sp4;
+	long task_test;
+
 	if (clone_flags & CLONE_VFORK) {
 		p->vfork_done = &vfork;
 		init_completion(&vfork);
 		get_task_struct(p);
+#ifndef CONFIG_MMU
+		/*
+		 * Make a copy of the stack, so the child does whatever it
+		 * wants with it.  This copy is restored before exiting from
+		 * this function.
+		 *
+		 * XXX: This has to be done somewhere else when CONFIG_MMU is
+		 * not defined.  What happens when a nommu device vforks? it
+		 * has to copy the stack for the child: but where is that code?
+		 */
+		stack_copy = kzalloc(PAGE_SIZE << THREAD_SIZE_ORDER,
+					GFP_KERNEL);
+		if (!stack_copy)
+			return -ENOMEM;
+		memcpy(stack_copy, regs->gp[HOST_SP],
+					PAGE_SIZE << THREAD_SIZE_ORDER);
+#endif
 	}
 
 	wake_up_new_task(p);
+		
 
 	/* forking complete and child started to run, tell ptracer */
 	if (unlikely(trace))
@@ -2399,6 +2431,18 @@ long _do_fork(struct kernel_clone_args *args)
 	if (clone_flags & CLONE_VFORK) {
 		if (!wait_for_vfork_done(p, &vfork))
 			ptrace_event_pid(PTRACE_EVENT_VFORK_DONE, pid);
+
+#ifndef CONFIG_MMU
+		/*
+		 * XXX: rkj: we have a pending SIGCHLD. how do we
+		 * handle it?  trying to handle it with an
+		 * interrupt_end call HOW TO HANDLE SIGNALS IN UML?
+		 */
+		clear_tsk_thread_flag(current, TIF_SIGPENDING);
+
+		memcpy(regs->gp[HOST_SP], stack_copy,
+			PAGE_SIZE << THREAD_SIZE_ORDER);
+#endif
 	}
 
 	put_pid(pid);
