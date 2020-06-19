@@ -3,7 +3,7 @@
 # Licensed under the GPL
 #
 
-include $(O)/include/config/auto.conf
+include $(objtree)/include/config/auto.conf
 
 liblinux-y = registers.o task_size.o mcontext.o
 
