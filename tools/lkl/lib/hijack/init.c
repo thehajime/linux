@@ -111,12 +111,29 @@ static int config_load(void)
 	return ret;
 }
 
+
+static int hijack_disk_add(char *filename)
+{
+	struct lkl_disk disk;
+
+	disk.fd = open(filename, O_RDWR);
+	if (disk.fd < 0) {
+		lkl_printf("can't open a file: %s\n", lkl_strerror(errno));
+		return -1;
+	}
+
+	disk.ops = NULL;
+
+	return lkl_disk_add(&disk);
+}
+
 void __attribute__((constructor))
 hijack_init(void)
 {
 	int ret, i, dev_null;
 	int single_cpu_mode = 0;
 	cpu_set_t ori_cpu;
+	int disk_id;
 
 	ret = config_load();
 	if (ret < 0)
@@ -124,6 +141,9 @@ hijack_init(void)
 
 	/* reflect pre-configuration */
 	lkl_load_config_pre(cfg);
+
+	/* XXX */
+	disk_id = hijack_disk_add("disk.img");
 
 	/* hijack library specific configurations */
 	if (cfg->debug)
@@ -185,6 +205,21 @@ hijack_init(void)
 	}
 
 	lkl_running = 1;
+
+	char mntpnt[64];
+	ret = lkl_mount_dev(disk_id, 0, "ext4", 0, NULL, mntpnt, sizeof(mntpnt));
+	if (ret) {
+		fprintf(stderr, "can't mount disk (id=%d): %s\n", disk_id, lkl_strerror(ret));
+	}
+	fprintf(stderr, "chrooting to %s\n", mntpnt);
+	ret = lkl_sys_chdir("/");
+	if (ret) {
+		fprintf(stderr, "can't chdir to %s: %s\n", "/", lkl_strerror(ret));
+	}
+	ret = lkl_sys_chroot(mntpnt);
+	if (ret) {
+		fprintf(stderr, "can't chroot to %s: %s\n", mntpnt, lkl_strerror(ret));
+	}
 
 	/* initialize epoll manage list */
 	memset(dual_fds, -1, sizeof(int) * LKL_FD_OFFSET);

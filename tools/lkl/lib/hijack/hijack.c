@@ -204,7 +204,7 @@ HOST_CALL(ioctl);
 #ifdef __ANDROID__
 int ioctl(int fd, int req, ...)
 #else
-int ioctl(int fd, unsigned long req, ...)
+int ioctl(int fd, int req, ...)
 #endif
 {
 	va_list vl;
@@ -407,6 +407,13 @@ static void *host_epollwait(void *arg)
 int epoll_wait(int epfd, struct epoll_event *events,
 	       int maxevents, int timeout)
 {
+	return lkl_sys_epoll_wait(dual_fds[epfd], (struct lkl_epoll_event *)events,
+				  maxevents, timeout);
+}
+#if 0
+int epoll_wait(int epfd, struct epoll_event *events,
+	       int maxevents, int timeout)
+{
 	CHECK_HOST_CALL(epoll_wait);
 	CHECK_HOST_CALL(pipe2);
 
@@ -540,6 +547,7 @@ int epoll_wait(int epfd, struct epoll_event *events,
 
 	return ret;
 }
+#endif
 
 int eventfd(unsigned int count, int flags)
 {
@@ -587,6 +595,7 @@ void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset)
 	return lkl_sys_mmap(addr, length, prot, flags, fd, offset);
 }
 
+#if 0
 #ifndef __ANDROID__
 HOST_CALL(__xstat64)
 int stat(const char *pathname, struct stat *buf)
@@ -594,6 +603,7 @@ int stat(const char *pathname, struct stat *buf)
 	CHECK_HOST_CALL(__xstat64);
 	return host___xstat64(0, pathname, buf);
 }
+#endif
 #endif
 
 ssize_t send(int fd, const void *buf, size_t len, int flags)
@@ -614,4 +624,89 @@ int pipe(int fd[2])
 
 	return pipe2(fd, 0);
 
+}
+
+#define WRAP_CALL HOST_CALL
+
+WRAP_CALL(open);
+int open(const char *file, int flags, ...)
+{
+	va_list mode;
+	va_start(mode, flags);
+
+	/* goto hijacked openat() */
+	return openat(LKL_AT_FDCWD, file, flags, *((int *)mode));
+}
+
+WRAP_CALL(openat);
+int openat(int dirfd, const char *pathname, int flags, ...)
+{
+	int len;
+	va_list mode;
+	char path[PATH_MAX];
+
+	va_start(mode, flags);
+
+	CHECK_HOST_CALL(openat);
+	if (!lkl_running)
+		return host_openat(dirfd, pathname, flags, mode);
+
+	/* const section cannot be RDMA Read, so copy the pathname to
+	 * the stack section. */
+
+	len = strlen(pathname);
+	strncpy(path, pathname, len);
+	path[len] = '\0';
+
+	return lkl_call(__lkl__NR_openat, 4, dirfd, path, flags, *((long *)mode));
+}
+
+HOOK_FD_CALL(fstat);
+HOOK_FD_CALL(pread64);
+
+WRAP_CALL(pread);
+ssize_t pread(int fd, void *buf, size_t count, off_t offset)
+{
+	CHECK_HOST_CALL(pread);
+
+	if (!is_lklfd(fd))
+		return host_pread(fd, buf, count, offset);
+
+	return lkl_sys_pread64(fd, buf, count, offset);
+}
+
+WRAP_CALL(pwrite);
+ssize_t pwrite(int fd, const void *buf, size_t count, off_t offset)
+{
+	CHECK_HOST_CALL(pwrite);
+
+	if (!is_lklfd(fd))
+		return host_pwrite(fd, buf, count, offset);
+
+	return lkl_sys_pwrite64(fd, buf, count, offset);
+}
+
+struct stat;
+WRAP_CALL(stat);
+int stat(const char *__restrict path, struct stat *__restrict buf)
+{
+	return lkl_sys_stat(path, (struct lkl_stat *)buf);
+}
+
+WRAP_CALL(mkdir);
+int mkdir(const char *pathname, mode_t mode)
+{
+	return lkl_sys_mkdir(pathname, mode);
+}
+
+WRAP_CALL(chown);
+int chown(const char *pathname, uid_t owner, gid_t group)
+{
+	return lkl_sys_chown(pathname, owner, group);
+}
+
+WRAP_CALL(chmod);
+int chmod(const char *pathname, mode_t mode)
+{
+	return lkl_sys_chmod(pathname, mode);
 }
