@@ -710,3 +710,9 @@ int chmod(const char *pathname, mode_t mode)
 {
 	return lkl_sys_chmod(pathname, mode);
 }
+
+WRAP_CALL(sendfile);
+ssize_t sendfile(int out_fd, int in_fd, off_t *offset, size_t count)
+{
+	return lkl_sys_sendfile(out_fd, in_fd, offset, count);
+}
