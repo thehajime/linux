@@ -21,6 +21,7 @@
 #define __addr_range_nowrap(addr, size) \
 	((unsigned long) (addr) <= ((unsigned long) (addr) + (size)))
 
+#ifdef CONFIG_MMU
 extern unsigned long raw_copy_from_user(void *to, const void __user *from, unsigned long n);
 extern unsigned long raw_copy_to_user(void __user *to, const void *from, unsigned long n);
 extern long __strncpy_from_user(char *dst, const char __user *src, long count);
@@ -45,5 +46,10 @@ static inline int __access_ok(unsigned long addr, unsigned long size)
 		__access_ok_vsyscall(addr, size) ||
 		uaccess_kernel());
 }
+
+#else
+#include <asm-generic/uaccess.h>
+#endif /* CONFIG_MMU */
+
 
 #endif
