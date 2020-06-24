@@ -38,6 +38,15 @@ struct lkl_jmp_buf {
  * @gettid - returns the host thread id of the caller, which need not
  * be the same as the handle returned by thread_create
  *
+ * @tls_alloc - allocate a thread local storage key; returns 0 if successful; if
+ * destructor is not NULL it will be called when a thread terminates with its
+ * argument set to the current thread local storage value
+ * @tls_free - frees a thread local storage key; returns 0 if successful
+ * @tls_set - associate data to the thread local storage key; returns 0 if
+ * successful
+ * @tls_get - return data associated with the thread local storage key or NULL
+ * on error
+ *
  * @jmp_buf_set - runs the give function and setups a jump back point by saving
  * the context in the jump buffer; jmp_buf_longjmp can be called from the give
  * function or any callee in that function to return back to the jump back
@@ -71,6 +80,11 @@ struct lkl_host_operations {
 	lkl_thread_t (*thread_self)(void);
 	int (*thread_equal)(lkl_thread_t a, lkl_thread_t b);
 	long (*gettid)(void);
+
+	struct lkl_tls_key *(*tls_alloc)(void (*destructor)(void *));
+	void (*tls_free)(struct lkl_tls_key *key);
+	int (*tls_set)(struct lkl_tls_key *key, void *data);
+	void *(*tls_get)(struct lkl_tls_key *key);
 
 	void (*jmp_buf_set)(struct lkl_jmp_buf *jmpb, void (*f)(void));
 	void (*jmp_buf_longjmp)(struct lkl_jmp_buf *jmpb, int val);
