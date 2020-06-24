@@ -93,6 +93,10 @@ include/uapi/linux/pktcdvd.h:CONFIG_CDROM_PKTCDVD_WCACHE
 
 for c in $configs
 do
+	if [ "$SRCARCH" = "um" ] ; then
+		break
+	fi
+
 	leak_error=1
 
 	for ignore in $config_leak_ignores
