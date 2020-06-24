@@ -5,6 +5,7 @@
 MAKEFLAGS += -r --no-print-directory
 
 KCONFIG?=defconfig
+UMMODE?=kernel
 
 ifneq ($(silent),1)
   ifneq ($(V),1)
@@ -15,10 +16,8 @@ endif
 
 PREFIX   := /usr
 
-ifeq (,$(srctree))
-  srctree := $(patsubst %/,%,$(dir $(shell pwd)))
-  srctree := $(patsubst %/,%,$(dir $(srctree)))
-endif
+srctree := $(patsubst %/,%,$(dir $(shell pwd)))
+srctree := $(patsubst %/,%,$(dir $(srctree)))
 export srctree
 
 -include ../scripts/Makefile.include
@@ -32,9 +31,6 @@ endif
 export OUTPUT
 export objtree := $(OUTPUT)/../..
 
-
-all:
-
 export CFLAGS += -I$(OUTPUT)/include -Iinclude -Wall -g -O2 -Wextra -fPIC \
 	 -Wno-unused-parameter \
 	 -Wno-missing-field-initializers -fno-strict-aliasing
@@ -45,28 +41,34 @@ TARGETS := $(progs-y:%=$(OUTPUT)%)
 TARGETS += $(libs-y:%=$(OUTPUT)%)
 all: $(TARGETS)
 
-# rule to build linux.o
-$(OUTPUT)lib/linux.o:
-	$(Q)CFLAGS= $(MAKE) -C ../.. ARCH=um $(KOPT) $(KCONFIG)
-	$(Q)CFLAGS= $(MAKE) -C ../.. ARCH=um $(KOPT) install INSTALL_PATH=$(OUTPUT)
+$(objtree)/linux.o:
+	$(Q)echo ""
+	$(Q)echo ""
+	$(Q)echo "==> $@ isn't found; please make ARCH=um"
+	$(Q)echo ""
+	$(Q)echo ""
+	$(Q)exit 1
 
-$(OUTPUT)liblinux.a: $(OUTPUT)lib/linux.o $(OUTPUT)uml/liblinux-in.o $(OUTPUT)lib/liblinux-in.o
+$(OUTPUT)lib/linux.o: $(objtree)/linux.o
+	$(Q)cp $(objtree)/linux.o $(OUTPUT)lib/linux.o
+
+# rule to build linux.o
+$(OUTPUT)liblinux.a: $(OUTPUT)uml/liblinux-in.o $(OUTPUT)lib/liblinux-in.o $(OUTPUT)lib/linux.o
 	$(QUIET_AR)$(AR) -rc $@ $^
 
 # rule to link programs
 $(OUTPUT)%: $(OUTPUT)%-in.o $(OUTPUT)liblinux.a
 	$(QUIET_LINK)$(CC) $(LDFLAGS) $(LDFLAGS_$(notdir $*)-y) -o $@ $^ $(LDLIBS) $(LDLIBS_$(notdir $*)-y)
 
-$(OUTPUT)%-in.o: FORCE
-	$(Q)$(MAKE) -f $(srctree)/tools/build/Makefile.build dir=$(patsubst %/,%,$(dir $*)) obj=$(notdir $*)
-
 # rule to build objects
 $(OUTPUT)%-in.o: $(OUTPUT)lib/linux.o FORCE
 	$(Q)$(MAKE) -f $(srctree)/tools/build/Makefile.build dir=$(patsubst %/,%,$(dir $*)) obj=$(notdir $*)
 
+RM := rm -f
 clean:
 	$(call QUIET_CLEAN, objects)find $(OUTPUT) -name '*.o' -delete -o -name '\.*.cmd'\
 	 -delete -o -name '\.*.d' -delete
+	$(call QUIET_CLEAN, headers)$(RM) -r $(OUTPUT)/include/lkl/
 	$(call QUIET_CLEAN, liblinux.a)$(RM) $(OUTPUT)/liblinux.a
 	$(call QUIET_CLEAN, $(TARGETS))$(RM) $(TARGETS)
 
