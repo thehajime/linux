@@ -236,6 +236,7 @@ extern void register_pm_wake_signal(void);
 extern void block_signals_hard(void);
 extern void unblock_signals_hard(void);
 extern void mark_sigio_pending(void);
+extern void set_pending_signals(int sig);
 
 /* util.c */
 extern void stack_protections(unsigned long address);

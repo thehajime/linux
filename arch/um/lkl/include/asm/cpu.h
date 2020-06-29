@@ -15,4 +15,8 @@ int lkl_cpu_init(void);
 void lkl_cpu_wait_shutdown(void);
 void lkl_cpu_change_owner(lkl_thread_t owner);
 
+int lkl_cpu_try_run_irq(int irq);
+void lkl_irq_exit(void);
+int lkl_irq_enter(int sig);
+
 #endif

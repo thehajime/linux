@@ -8,6 +8,7 @@
 #include <asm/sched.h>
 #include <asm/syscalls.h>
 #include <init.h>
+#include <os.h>
 
 /*
  * This structure is used to get access to the "LKL CPU" that allows us to run
@@ -41,6 +42,7 @@ static struct lkl_cpu {
 	 */
 	#define MAX_THREADS 1000000
 	unsigned int shutdown_gate;
+	bool irqs_pending;
 	/* no of threads waiting the CPU */
 	unsigned int sleepers;
 	/* no of times the current thread got the CPU */
@@ -52,6 +54,16 @@ static struct lkl_cpu {
 	/* semaphore used for shutdown */
 	struct lkl_sem *shutdown_sem;
 } cpu;
+
+static void run_irqs(void)
+{
+	unblock_signals();
+}
+
+static void set_irq_pending(int sig)
+{
+	set_pending_signals(sig);
+}
 
 /*
  * internal routine to acquire LKL CPU's lock
@@ -134,6 +146,16 @@ void lkl_cpu_put(void)
 	    !lkl_thread_equal(cpu.owner, lkl_thread_self()))
 		lkl_bug("%s: unbalanced put\n", __func__);
 
+	/* we're going to trigger irq handlers if there are any pending
+	 * interrupts, and not irq_disabled.
+	 */
+	while (cpu.irqs_pending && !irqs_disabled()) {
+		cpu.irqs_pending = false;
+		lkl_mutex_unlock(cpu.lock);
+		run_irqs();
+		lkl_mutex_lock(cpu.lock);
+	}
+
 	/*
 	 * switch to userspace code if current is host task (TIF_HOST_THREAD),
 	 * AND, there are other running tasks.
@@ -165,6 +187,30 @@ void lkl_cpu_put(void)
 	cpu.owner = 0;
 
 	lkl_mutex_unlock(cpu.lock);
+}
+
+int lkl_cpu_try_run_irq(int irq)
+{
+	int ret;
+
+	ret = __cpu_try_get_lock(1);
+	if (!ret) {
+		set_irq_pending(irq);
+		cpu.irqs_pending = true;
+	}
+	__cpu_try_get_unlock(ret, 1);
+
+	return ret;
+}
+
+int lkl_irq_enter(int sig)
+{
+	return lkl_cpu_try_run_irq(sig);
+}
+
+void lkl_irq_exit(void)
+{
+	return lkl_cpu_put();
 }
 
 static void lkl_cpu_shutdown(void)
