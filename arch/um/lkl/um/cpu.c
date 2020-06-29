@@ -8,15 +8,16 @@
 #include <asm/sched.h>
 #include <asm/syscalls.h>
 #include <init.h>
+#include <os.h>
 
 void run_irqs(void)
 {
-	panic("unimplemented %s", __func__);
+	unblock_signals();
 }
 
-int set_irq_pending(int irq)
+void set_irq_pending(int sig)
 {
-	panic("unimplemented %s", __func__);
+	set_pending_signals(sig);
 }
 
 /*
@@ -172,6 +173,16 @@ int lkl_cpu_try_run_irq(int irq)
 	__cpu_try_get_unlock(ret, 1);
 
 	return ret;
+}
+
+int lkl_irq_enter(int sig)
+{
+	return lkl_cpu_try_run_irq(sig);
+}
+
+void lkl_irq_exit(void)
+{
+	return lkl_cpu_put();
 }
 
 static void lkl_cpu_shutdown(void)
