@@ -36,6 +36,8 @@ static void __init *lkl_run_kernel(void *arg)
 
 	panic_blink = lkl_panic_blink;
 
+	/* signal should be received at this thread (main and idle threads) */
+	init_new_thread_signals();
 	threads_init();
 	lkl_cpu_get();
 	start_kernel();
@@ -57,6 +59,9 @@ int __init lkl_start_kernel(struct lkl_host_operations *ops,
 	ret = lkl_cpu_init();
 	if (ret)
 		goto out_free_init_sem;
+
+	change_sig(SIGALRM, 0);
+	change_sig(SIGIO, 0);
 
 	ret = lkl_thread_create(lkl_run_kernel, NULL);
 	if (!ret) {
