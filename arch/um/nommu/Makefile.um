@@ -1,5 +1,6 @@
+include $(srctree)/arch/um/nommu/auto.conf
+
 KBUILD_CFLAGS += -fno-builtin -fPIC
-ELF_FORMAT=$(shell $(LD) -r -print-output-format)
 
 ifeq ($(shell uname -s), Linux)
 NPROC=$(shell nproc)
