@@ -263,6 +263,7 @@ static void *tls_get(struct lkl_tls_key *key)
 }
 
 struct lkl_host_operations lkl_host_ops = {
+	.um_devices = lkl_um_devs,
 	.panic = panic,
 	.print = print,
 	.mem_alloc = (void *)malloc,

@@ -1,3 +1,4 @@
 boot-y += boot.o test.o
+disk-y += disk.o test.o cla.o
 
 CFLAGS_test.o += -Wno-implicit-fallthrough
