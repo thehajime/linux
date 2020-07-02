@@ -36,6 +36,26 @@ HOST_DIR := arch/$(HEADER_ARCH)
 ifdef CONFIG_64BIT
   KBUILD_CFLAGS += -mcmodel=large
 endif
+
+# from scripts/Kbuild.include
+try-run = $(shell set -e;		\
+	TMP="$(TMPOUT).$$$$.tmp";	\
+	TMPO="$(TMPOUT).$$$$.o";	\
+	if ($(1)) >/dev/null 2>&1;	\
+	then echo "$(2)";		\
+	else echo "$(3)";		\
+	fi;				\
+	rm -f "$$TMP" "$$TMPO")
+
+__cc-option = $(call try-run,\
+        $(1) -Werror $(2) $(3) -c -x c /dev/null -o "$$TMP",$(3),$(4))
+CC_OPTION_CFLAGS := $(filter-out $(GCC_PLUGINS_CFLAGS),$(KBUILD_CFLAGS))
+cc-option = $(call __cc-option, $(CC),\
+        $(KBUILD_CPPFLAGS) $(CC_OPTION_CFLAGS),$(1),$(2))
+
+
+include $(srctree)/$(HOST_DIR)/Makefile.um
+
 KBUILD_CFLAGS += $(CFLAGS) $(CFLAGS-y) -D__arch_um__ \
 	$(ARCH_INCLUDE) $(MODE_INCLUDE) -Dvmap=kernel_vmap	\
 	-Dlongjmp=kernel_longjmp -Dsetjmp=kernel_setjmp \
