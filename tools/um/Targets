@@ -1,10 +1,12 @@
 ifeq ($(UMMODE),library)
 progs-y += tests/boot
+progs-y += tests/disk
 else
 progs-y += uml/linux
 endif
 
 LDFLAGS_boot-y := -pie
+LDFLAGS_disk-y := -pie
 
 LDLIBS := -lrt -lpthread -lutil
 LDFLAGS_linux-y := -no-pie -Wl,--wrap,malloc -Wl,--wrap,free -Wl,--wrap,calloc

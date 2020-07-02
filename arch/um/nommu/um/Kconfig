@@ -4,6 +4,10 @@ config UML_NOMMU
 	select UACCESS_MEMCPY
 	select ARCH_THREAD_STACK_ALLOCATOR
 	select ARCH_HAS_SYSCALL_WRAPPER
+	select VFAT_FS
+	select NLS_CODEPAGE_437
+	select NLS_ISO8859_1
+	select BTRFS_FS
 
 config 64BIT
 	bool
@@ -35,3 +39,7 @@ config STACKTRACE_SUPPORT
 config PRINTK_TIME
 	bool
 	default y
+
+config RAID6_PQ_BENCHMARK
+	bool
+	default n
