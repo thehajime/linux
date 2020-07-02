@@ -4,3 +4,4 @@ CFLAGS_posix-host.o += -D_FILE_OFFSET_BITS=64
 liblinux-$(CONFIG_UMMODE_LIB) += utils.o
 liblinux-$(CONFIG_UMMODE_LIB) += posix-host.o
 liblinux-$(CONFIG_UMMODE_LIB) += jmp_buf.o
+liblinux-$(CONFIG_UMMODE_LIB) += fs.o
