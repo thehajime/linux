@@ -1,4 +1,10 @@
+ifeq ($(UMMODE),library)
+progs-y += tests/boot
+else
 progs-y += uml/linux
+endif
+
+LDFLAGS_boot-y := -pie
 
 LDLIBS := -lrt -lpthread -lutil
 LDFLAGS_linux-y := -no-pie -Wl,--wrap,malloc -Wl,--wrap,free -Wl,--wrap,calloc
