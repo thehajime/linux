@@ -1,0 +1,3 @@
+boot-y += boot.o test.o
+
+CFLAGS_test.o += -Wno-implicit-fallthrough

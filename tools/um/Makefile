@@ -72,7 +72,10 @@ clean:
 	$(call QUIET_CLEAN, liblinux.a)$(RM) $(OUTPUT)/liblinux.a
 	$(call QUIET_CLEAN, $(TARGETS))$(RM) $(TARGETS)
 
+run-tests:
+	./tests/run.py $(tests)
+
 FORCE: ;
-.PHONY: all clean FORCE
+.PHONY: all clean FORCE run-tests
 .IGNORE: clean
 .NOTPARALLEL : lib/linux.o
