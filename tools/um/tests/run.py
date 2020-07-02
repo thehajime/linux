@@ -50,6 +50,8 @@ mydir=os.path.dirname(os.path.realpath(__file__))
 
 tests = [
     'boot.sh',
+    'disk.sh -t ext4',
+    'disk.sh -t vfat',
 ]
 
 parser = argparse.ArgumentParser(description='LKL test runner')

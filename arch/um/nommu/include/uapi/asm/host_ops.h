@@ -15,6 +15,11 @@ struct lkl_jmp_buf {
  *
  * These operations must be provided by a host library or by the application
  * itself.
+ *
+ * @um_devices - string containg the list of UML devices in command line
+ * format. This string is appended to the kernel command line and
+ * is provided here for convenience to be implemented by the host library.
+ *
  * @print - optional operation that receives console messages
  * @panic - called during a kernel panic
  *
@@ -65,6 +70,8 @@ struct lkl_jmp_buf {
  *
  */
 struct lkl_host_operations {
+	const char *um_devices;
+
 	void (*print)(const char *str, int len);
 	void (*panic)(void);
 
