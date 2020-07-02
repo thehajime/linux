@@ -37,6 +37,11 @@ export CFLAGS += -I$(OUTPUT)/include -Iinclude -Wall -g -O2 -Wextra -fPIC \
 
 -include Targets
 
+ifeq ($(SUBARCH),i386)
+export LDEMULATION=elf_i386
+export LDFLAGS=-m32
+endif
+
 TARGETS := $(progs-y:%=$(OUTPUT)%)
 TARGETS += $(libs-y:%=$(OUTPUT)%)
 all: $(TARGETS)
