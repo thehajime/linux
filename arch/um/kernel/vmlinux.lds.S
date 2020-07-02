@@ -21,7 +21,7 @@ SECTIONS
 
 	_stext = . ;
 	_text = . ;
-	.text : ALIGN(THREAD_SIZE)
+	.text : ALIGN(PAGE_SIZE)
 	{
 		__binary_start = . ;
 		TEXT_TEXT
