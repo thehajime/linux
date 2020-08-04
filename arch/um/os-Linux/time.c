@@ -107,16 +107,19 @@ long long os_nsecs(void)
 	struct timespec ts;
 	unsigned long long addr;
 
-	// XXX: there has to be a better way
-#if !IS_ENABLED(CONFIG_STATIC_LINK)
+	/*
+	 * We need to restore the original host FS segment value before making
+	 * some calls, like arch_prctl.  Definitely need to investigate this
+	 * further. Also, it might be probably safer to set the host FS for
+	 * every (virtual) system call.
+	 */
 	os_arch_prctl(0, ARCH_GET_FS, (void *)&addr);
 	if (host_fs != -1)
 		os_arch_prctl(0, ARCH_SET_FS, host_fs);
-#endif
+
 	clock_gettime(CLOCK_MONOTONIC, &ts);
-#if !IS_ENABLED(CONFIG_STATIC_LINK)
+
 	os_arch_prctl(0, ARCH_SET_FS, addr);
-#endif
 	return timespec_to_ns(&ts);
 }
 
