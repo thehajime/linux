@@ -17,6 +17,10 @@ else
         KBUILD_DEFCONFIG := $(SUBARCH)_defconfig
 endif
 
+ifeq ($(UMMODE),library)
+  SUBARCH := um/nommu
+endif
+
 ARCH_DIR := arch/um
 OS := $(shell uname -s)
 # We require bash because the vmlinux link and loader script cpp use bash
@@ -97,8 +101,14 @@ KBUILD_CFLAGS += $(KERNEL_DEFINES)
 LDFLAGS_vmlinux += -r
 
 INSTALL_PATH=$(objtree)/tools/um
+ifeq ($(UMMODE),library)
+all: install
+	$(Q)$(MAKE) -C $(srctree)/tools/um
+install: linux.o um_headers_install
+else
 all: linux
 install: linux.o
+endif
 	@echo "  INSTALL	$(INSTALL_PATH)/lib/$<"
 	@mkdir -p $(INSTALL_PATH)/lib/
 	@cp $< $(INSTALL_PATH)/lib/
@@ -111,7 +121,7 @@ linux: linux.o
 
 linux.o: vmlinux
 	@echo '  LINK	$@'
-	$(Q)$(OBJCOPY) -R .eh_frame $< $@
+	$(Q)$(OBJCOPY) -R .eh_frame -L sem_init -L sem_post -L sem_wait -L sem_destroy $< $@
 	$(Q)mkdir -p $(objtree)/tools/um/lib
 
 define archhelp
