@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (C) 2000 - 2007 Jeff Dike (jdike@{addtoit,linux.intel}.com)
+#
+
+# Don't instrument UML-specific code
+KCOV_INSTRUMENT                := n
+
+include $(objtree)/include/config/auto.conf
+
+liblinux-y += execvp.o file.o helper.o irq.o main.o mem.o process.o \
+	registers.o sigio.o signal.o start_up.o time.o tty.o \
+	umid.o util.o drivers/ skas/
+
+CFLAGS_signal.o += -Wframe-larger-than=4096
+
+liblinux-$(CONFIG_ARCH_REUSE_HOST_VSYSCALL_AREA) += elf_aux.o
+
+export O = $(srctree)
+objtree := $(O)
+# reset CFLAGS
+CFLAGS := -g -O2
+
+# from arch/um/Makefile
+ARCH_DIR := arch/um
+HEADER_ARCH 	:= x86
+HOST_DIR := arch/$(HEADER_ARCH)
+ifdef CONFIG_64BIT
+  KBUILD_CFLAGS += -mcmodel=large
+endif
+KBUILD_CFLAGS += $(CFLAGS) $(CFLAGS-y) -D__arch_um__ \
+	$(ARCH_INCLUDE) $(MODE_INCLUDE) -Dvmap=kernel_vmap	\
+	-Dlongjmp=kernel_longjmp -Dsetjmp=kernel_setjmp \
+	-Din6addr_loopback=kernel_in6addr_loopback \
+	-Din6addr_any=kernel_in6addr_any -Dstrrchr=kernel_strrchr
+SHARED_HEADERS	:= $(ARCH_DIR)/include/shared
+MODE_INCLUDE	+= -I$(srctree)/$(ARCH_DIR)/include/shared/skas
+ARCH_INCLUDE	:= -I$(srctree)/$(SHARED_HEADERS)
+ARCH_INCLUDE	+= -I$(srctree)/$(HOST_DIR)/um/shared
+KBUILD_CPPFLAGS += -I$(srctree)/$(HOST_DIR)/um
+USER_CFLAGS := $(patsubst $(KERNEL_DEFINES),,$(patsubst -I%,,$(KBUILD_CFLAGS))) \
+		$(ARCH_INCLUDE) $(MODE_INCLUDE) $(filter -I%,$(CFLAGS)) \
+		-D_FILE_OFFSET_BITS=64 -idirafter $(srctree)/include/uapi \
+		-idirafter $(objtree)/include -D__KERNEL__ -D__UM_HOST__
+
+# from Makefile-os-Linux
+USER_CFLAGS += -D_GNU_SOURCE -D_LARGEFILE64_SOURCE
+
+# from Makefile.rules
+CFLAGS += $(USER_CFLAGS) -include $(srctree)/tools/include/linux/kern_levels.h -include user.h $(CFLAGS_$(basetarget).o)

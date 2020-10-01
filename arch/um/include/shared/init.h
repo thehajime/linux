@@ -41,7 +41,12 @@
 typedef int (*initcall_t)(void);
 typedef void (*exitcall_t)(void);
 
+#ifndef __UM_HOST__
 #include <linux/compiler_types.h>
+#else
+#define __used                          __attribute__((__used__))
+#define __section(S)                    __attribute__((__section__(#S)))
+#endif
 
 /* These are for everybody (although not all archs will actually
    discard it in modules) */
