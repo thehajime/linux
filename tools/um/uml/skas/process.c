@@ -21,7 +21,6 @@
 #include <registers.h>
 #include <skas.h>
 #include <sysdep/stub.h>
-#include <linux/threads.h>
 
 int is_skas_winch(int pid, int fd, void *data)
 {
@@ -248,7 +247,7 @@ static int userspace_tramp(void *stack)
 	return 0;
 }
 
-int userspace_pid[NR_CPUS];
+int userspace_pid[UM_NR_CPUS];
 
 /**
  * start_userspace() - prepare a new userspace process
