@@ -11,7 +11,7 @@ KCOV_INSTRUMENT                := n
 CPPFLAGS_vmlinux.lds := -DSTART=$(LDS_START)		\
                         -DELF_ARCH=$(LDS_ELF_ARCH)	\
                         -DELF_FORMAT=$(LDS_ELF_FORMAT)	\
-			$(LDS_EXTRA)
+			$(LDS_EXTRA) -Ui386
 extra-y := vmlinux.lds
 
 obj-y = config.o exitcode.o irq.o ksyms.o \

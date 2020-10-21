@@ -1,6 +1,6 @@
 config 64BIT
 	bool
-	default y
+	default y if "$(EXEC_FORMAT)" = "elf64"
 
 config GENERIC_CSUM
 	def_bool y
