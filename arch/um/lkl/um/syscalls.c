@@ -17,6 +17,7 @@
 
 #include <asm/host_ops.h>
 #include <asm/syscalls.h>
+#include <asm/syscalls_32.h>
 #include <asm/cpu.h>
 #include <asm/sched.h>
 #include <kern_util.h>
