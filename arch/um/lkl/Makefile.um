@@ -1,5 +1,6 @@
+include $(srctree)/arch/um/lkl/auto.conf
+
 KBUILD_CFLAGS += -fno-builtin -fPIC
-ELF_FORMAT=$(shell $(LD) -r -print-output-format)
 
 INSTALL_PATH ?= $(objtree)/tools/um
 SYSCALL_DEFS_H := $(objtree)/$(HOST_DIR)/include/generated/uapi/asm/syscall_defs.h
