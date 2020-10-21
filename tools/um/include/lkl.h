@@ -101,6 +101,21 @@ static inline int lkl_sys_lstat(const char *path, struct lkl_stat *buf)
 			       LKL_AT_SYMLINK_NOFOLLOW);
 }
 
+#ifdef __lkl__NR_llseek
+/**
+ * lkl_sys_lseek - wrapper for lkl_sys_llseek
+ */
+static inline long long lkl_sys_lseek(unsigned int fd, __lkl__kernel_loff_t off,
+				      unsigned int whence)
+{
+	long long res;
+	long ret = lkl_sys_llseek(fd, off >> 32, off & 0xffffffff, &res, whence);
+
+	return ret < 0 ? ret : res;
+}
+#endif
+
+
 #ifdef __lkl__NR_openat
 /**
  * lkl_sys_open - wrapper for lkl_sys_openat
