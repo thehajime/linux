@@ -77,6 +77,7 @@ typedef __kernel_long_t	__kernel_old_time_t;
 #undef __NR_epoll_wait
 #undef __NR_signalfd
 #undef __NR_eventfd
+#undef __NR_bdflush
 
 #undef __NR_umount
 #define __NR_umount __NR_umount2
