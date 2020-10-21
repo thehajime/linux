@@ -252,4 +252,24 @@ void *lkl_tls_get(struct lkl_tls_key *key);
  */
 void lkl_print(const char *str, int len);
 
+/**
+ * lkl_panic - called during a kernel panic
+ *
+ */
+void lkl_panic(void);
+
+/**
+ * lkl_start_kernel() - registers the host operations and starts the kernel
+ *
+ * @ops: pointer to host operations
+ * @fmt: format for command line string that is going to be used to
+ * generate the Linux kernel command line
+ *
+ * Return: 0 if there is no error; otherwise non-zero value returns.
+ *
+ * The function returns only after the kernel is shutdown with lkl_sys_halt.
+ */
+int lkl_start_kernel(struct lkl_host_operations *ops,
+		     const char *fmt, ...);
+
 #endif
