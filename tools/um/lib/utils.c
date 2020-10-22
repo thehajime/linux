@@ -4,6 +4,8 @@
 #include <string.h>
 #include <lkl_host.h>
 
+char lkl_um_devs[4096];
+
 static const char * const lkl_err_strings[] = {
 	[0]			= "Success",
 	[LKL_EPERM]		= "Operation not permitted",
