@@ -10,6 +10,7 @@ extern "C" {
 #include <lkl.h>
 
 extern struct lkl_host_operations lkl_host_ops;
+extern char lkl_um_devs[4096];
 
 #ifdef __cplusplus
 }
