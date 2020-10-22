@@ -45,12 +45,24 @@ static void __init *lkl_run_kernel(void *arg)
 	return NULL;
 }
 
+static char _cmd_line[COMMAND_LINE_SIZE];
 int __init lkl_start_kernel(struct lkl_host_operations *ops,
 			    const char *fmt, ...)
 {
+	va_list ap;
 	int ret;
 
 	lkl_ops = ops;
+
+	va_start(ap, fmt);
+	ret = vsnprintf(_cmd_line, COMMAND_LINE_SIZE, fmt, ap);
+	va_end(ap);
+
+	if (ops->um_devices)
+		strscpy(_cmd_line + ret, ops->um_devices,
+			COMMAND_LINE_SIZE - ret);
+
+	uml_set_args(_cmd_line);
 
 	init_sem = lkl_sem_alloc(0);
 	if (!init_sem)

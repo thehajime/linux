@@ -16,7 +16,8 @@
 #undef XOR_SELECT_TEMPLATE
 /* pick an arbitrary one - measuring isn't possible with inf-cpu */
 #define XOR_SELECT_TEMPLATE(x)	\
-	(time_travel_mode == TT_MODE_INFCPU ? &xor_block_8regs : NULL)
+	(time_travel_mode == TT_MODE_INFCPU || \
+	 (IS_ENABLED(CONFIG_UMMODE_LIB)) ? &xor_block_8regs : NULL)
 #endif
 
 #endif

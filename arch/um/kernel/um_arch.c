@@ -48,6 +48,11 @@ static void __init add_arg(char *arg)
 	strcat(command_line, arg);
 }
 
+void __init uml_set_args(char *args)
+{
+	strcat(command_line, args);
+}
+
 /*
  * These fields are initialized at boot time and not changed.
  * XXX This structure is used only in the non-SMP case.  Maybe this

@@ -3,6 +3,8 @@
 #define __UM_LIBMODE_UAPI_UNISTD_H
 
 #define __ARCH_WANT_NEW_STAT
+#define __ARCH_WANT_SET_GET_RLIMIT
+
 #include <asm/bitsperlong.h>
 
 #if __BITS_PER_LONG == 64

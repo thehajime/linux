@@ -50,6 +50,7 @@ extern unsigned long stub_start;
 
 extern int linux_main(int argc, char **argv);
 extern void uml_finishsetup(void);
+extern void uml_set_args(char *args);
 
 struct siginfo;
 extern void (*sig_info[])(int, struct siginfo *si, struct uml_pt_regs *);
