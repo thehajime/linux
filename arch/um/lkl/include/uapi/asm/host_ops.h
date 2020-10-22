@@ -243,4 +243,13 @@ int lkl_tls_set(struct lkl_tls_key *key, void *data);
  */
 void *lkl_tls_get(struct lkl_tls_key *key);
 
+/**
+ * lkl_print - optional operation that receives console messages
+ *
+ * @str: strings to be printed
+ * @len: the length of @str
+ *
+ */
+void lkl_print(const char *str, int len);
+
 #endif
