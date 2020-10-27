@@ -6,6 +6,7 @@
 #ifndef __UM_MMU_CONTEXT_H
 #define __UM_MMU_CONTEXT_H
 
+#ifdef CONFIG_MMU
 #include <linux/sched.h>
 #include <linux/mm_types.h>
 #include <linux/mmap_lock.h>
@@ -74,5 +75,12 @@ static inline void enter_lazy_tlb(struct mm_struct *mm,
 extern int init_new_context(struct task_struct *task, struct mm_struct *mm);
 
 extern void destroy_context(struct mm_struct *mm);
+
+#else
+#include <asm-generic/mmu_context.h>
+
+extern void force_flush_all(void);
+
+#endif /* CONFIG_MMU */
 
 #endif
