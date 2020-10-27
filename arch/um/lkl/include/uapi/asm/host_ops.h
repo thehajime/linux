@@ -20,4 +20,20 @@ struct lkl_host_operations {
  */
 void lkl_bug(const char *fmt, ...);
 
+/**
+ * lkl_mem_alloc - allocate memory
+ *
+ * @mem: the size of memory requested
+ *
+ */
+void *lkl_mem_alloc(unsigned long mem);
+
+/**
+ * lkl_mem_free - free memory
+ *
+ * @mem: the address of memory to be freed
+ *
+ */
+void lkl_mem_free(void *mem);
+
 #endif
