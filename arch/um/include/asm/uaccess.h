@@ -22,6 +22,7 @@
 #define __addr_range_nowrap(addr, size) \
 	((unsigned long) (addr) <= ((unsigned long) (addr) + (size)))
 
+#ifdef CONFIG_MMU
 extern unsigned long raw_copy_from_user(void *to, const void __user *from, unsigned long n);
 extern unsigned long raw_copy_to_user(void __user *to, const void *from, unsigned long n);
 extern unsigned long __clear_user(void __user *mem, unsigned long len);
@@ -59,5 +60,8 @@ do {									\
 	if (0) /* make sure the label looks used to the compiler */	\
 		goto err_label;						\
 } while (0)
+#else
+#include <asm-generic/uaccess.h>
+#endif /* CONFIG_MMU */
 
 #endif
