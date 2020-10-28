@@ -20212,6 +20212,16 @@ F:	arch/um/
 F:	arch/x86/um/
 F:	fs/hostfs/
 
+USER-MODE LINUX (UML) LIBRARY MODE
+M:	Octavian Purdila <tavi.purdila@gmail.com>
+M:	Hajime Tazaki <thehajime@gmail.com>
+L:	linux-um@lists.infradead.org
+S:	Maintained
+T:	https://github.com/lkl/linux
+F:	arch/um/lkl/
+F:	tools/testing/selftests/um/
+F:	tools/um/
+
 USERSPACE COPYIN/COPYOUT (UIOVEC)
 M:	Alexander Viro <viro@zeniv.linux.org.uk>
 S:	Maintained
