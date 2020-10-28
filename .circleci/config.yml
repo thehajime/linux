@@ -1,0 +1,181 @@
+version: 2
+general:
+  artifacts:
+
+do_steps: &do_steps
+ steps:
+  - run: echo "$CROSS_COMPILE" > ~/_cross_compile
+  - restore_cache:
+      key: code-tree-shallow-{{ .Environment.CACHE_VERSION }}
+  - run:
+      name: checkout build tree
+      command: |
+        mkdir -p ~/.ssh/
+        ssh-keyscan -H github.com >> ~/.ssh/known_hosts
+        if ! [ -d .git ]; then
+          git clone --depth=1 $CIRCLE_REPOSITORY_URL .;
+        fi
+        if [[ $CIRCLE_BRANCH == pull/* ]]; then
+           git fetch --depth=1 origin $CIRCLE_BRANCH/head;
+        else
+           git fetch --depth=1 origin $CIRCLE_BRANCH;
+        fi
+        git reset --hard $CIRCLE_SHA1
+  - save_cache:
+      key: code-tree-shallow-{{ .Environment.CACHE_VERSION }}-{{ epoch }}
+      paths:
+        - /home/ubuntu/project/.git
+  - run:
+      name: clean
+      command: |
+        make mrproper
+        rm -rf ~/junit
+  - run: mkdir -p /home/ubuntu/.ccache
+  - restore_cache:
+      key: compiler-cache-{{ checksum "~/_cross_compile" }}-{{ .Environment.CACHE_VERSION }}
+  - run:
+      name: preparation
+      command: |
+        if [ $CIRCLE_STAGE = "i386_uml" ] || [ $CIRCLE_STAGE = "i386_uml_on_x86_64" ]; then
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib g++-multilib
+        fi
+        sudo apt-get update
+        sudo apt-get install -y rsync
+        if [ $CIRCLE_STAGE = "x86_64" ]; then
+          sudo add-apt-repository -y ppa:deadsnakes/ppa
+          sudo apt-get update
+          sudo apt-get install -y python3.6
+          sudo update-alternatives --install /usr/bin/python3 python /usr/bin/python3.6 10
+        fi
+  - run:
+      name: build
+      command: |
+        make ARCH=um ${MKARG} defconfig
+        make ARCH=um -j8 ${MKARG}
+  - run: mkdir -p ~/destdir && cd tools/um && make DESTDIR=~/destdir ${MKARG}
+  - save_cache:
+     paths:
+       - /home/ubuntu/.ccache
+     key: compiler-cache-{{ checksum "~/_cross_compile" }}-{{ .Environment.CACHE_VERSION }}-{{ epoch }}
+  - run:
+      name: run tests
+      command: |
+        mkdir -p ~/junit
+        if [[ $MKARG == "SUBARCH=lkl" ]]; then
+          make -C tools/testing/selftests TARGETS="um" run_tests
+          make ARCH=um SUBARCH=lkl TARGETS="um" kselftest |& tee /tmp/log.txt
+          cat /tmp/log.txt | sed "s/^# selftests/     \# Subtest: selftests/" | \
+             sed "s/^#/    /" | sed "s/version 13/version 14/" | \
+             sed "s/\(ok [0-9]* \)/\1- /" | ./tools/testing/kunit/kunit.py parse
+        else
+          # XXX: i386 build doesn't work with the test
+          if [ $CIRCLE_STAGE = "i386_uml" ] || [ $CIRCLE_STAGE = "i386_uml_on_x86_64" ]; then
+            exit 0
+          fi
+          (./linux rootfstype=hostfs ro mem=1g loglevel=10 init="/bin/bash -c exit" || true) |& tee log.txt
+          grep "Attempted to kill init" log.txt
+        fi
+      no_output_timeout: "90m"
+  - run:
+      name: collecting test results
+      command: |
+        find ./tools/um/ -type f -name "*.xml" -exec mv {} ~/junit/ \;
+      when: always
+  - store_test_results:
+      path: ~/junit
+  - store_artifacts:
+      path: ~/junit
+
+
+## Customize the test machine
+jobs:
+  x86_64:
+   docker:
+     - image: lkldocker/circleci-x86_64:0.7
+   environment:
+     CROSS_COMPILE: ""
+     MKARG: "SUBARCH=lkl"
+   <<: *do_steps
+
+  i386:
+   docker:
+     - image: lkldocker/circleci-i386:0.1
+   environment:
+     CROSS_COMPILE: ""
+     MKARG: "SUBARCH=lkl"
+   <<: *do_steps
+
+  x86_64_valgrind:
+   docker:
+     - image: lkldocker/circleci-x86_64:0.7
+   environment:
+     CROSS_COMPILE: ""
+     MKARG: "SUBARCH=lkl"
+     VALGRIND: 1
+   <<: *do_steps
+
+  x86_64_uml:
+   docker:
+     - image: lkldocker/circleci-x86_64:0.7
+   environment:
+     CROSS_COMPILE: ""
+     TMPDIR: "/tmp" # required for not using /dev/shm
+     MKARG: "SUBARCH=x86_64"
+   <<: *do_steps
+
+  i386_uml:
+   docker:
+     - image: lkldocker/circleci-i386:0.1
+   environment:
+     CROSS_COMPILE: ""
+     MKARG: "SUBARCH=i386"
+     TMPDIR: "/tmp" # required for not using /dev/shm
+   <<: *do_steps
+
+  i386_uml_on_x86_64:
+   docker:
+     - image: lkldocker/circleci-x86_64:0.7
+   environment:
+     CROSS_COMPILE: ""
+     TMPDIR: "/tmp" # required for not using /dev/shm
+     MKARG: "SUBARCH=i386"
+   <<: *do_steps
+
+  checkpatch:
+   docker:
+     - image: lkldocker/circleci:0.5
+   environment:
+   steps:
+     - restore_cache:
+        key: code-tree-full-history-{{ .Environment.CACHE_VERSION }}
+     - checkout
+     - run: sudo pip install ply
+     - run: tools/lkl/scripts/checkpatch.sh
+     - save_cache:
+        key: code-tree-full-history-{{ .Environment.CACHE_VERSION }}-{{ epoch }}
+        paths:
+          - /home/ubuntu/project/.git
+        when: always
+
+workflows:
+  version: 2
+  build:
+    jobs:
+     - x86_64
+#     - x86_64_valgrind
+#     - checkpatch
+     - i386
+     - x86_64_uml
+     - i386_uml
+     - i386_uml_on_x86_64
+#  nightly:
+#    triggers:
+#      - schedule:
+#          cron: "0 0 * * *"
+#          filters:
+#            branches:
+#              only:
+#                - master
+#    jobs:
+#      - x86_64_valgrind
