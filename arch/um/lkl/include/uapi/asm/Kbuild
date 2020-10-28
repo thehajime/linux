@@ -1,0 +1,6 @@
+# UAPI Header export list
+
+generated-y += syscall_defs.h
+
+# generated-y file is parsed by special user headers handling
+# see arch/um/script/headers_install.py
