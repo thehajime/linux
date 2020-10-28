@@ -1,0 +1,48 @@
+
+Introduction
+============
+
+Library mode of UML, a.k.a. LKL (Linux Kernel Library), is aiming to allow
+reusing the Linux kernel code as extensively as possible with minimal effort and
+reduced maintenance overhead.
+
+Examples of how LKL can be used are: creating userspace applications (running on
+Linux and other operating systems) that can read or write Linux filesystems or
+can use the Linux networking stack, creating kernel drivers for other operating
+systems that can read Linux filesystems, bootloaders support for reading/writing
+Linux filesystems, etc.
+
+With LKL, the kernel code is compiled into an object file that can be directly
+linked by applications. The API offered by LKL is based on the Linux system call
+interface.
+
+LKL is implemented as one of the mode of UML (arch/um), and it internally uses
+sub-architecture (SUBARCH) of UML (SUBARCH=lkl). It uses host operations
+defined by the application or a host library (tools/um).
+
+
+Supported hosts
+===============
+
+The supported host for now is Linux (x86 architecture) userspace applications.
+
+
+Building LKL the host library and LKL applications
+==================================================
+
+    $ make ARCH=um SUBARCH=lkl defconfig
+    $ make ARCH=um SUBARCH=lkl
+
+will build LKL as a object file, it will install it in tools/um together with
+the headers files in tools/um/include then will build the host library, tests
+and a few of application examples:
+
+* tools/testing/selftests/um/boot.c - a simple applications that uses LKL and
+  exercises the basic LKL APIs
+
+* tools/testing/selftests/um/disk.c - a simple applications that tests LKL and
+  exercises the basic filesystem-related LKL APIs
+
+Those tests can run with the following kselftest command:
+
+    $ make ARCH=um SUBARCH=lkl TARGETS="um" kselftest
