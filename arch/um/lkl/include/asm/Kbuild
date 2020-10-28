@@ -1,0 +1,7 @@
+generic-y += bitsperlong.h
+generic-y += cmpxchg.h
+generic-y += local64.h
+generic-y += seccomp.h
+generic-y += string.h
+generic-y += syscall.h
+generic-y += user.h
