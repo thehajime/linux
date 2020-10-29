@@ -64,6 +64,7 @@ TARGETS += timers
 endif
 TARGETS += tmpfs
 TARGETS += tpm2
+TARGETS += um
 TARGETS += user
 TARGETS += vm
 TARGETS += x86
@@ -150,11 +151,13 @@ endif
 # Local build cases: "make kselftest", "make -C" - headers are installed
 # in the default INSTALL_HDR_PATH usr/include.
 khdr:
+ifneq (um,$(ARCH))
 ifeq (1,$(DEFAULT_INSTALL_HDR_PATH))
 	$(MAKE) --no-builtin-rules ARCH=$(ARCH) -C $(top_srcdir) headers_install
 else
 	$(MAKE) --no-builtin-rules INSTALL_HDR_PATH=$$BUILD/usr \
 		ARCH=$(ARCH) -C $(top_srcdir) headers_install
+endif
 endif
 
 all: khdr
