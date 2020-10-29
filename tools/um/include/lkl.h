@@ -27,6 +27,29 @@ extern "C" {
 #undef class
 #endif
 
+/**
+ * lkl_printf - print a message via the host print operation
+ *
+ * @fmt: printf like format string
+ */
+int lkl_printf(const char *fmt, ...);
+
+/**
+ * lkl_strerror - returns a string describing the given error code
+ *
+ * @err - error code
+ * @returns - string for the given error code
+ */
+const char *lkl_strerror(int err);
+
+/**
+ * lkl_perror - prints a string describing the given error code
+ *
+ * @msg - prefix for the error message
+ * @err - error code
+ */
+void lkl_perror(char *msg, int err);
+
 #if __LKL__BITS_PER_LONG == 64
 #define lkl_sys_fstatat lkl_sys_newfstatat
 #define lkl_sys_fstat lkl_sys_newfstat
