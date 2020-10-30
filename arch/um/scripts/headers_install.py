@@ -186,7 +186,7 @@ find_enums(p, q, defines)
 defines.add("__NR_stime")
 
 def process_header(h):
-    print("  REPLACE\t%s" % (out_dir + "/" + os.path.basename(h)))
+    print("  REPLACE\t%s" % h)
     replace(h)
 
 # use num of processors determined by os.cpu_count()
