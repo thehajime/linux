@@ -1,0 +1,4 @@
+progs-y += uml/linux
+LDLIBS_linux-y := -lrt -lpthread -lutil
+LDFLAGS_linux-y := -no-pie -Wl,--wrap,malloc -Wl,--wrap,free -Wl,--wrap,calloc
+LDFLAGS_linux-$(CONFIG_STATIC_LINK) += -static

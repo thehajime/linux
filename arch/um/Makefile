@@ -95,14 +95,30 @@ KBUILD_CPPFLAGS += -I$(srctree)/$(HOST_DIR)/include \
 KERNEL_DEFINES = $(strip -Derrno=kernel_errno -Dsigprocmask=kernel_sigprocmask \
 			 -Dmktime=kernel_mktime $(ARCH_KERNEL_DEFINES))
 KBUILD_CFLAGS += $(KERNEL_DEFINES)
+LDFLAGS_vmlinux += -r
 
-PHONY += linux
-
+INSTALL_PATH=$(objtree)/tools/um
 all: linux
+pre-2nd: linux.o
+	@echo "  INSTALL $(INSTALL_PATH)/lib/$<"
+	@mkdir -p $(INSTALL_PATH)/lib/
+	@cp $< $(INSTALL_PATH)/lib/
 
-linux: vmlinux
-	@echo '  LINK $@'
-	$(Q)ln -f $< $@
+PHONY += linux.o
+
+linux: pre-2nd
+	$(Q)$(MAKE) -C $(srctree)/tools/um
+	$(Q)cp $(objtree)/tools/um/uml/linux $(objtree)/
+	$(Q)cp $(objtree)/linux $(objtree)/vmlinux
+
+linux.o: vmlinux
+#revert vmlinux file from vmlinux.a
+ifneq ("$(wildcard vmlinux.a)","")
+	$(Q)cp vmlinux.a vmlinux
+endif
+	$(Q)cp vmlinux vmlinux.a
+	@echo "  LINK    $@"
+	$(Q)$(OBJCOPY) -R .eh_frame $< $@
 
 define archhelp
   echo '* linux		- Binary kernel image (./linux) - for backward'
@@ -145,5 +161,6 @@ MRPROPER_FILES += arch/$(SUBARCH)/include/generated
 archclean:
 	@find . \( -name '*.bb' -o -name '*.bbg' -o -name '*.da' \
 		-o -name '*.gcov' \) -type f -print | xargs rm -f
+	$(Q)$(MAKE) -C $(srctree)/tools/um clean
 
 export HEADER_ARCH SUBARCH USER_CFLAGS CFLAGS_NO_HARDENING OS DEV_NULL_PATH

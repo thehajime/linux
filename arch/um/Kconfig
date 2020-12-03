@@ -24,6 +24,7 @@ config UML
 	select TRACE_IRQFLAGS_SUPPORT
 	select TTY # Needed for line.c
 	select HAVE_ARCH_VMAP_STACK
+	select MODULE_REL_CRCS if MODVERSIONS
 
 config MMU
 	bool
@@ -96,30 +97,6 @@ config STATIC_LINK
 
 	  NOTE: This option is incompatible with some networking features which
 	  depend on features that require being dynamically loaded (like NSS).
-
-config LD_SCRIPT_STATIC
-	bool
-	default y
-	depends on STATIC_LINK
-
-config LD_SCRIPT_DYN
-	bool
-	default y
-	depends on !LD_SCRIPT_STATIC
-	select MODULE_REL_CRCS if MODVERSIONS
-
-config LD_SCRIPT_DYN_RPATH
-	bool "set rpath in the binary" if EXPERT
-	default y
-	depends on LD_SCRIPT_DYN
-	help
-	  Add /lib (and /lib64 for 64-bit) to the linux binary's rpath
-	  explicitly.
-
-	  You may need to turn this off if compiling for nix systems
-	  that have their libraries in random /nix directories and
-	  might otherwise unexpected use libraries from /lib or /lib64
-	  instead of the desired ones.
 
 config HOSTFS
 	tristate "Host filesystem"
