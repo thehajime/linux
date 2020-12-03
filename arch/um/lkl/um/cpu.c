@@ -10,16 +10,6 @@
 #include <init.h>
 #include <os.h>
 
-void run_irqs(void)
-{
-	unblock_signals();
-}
-
-void set_irq_pending(int sig)
-{
-	set_pending_signals(sig);
-}
-
 /*
  * This structure is used to get access to the "LKL CPU" that allows us to run
  * Linux code. Because we have to deal with various synchronization requirements
@@ -65,6 +55,19 @@ static struct lkl_cpu {
 	struct lkl_sem *shutdown_sem;
 } cpu;
 
+static void run_irqs(void)
+{
+	unblock_signals();
+}
+
+static void set_irq_pending(int sig)
+{
+	set_pending_signals(sig);
+}
+
+/*
+ * internal routine to acquire LKL CPU's lock
+ */
 static int __cpu_try_get_lock(int n)
 {
 	lkl_thread_t self;
@@ -79,17 +82,25 @@ static int __cpu_try_get_lock(int n)
 
 	self = lkl_thread_self();
 
+	/* if someone else is using the cpu, indicate as return 0 */
 	if (cpu.owner && !lkl_thread_equal(cpu.owner, self))
 		return 0;
 
+	/* set the owner of cpu */
 	cpu.owner = self;
 	cpu.count++;
 
 	return 1;
 }
 
+/*
+ * internal routine to release LKL CPU's lock
+ */
 static void __cpu_try_get_unlock(int lock_ret, int n)
 {
+	/* release lock only if __cpu_try_get_lock() holds cpu.lock
+	 * (returns >= -1)
+	 */
 	if (lock_ret >= -1)
 		lkl_mutex_unlock(cpu.lock);
 	__sync_fetch_and_sub(&cpu.shutdown_gate, n);
@@ -110,6 +121,9 @@ int lkl_cpu_get(void)
 
 	ret = __cpu_try_get_lock(1);
 
+	/* when somebody holds a lock, sleep until released,
+	 * with obtaining a semaphore (cpu.sem)
+	 */
 	while (ret == 0) {
 		cpu.sleepers++;
 		__cpu_try_get_unlock(ret, 0);
@@ -130,6 +144,9 @@ void lkl_cpu_put(void)
 	    !lkl_thread_equal(cpu.owner, lkl_thread_self()))
 		lkl_bug("%s: unbalanced put\n", __func__);
 
+	/* we're going to trigger irq handlers if there are any pending
+	 * interrupts, and not irq_disabled.
+	 */
 	while (cpu.irqs_pending && !irqs_disabled()) {
 		cpu.irqs_pending = false;
 		lkl_mutex_unlock(cpu.lock);
@@ -137,6 +154,9 @@ void lkl_cpu_put(void)
 		lkl_mutex_lock(cpu.lock);
 	}
 
+	/* switch to userspace code if current is host task (TIF_HOST_THREAD),
+	 * AND, there are other running tasks.
+	 */
 	if (test_ti_thread_flag(current_thread_info(), TIF_HOST_THREAD) &&
 	    !single_task_running() && cpu.count == 1) {
 		if (in_interrupt())
@@ -146,11 +166,15 @@ void lkl_cpu_put(void)
 		return;
 	}
 
+	/* if there are any other tasks holding cpu lock, return after
+	 * decreasing cpu.count
+	 */
 	if (--cpu.count > 0) {
 		lkl_mutex_unlock(cpu.lock);
 		return;
 	}
 
+	/* release semaphore if slept */
 	if (cpu.sleepers) {
 		cpu.sleepers--;
 		lkl_sem_up(cpu.sem);
@@ -161,7 +185,7 @@ void lkl_cpu_put(void)
 	lkl_mutex_unlock(cpu.lock);
 }
 
-int lkl_cpu_try_run_irq(int irq)
+int lkl_irq_enter(int irq)
 {
 	int ret;
 
@@ -173,11 +197,6 @@ int lkl_cpu_try_run_irq(int irq)
 	__cpu_try_get_unlock(ret, 1);
 
 	return ret;
-}
-
-int lkl_irq_enter(int sig)
-{
-	return lkl_cpu_try_run_irq(sig);
 }
 
 void lkl_irq_exit(void)
@@ -202,10 +221,15 @@ static void lkl_cpu_cleanup(bool shutdown)
 	while (__sync_fetch_and_add(&cpu.shutdown_gate, 0) > MAX_THREADS)
 		;
 
+	/* if caller indicates shutdown, notify the semaphore to release
+	 * the block (lkl_cpu_wait_shutdown()).
+	 */
 	if (shutdown)
 		lkl_sem_up(cpu.shutdown_sem);
+	/* if lkl_cpu_wait_shutdown() is not called, free shutdown_sem here */
 	else if (cpu.shutdown_sem)
 		lkl_sem_free(cpu.shutdown_sem);
+
 	if (cpu.sem)
 		lkl_sem_free(cpu.sem);
 	if (cpu.lock)
@@ -215,14 +239,12 @@ static void lkl_cpu_cleanup(bool shutdown)
 void subarch_cpu_idle(void)
 {
 	if (cpu.shutdown_gate >= MAX_THREADS) {
-
 		lkl_mutex_lock(cpu.lock);
 		while (cpu.sleepers--)
 			lkl_sem_up(cpu.sem);
 		lkl_mutex_unlock(cpu.lock);
 
 		lkl_cpu_cleanup(true);
-
 		lkl_thread_exit();
 	}
 }
