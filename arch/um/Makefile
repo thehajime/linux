@@ -100,7 +100,7 @@ LDFLAGS_vmlinux += -r
 INSTALL_PATH=$(objtree)/tools/um
 all: linux
 pre-2nd: linux.o
-	@echo "  INSTALL	$(INSTALL_PATH)/lib/$<"
+	@echo "  INSTALL $(INSTALL_PATH)/lib/$<"
 	@mkdir -p $(INSTALL_PATH)/lib/
 	@cp $< $(INSTALL_PATH)/lib/
 
@@ -109,9 +109,15 @@ PHONY += linux.o
 linux: pre-2nd
 	$(Q)$(MAKE) -C $(srctree)/tools/um
 	$(Q)cp $(objtree)/tools/um/uml/linux $(objtree)/
+	$(Q)cp $(objtree)/linux $(objtree)/vmlinux
 
 linux.o: vmlinux
-	@echo '  LINK	$@'
+#revert vmlinux file from vmlinux.a
+ifneq ("$(wildcard vmlinux.a)","")
+	$(Q)cp vmlinux.a vmlinux
+endif
+	$(Q)cp vmlinux vmlinux.a
+	@echo "  LINK    $@"
 	$(Q)$(OBJCOPY) -R .eh_frame $< $@
 
 define archhelp
