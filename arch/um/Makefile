@@ -34,6 +34,10 @@ ifneq ($(filter $(SUBARCH),x86 x86_64 i386),)
 	HEADER_ARCH := x86
 endif
 
+ifeq ($(SUBARCH),lkl)
+	HEADER_ARCH := um/lkl
+endif
+
 ifdef CONFIG_64BIT
 	KBUILD_CFLAGS += -mcmodel=large
 endif
@@ -97,19 +101,27 @@ KBUILD_CFLAGS += $(KERNEL_DEFINES)
 LDFLAGS_vmlinux += -r
 
 INSTALL_PATH=$(objtree)/tools/um
-all: linux
-pre-2nd: linux.o
-	@echo "  INSTALL $(INSTALL_PATH)/lib/$<"
-	@mkdir -p $(INSTALL_PATH)/lib/
-	@cp $< $(INSTALL_PATH)/lib/
+ifeq ($(CONFIG_UMMODE_LIB),y)
+all: pre-2nd
+	$(Q)$(MAKE) -C $(srctree)/tools/um
 
-PHONY += linux.o
+pre-2nd: linux.o um_headers_install
+
+else
+all: linux
 
 linux: pre-2nd
 	$(Q)$(MAKE) -C $(srctree)/tools/um
 	$(Q)cp $(objtree)/tools/um/uml/linux $(objtree)/
 	$(Q)cp $(objtree)/linux $(objtree)/vmlinux
 
+pre-2nd: linux.o
+endif
+	@echo "  INSTALL $(INSTALL_PATH)/lib/$<"
+	@mkdir -p $(INSTALL_PATH)/lib/
+	@cp $< $(INSTALL_PATH)/lib/
+
+PHONY += linux.o
 linux.o: vmlinux
 #revert vmlinux file from vmlinux.a
 ifneq ("$(wildcard vmlinux.a)","")
@@ -117,7 +129,8 @@ ifneq ("$(wildcard vmlinux.a)","")
 endif
 	$(Q)cp vmlinux vmlinux.a
 	@echo "  LINK    $@"
-	$(Q)$(OBJCOPY) -R .eh_frame $< $@
+# symbols in ipc/sem.c conflict with sem_init(3) etc, thus localize the kernel one.
+	$(Q)$(OBJCOPY) -R .eh_frame -L sem_init -L sem_post -L sem_wait -L sem_destroy $< $@
 
 define archhelp
   echo '* linux		- Binary kernel image (./linux) - for backward'
