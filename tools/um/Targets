@@ -1,4 +1,7 @@
+ifneq ($(CONFIG_UMMODE_LIB),y)
 progs-y += uml/linux
+endif
+
 LDLIBS_linux-y := -lrt -lpthread -lutil
 LDFLAGS_linux-y := -no-pie -Wl,--wrap,malloc -Wl,--wrap,free -Wl,--wrap,calloc
 LDFLAGS_linux-$(CONFIG_STATIC_LINK) += -static
