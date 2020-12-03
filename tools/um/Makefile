@@ -32,6 +32,7 @@ export CFLAGS += -I$(OUTPUT)/include -Iinclude -Wall -g -O2 -Wextra -fPIC \
 	 -Wno-unused-parameter \
 	 -Wno-missing-field-initializers -fno-strict-aliasing
 
+-include $(OUTPUT)/../../include/config/auto.conf
 -include Targets
 
 TARGETS := $(progs-y:%=$(OUTPUT)%)
@@ -69,6 +70,6 @@ clean:
 	$(call QUIET_CLEAN, $(TARGETS))$(RM) $(TARGETS)
 
 FORCE: ;
-.PHONY: all clean FORCE
+.PHONY: all clean FORCE $(OUTPUT)/../../include/config/auto.conf
 .IGNORE: clean
 .NOTPARALLEL : lib/linux.o
