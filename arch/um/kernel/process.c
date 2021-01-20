@@ -158,7 +158,8 @@ int copy_thread(unsigned long clone_flags, unsigned long sp,
 		unsigned long arg, struct task_struct * p, unsigned long tls)
 {
 	void (*handler)(void);
-	int kthread = current->flags & (PF_KTHREAD | PF_IO_WORKER);
+	int kthread = current->flags & (PF_KTHREAD | PF_IO_WORKER) ||
+		test_ti_thread_flag(current_thread_info(), TIF_HOST_THREAD);
 	int ret = 0;
 
 	p->thread = (struct thread_struct) INIT_THREAD;
@@ -212,10 +213,15 @@ void um_idle_sleep(void)
 		os_idle_sleep();
 }
 
+void __weak subarch_cpu_idle(void)
+{
+}
+
 void arch_cpu_idle(void)
 {
 	cpu_tasks[current_thread_info()->cpu].pid = os_getpid();
 	um_idle_sleep();
+	subarch_cpu_idle();
 	raw_local_irq_enable();
 }
 
