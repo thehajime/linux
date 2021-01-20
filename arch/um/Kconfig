@@ -26,9 +26,23 @@ config UML
 	select HAVE_ARCH_VMAP_STACK
 	select MODULE_REL_CRCS if MODVERSIONS
 
+config UMMODE_LIB
+	bool "UML mode: library mode"
+	depends on !SMP
+	select UACCESS_MEMCPY
+	select ARCH_THREAD_STACK_ALLOCATOR
+	help
+	 This mode switches a mode to build a library of UML (Linux
+	 Kernel Library/LKL).  If this is Y, the build only generates,
+	 library files so, standalone executable of linux/vmlinux will
+	 not be created.
+
+	 For more detail about LKL, see
+	 <file:Documentation/virt/uml/lkl.txt>.
+
 config MMU
 	bool
-	default y
+	default y if !UMMODE_LIB
 
 config UML_DMA_EMULATION
 	bool
@@ -60,12 +74,12 @@ config LOCKDEP_SUPPORT
 
 config STACKTRACE_SUPPORT
 	bool
-	default y
+	default y if !UMMODE_LIB
 	select STACKTRACE
 
 config GENERIC_CALIBRATE_DELAY
 	bool
-	default y
+	default y if !UMMODE_LIB
 
 config HZ
 	int
