@@ -1,0 +1,2 @@
+KBUILD_CFLAGS += -fno-builtin -fPIC
+ELF_FORMAT=$(shell $(LD) -r -print-output-format)
