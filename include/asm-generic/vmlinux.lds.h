@@ -170,7 +170,7 @@
 			VMLINUX_SYMBOL(__start_mcount_loc) = .; \
 			KEEP(*(__mcount_loc))			\
 			KEEP(*(__patchable_function_entries))	\
-			VMLINUX_SYMBOL(__stop_mcount_loc) = .;
+			VMLINUX_SYMBOL(__stop_mcount_loc) = .;			\
 			ftrace_stub_graph = ftrace_stub;
 #else
 # ifdef CONFIG_FUNCTION_TRACER
@@ -340,7 +340,7 @@
 	*(__tracepoints)						\
 	/* implement dynamic printk debug */				\
 	. = ALIGN(8);							\
-	VMLINUX_SYMBOL(__start___dyndbg) = .;			\
+	VMLINUX_SYMBOL(__start___dyndbg) = .;				\
 	KEEP(*(__dyndbg))						\
 	VMLINUX_SYMBOL(__stop___dyndbg) = .;				\
 	LIKELY_PROFILE()		       				\
@@ -419,9 +419,9 @@
 
 #define RO_DATA(align)							\
 	. = ALIGN((align));						\
-	RODATA           : AT(ADDR(.rodata) - LOAD_OFFSET) {		\
+	RODATA	: AT(ADDR(RODATA) - LOAD_OFFSET) {	\
 		VMLINUX_SYMBOL(__start_rodata) = .;			\
-		*(RODATA) *(RODATA.*)					\
+		*(RODATA)	*(RODATA.*)			\
 		SCHED_DATA						\
 		RO_AFTER_INIT_DATA	/* Read only after init */	\
 		. = ALIGN(8);						\

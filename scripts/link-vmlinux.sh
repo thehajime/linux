@@ -193,6 +193,7 @@ kallsyms()
 	if [ -n "${CONFIG_KALLSYMS_USE_DATA_SECTION}" ]; then
 		kallsymopt="${kallsymopt} --use-data-section"
 	fi
+
 	info KSYMS ${2}
 	${NM} -n ${1} | scripts/kallsyms ${kallsymopt} > ${2}
 }
@@ -291,11 +292,11 @@ ${MAKE} -f "${srctree}/scripts/Makefile.modpost" MODPOST_VMLINUX=1
 
 info MODINFO modules.builtin.modinfo
 ${OBJCOPY} -j .modinfo -O binary vmlinux.o modules.builtin.modinfo
-
 info GEN modules.builtin
 # The second line aids cases where multiple modules share the same object.
 tr '\0' '\n' < modules.builtin.modinfo | sed -n 's/^[[:alnum:]:_]*\.file=//p' |
 	tr ' ' '\n' | uniq | sed -e 's:^:kernel/:' -e 's/$/.ko/' > modules.builtin
+fi
 
 btf_vmlinux_bin_o=""
 if [ -n "${CONFIG_DEBUG_INFO_BTF}" ]; then

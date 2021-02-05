@@ -224,7 +224,7 @@ static struct sym_entry *read_symbol(FILE *in)
 		namep++;
 
 	/* Ignore most absolute/undefined (?) symbols. */
-	if (is_ignored_symbol(name, type))
+	if (is_ignored_symbol(namep, type))
 		return NULL;
 
 	check_symbol_range(namep, addr, text_ranges, ARRAY_SIZE(text_ranges));
@@ -271,8 +271,8 @@ static int symbol_valid(const struct sym_entry *s)
 	const char *name = sym_name(s);
 
 	/* skip prefix char */
-	if (symbol_prefix_char && *sym_name == symbol_prefix_char)
-		sym_name++;
+	if (symbol_prefix_char && *name == symbol_prefix_char)
+		name++;
 
 
 	/* if --all-symbols is not specified, then symbols outside the text
