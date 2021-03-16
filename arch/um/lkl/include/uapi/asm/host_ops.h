@@ -200,4 +200,47 @@ void lkl_jmp_buf_set(struct lkl_jmp_buf *jmpb, void (*f)(void));
  */
 void lkl_jmp_buf_longjmp(struct lkl_jmp_buf *jmpb, int val);
 
+/**
+ * lkl_tls_alloc - allocate a thread local storage key
+ *
+ * @destructor: a destructor called upon termination. if this is not NULL it
+ * will be called when a thread terminates with its argument set to the current
+ * thread local storage value
+ *
+ * Return: non-NULL address of allocated struct lkl_tls_key if successful;
+ * otherwise NULL
+ *
+ */
+struct lkl_tls_key *lkl_tls_alloc(void (*destructor)(void *));
+
+/**
+ * lkl_tls_free - frees a thread local storage key
+ *
+ * @key: lkl_tls_key to be freed
+ *
+ */
+void lkl_tls_free(struct lkl_tls_key *key);
+
+/**
+ * lkl_tls_set - associate data to the thread local storage key
+ *
+ * @key: lkl_tls_key to be configured
+ * @data: the value associated with the @key
+ *
+ * Return: 0 if successful
+ *
+ */
+int lkl_tls_set(struct lkl_tls_key *key, void *data);
+
+/**
+ * lkl_tls_get - obtain the value associated with tls
+ *
+ * @key: lkl_tls_key to be queried
+ *
+ * Return: data associated with the thread local storage key or NULL
+ * on error
+ *
+ */
+void *lkl_tls_get(struct lkl_tls_key *key);
+
 #endif

@@ -1,2 +1,18 @@
 KBUILD_CFLAGS += -fno-builtin -fPIC
 ELF_FORMAT=$(shell $(LD) -r -print-output-format)
+
+INSTALL_PATH ?= $(objtree)/tools/um
+SYSCALL_DEFS_H := $(objtree)/$(HOST_DIR)/include/generated/uapi/asm/syscall_defs.h
+REPLACED_SYSCALL_DEFS_H := $(INSTALL_PATH)/include/lkl/asm/syscall_defs.h
+
+um_headers_install: $(REPLACED_SYSCALL_DEFS_H) scripts_unifdef
+
+$(REPLACED_SYSCALL_DEFS_H): $(SYSCALL_DEFS_H) $(srctree)/$(ARCH_DIR)/scripts/headers_install.py
+	$(Q)$(srctree)/$(ARCH_DIR)/scripts/headers_install.py \
+		$(INSTALL_PATH)/include
+
+$(objtree)/$(HOST_DIR)/include/generated/uapi/asm/syscall_defs.h: vmlinux
+	$(Q)$(OBJCOPY) -j .syscall_defs -O binary --set-section-flags \
+		       .syscall_defs=alloc $< $@
+	$(Q) export tmpfile=$(shell mktemp); \
+	sed 's/\x0//g' $@ > $$tmpfile; mv $$tmpfile $@ ; rm -f $$tmpfile
