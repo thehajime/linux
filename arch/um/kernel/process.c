@@ -205,23 +205,25 @@ void initial_thread_cb(void (*proc)(void *), void *arg)
 	kmalloc_ok = save_kmalloc_ok;
 }
 
+void __weak subarch_cpu_idle(void)
+{
+}
+
 void um_idle_sleep(void)
 {
 	if (time_travel_mode != TT_MODE_OFF)
 		time_travel_sleep();
 	else
 		os_idle_sleep();
-}
 
-void __weak subarch_cpu_idle(void)
-{
+	/* do additional sub-arch specific idle routine */
+	subarch_cpu_idle();
 }
 
 void arch_cpu_idle(void)
 {
 	cpu_tasks[current_thread_info()->cpu].pid = os_getpid();
 	um_idle_sleep();
-	subarch_cpu_idle();
 	raw_local_irq_enable();
 }
 

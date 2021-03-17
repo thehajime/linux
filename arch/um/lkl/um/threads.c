@@ -69,7 +69,10 @@ EXPORT_SYMBOL(_current_thread_info);
 
 void switch_threads(jmp_buf *me, jmp_buf *you)
 {
-	/* NOP */
+	/*
+	 * LIBMODE threads doesn't use the jmp_buf (use pthread
+	 * instead) so, this function has to do nothing.
+	 */
 }
 
 /*

@@ -61,24 +61,24 @@ static int __cpu_try_get_lock(int n)
 	lkl_thread_t self;
 
 	if (__sync_fetch_and_add(&cpu.shutdown_gate, n) >= MAX_THREADS)
-		return -2;
+		return -LKL_CPU_IN_SHUTDOWN;
 
 	lkl_mutex_lock(cpu.lock);
 
 	if (cpu.shutdown_gate >= MAX_THREADS)
-		return -1;
+		return -LKL_CPU_MAX_THREAD;
 
 	self = lkl_thread_self();
 
 	/* if someone else is using the cpu, indicate as return 0 */
 	if (cpu.owner && !lkl_thread_equal(cpu.owner, self))
-		return 0;
+		return LKL_CPU_IN_USE;
 
 	/* set the owner of cpu */
 	cpu.owner = self;
 	cpu.count++;
 
-	return 1;
+	return LKL_CPU_LOCKED;
 }
 
 /*
@@ -86,7 +86,8 @@ static int __cpu_try_get_lock(int n)
  */
 static void __cpu_try_get_unlock(int lock_ret, int n)
 {
-	/* release lock only if __cpu_try_get_lock() holds cpu.lock
+	/*
+	 * release lock only if __cpu_try_get_lock() holds cpu.lock
 	 * (returns >= -1)
 	 */
 	if (lock_ret >= -1)
@@ -109,10 +110,11 @@ int lkl_cpu_get(void)
 
 	ret = __cpu_try_get_lock(1);
 
-	/* when somebody holds a lock, sleep until released,
+	/*
+	 * when somebody holds a lock, sleep until released,
 	 * with obtaining a semaphore (cpu.sem)
 	 */
-	while (ret == 0) {
+	while (ret == LKL_CPU_IN_USE) {
 		cpu.sleepers++;
 		__cpu_try_get_unlock(ret, 0);
 		lkl_sem_down(cpu.sem);
@@ -132,7 +134,8 @@ void lkl_cpu_put(void)
 	    !lkl_thread_equal(cpu.owner, lkl_thread_self()))
 		lkl_bug("%s: unbalanced put\n", __func__);
 
-	/* switch to userspace code if current is host task (TIF_HOST_THREAD),
+	/*
+	 * switch to userspace code if current is host task (TIF_HOST_THREAD),
 	 * AND, there are other running tasks.
 	 */
 	if (test_ti_thread_flag(current_thread_info(), TIF_HOST_THREAD) &&
@@ -144,7 +147,8 @@ void lkl_cpu_put(void)
 		return;
 	}
 
-	/* if there are any other tasks holding cpu lock, return after
+	/*
+	 * if there are any other tasks holding cpu lock, return after
 	 * decreasing cpu.count
 	 */
 	if (--cpu.count > 0) {
@@ -180,7 +184,8 @@ static void lkl_cpu_cleanup(bool shutdown)
 	while (__sync_fetch_and_add(&cpu.shutdown_gate, 0) > MAX_THREADS)
 		;
 
-	/* if caller indicates shutdown, notify the semaphore to release
+	/*
+	 * if caller indicates shutdown, notify the semaphore to release
 	 * the block (lkl_cpu_wait_shutdown()).
 	 */
 	if (shutdown)

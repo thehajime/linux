@@ -88,25 +88,25 @@ void lkl_sem_down(struct lkl_sem *sem);
 struct lkl_mutex *lkl_mutex_alloc(int recursive);
 
 /**
- * lkl_mutex_free - free a host mutex
- *
- * @mutex: the mutex pointer to be freed
- *
- */
-void lkl_mutex_lock(struct lkl_mutex *mutex);
-
-/**
  * lkl_mutex_lock - acquire the mutex
  *
  * @_mutex: the mutex pointer to be locked
  *
  */
-void lkl_mutex_unlock(struct lkl_mutex *_mutex);
+void lkl_mutex_lock(struct lkl_mutex *mutex);
 
 /**
  * lkl_mutex_unlock - release the mutex
  *
  * @_mutex: the mutex pointer to be released
+ *
+ */
+void lkl_mutex_unlock(struct lkl_mutex *_mutex);
+
+/**
+ * lkl_mutex_free - free a host mutex
+ *
+ * @mutex: the mutex pointer to be freed
  *
  */
 void lkl_mutex_free(struct lkl_mutex *_mutex);
