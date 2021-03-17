@@ -146,7 +146,8 @@ void lkl_cpu_put(void)
 	    !lkl_thread_equal(cpu.owner, lkl_thread_self()))
 		lkl_bug("%s: unbalanced put\n", __func__);
 
-	/* we're going to trigger irq handlers if there are any pending
+	/*
+	 * we're going to trigger irq handlers if there are any pending
 	 * interrupts, and not irq_disabled.
 	 */
 	while (cpu.irqs_pending && !irqs_disabled()) {
@@ -194,7 +195,7 @@ int lkl_cpu_try_run_irq(int irq)
 	int ret;
 
 	ret = __cpu_try_get_lock(1);
-	if (!ret) {
+	if (ret == LKL_CPU_IN_USE) {
 		set_irq_pending(irq);
 		cpu.irqs_pending = true;
 	}

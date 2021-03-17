@@ -713,7 +713,7 @@ unsigned long to_irq_stack(unsigned long *mask_out)
 	int nested;
 
 #ifdef CONFIG_UMMODE_LIB
-	if (!lkl_irq_enter(ffs(*mask_out) - 1))
+	if (lkl_irq_enter(ffs(*mask_out) - 1) == LKL_CPU_IN_USE)
 		return 1;
 #endif
 
