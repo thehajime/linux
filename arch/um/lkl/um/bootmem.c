@@ -53,7 +53,7 @@ void __init mem_init(void)
 {
 	max_mapnr = (((unsigned long)high_memory) - PAGE_OFFSET) >> PAGE_SHIFT;
 	/* this will put all memory onto the freelists */
-	totalram_pages_add(memblock_free_all());
+	memblock_free_all();
 	pr_info("Memory available: %luk/%luk RAM\n",
 		(nr_free_pages() << PAGE_SHIFT) >> 10, mem_size >> 10);
 }
@@ -78,4 +78,9 @@ void __init mem_total_pages(unsigned long physmem, unsigned long iomem,
 
 void __init paging_init(void)
 {
+}
+
+void *uml_kmalloc(int size, int flags)
+{
+	return kmalloc(size, flags);
 }
