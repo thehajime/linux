@@ -38,14 +38,10 @@ $(obj)/vde.o: $(obj)/vde_kern.o $(obj)/vde_user.o
 # When the above is fixed, don't forget to add this too!
 #targets += $(obj)/pcap.o
 
-ifndef CONFIG_UMMODE_LIB
-obj-y := stdio_console.o
-else
-obj-y :=
-endif
 obj-y += fd.o chan_kern.o chan_user.o line.o
 
 obj-$(CONFIG_SSL) += ssl.o
+obj-$(CONFIG_STDIO_CONSOLE) += stderr_console.o
 obj-$(CONFIG_STDERR_CONSOLE) += stderr_console.o
 
 obj-$(CONFIG_UML_NET_SLIP) += slip.o slip_common.o

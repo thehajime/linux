@@ -2,9 +2,13 @@
 
 menu "UML Character Devices"
 
+config STDIO_CONSOLE
+	def_bool y
+	depends on !UMMODE_LIB
+
 config STDERR_CONSOLE
 	bool "stderr console"
-	default y
+	default y if !UMMODE_LIB
 	help
 	  console driver which dumps all printk messages to stderr.
 
