@@ -7,7 +7,7 @@ enum {
 	LKL_CPU_MAX_THREAD = -1,	/* exceeded the number of max threads */
 	LKL_CPU_IN_USE = 0,		/* someone else is using the cpu */
 	LKL_CPU_LOCKED,		/*  successfully locked cpu */
-}
+};
 
 int lkl_cpu_get(void);
 void lkl_cpu_put(void);
