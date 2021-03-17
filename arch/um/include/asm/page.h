@@ -124,6 +124,7 @@ extern unsigned long uml_physmem;
 
 #else  /* CONFIG_MMU */
 #define CONFIG_KERNEL_RAM_BASE_ADDRESS memory_start
+#define ARCH_PFN_OFFSET		(CONFIG_KERNEL_RAM_BASE_ADDRESS >> PAGE_SHIFT)
 #include <asm-generic/page.h>
 
 #define __va_space (8*1024*1024)
