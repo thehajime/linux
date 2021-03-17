@@ -129,7 +129,7 @@ extern unsigned long uml_physmem;
 #define __va_space (8*1024*1024)
 
 #ifndef __ASSEMBLY__
-#include <mem.h>
+#include <shared/mem.h>
 void free_mem(void);
 #endif
 
