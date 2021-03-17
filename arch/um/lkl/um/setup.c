@@ -25,16 +25,23 @@ static int is_running;
 
 struct lkl_host_operations *lkl_ops;
 
-long lkl_panic_blink(int state)
+static int lkl_panic_event(struct notifier_block *this,
+			   unsigned long event, void *ptr)
 {
 	lkl_panic();
-	return 0;
+	return NOTIFY_DONE;
 }
+
+static struct notifier_block lkl_panic_block = {
+	.notifier_call	= lkl_panic_event,
+	.priority	= INT_MAX,
+};
 
 static void __init *lkl_run_kernel(void *arg)
 {
 
-	panic_blink = lkl_panic_blink;
+	atomic_notifier_chain_register(&panic_notifier_list,
+			&lkl_panic_block);
 
 	/* signal should be received at this thread (main and idle threads) */
 	init_new_thread_signals();
@@ -81,6 +88,7 @@ int __init lkl_start_kernel(struct lkl_host_operations *ops,
 		goto out_free_init_sem;
 	}
 
+	/* wait for completion of lkl_run_init() */
 	lkl_sem_down(init_sem);
 	lkl_sem_free(init_sem);
 	current_thread_info()->task->thread.arch.tid = lkl_thread_self();
@@ -116,6 +124,9 @@ long lkl_sys_halt(void)
 	is_running = false;
 
 	lkl_cpu_wait_shutdown();
+
+	atomic_notifier_chain_unregister(&panic_notifier_list,
+					 &lkl_panic_block);
 
 	syscalls_cleanup();
 	threads_cleanup();
