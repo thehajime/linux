@@ -32,10 +32,6 @@ config UMMODE_LIB
 	select UACCESS_MEMCPY
 	select ARCH_THREAD_STACK_ALLOCATOR
 	select ARCH_HAS_SYSCALL_WRAPPER
-	select VFAT_FS
-	select NLS_CODEPAGE_437
-	select NLS_ISO8859_1
-	select BTRFS_FS
 	help
 	 This mode switches a mode to build a library of UML (Linux
 	 Kernel Library/LKL).  If this is Y, the build only generates,
