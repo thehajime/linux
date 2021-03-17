@@ -71,11 +71,6 @@ void free_mem(void)
 	lkl_mem_free((void *)_memory_start);
 }
 
-void *uml_kmalloc(int size, int flags)
-{
-	return kmalloc(size, flags);
-}
-
 void __init mem_total_pages(unsigned long physmem, unsigned long iomem,
 		     unsigned long _highmem)
 {
@@ -83,25 +78,4 @@ void __init mem_total_pages(unsigned long physmem, unsigned long iomem,
 
 void __init paging_init(void)
 {
-}
-
-
-int set_memory_ro(unsigned long addr, int numpages)
-{
-	return -EOPNOTSUPP;
-}
-
-int set_memory_rw(unsigned long addr, int numpages)
-{
-	return -EOPNOTSUPP;
-}
-
-int set_memory_nx(unsigned long addr, int numpages)
-{
-	return -EOPNOTSUPP;
-}
-
-int set_memory_x(unsigned long addr, int numpages)
-{
-	return -EOPNOTSUPP;
 }

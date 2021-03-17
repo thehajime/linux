@@ -51,7 +51,7 @@ extern void destroy_context(struct mm_struct *mm);
 
 #include <asm-generic/nommu_context.h>
 
-extern void force_flush_all(void);
+void force_flush_all(void);
 
 #endif /* CONFIG_MMU */
 
