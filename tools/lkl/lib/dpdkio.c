@@ -181,8 +181,8 @@ static int pcap_write_packet(int fd, struct lkl_dpdkio_seg *segs, int nsegs)
 	}
 
 	for (n = 0; n < nsegs; n++) {
-		void *addr = (void *)(segs[n].buf_addr + data_off);
-		ret = write(fd, addr, data_len);
+		void *addr = (void *)(segs[n].buf_addr + segs[n].data_off);
+		ret = write(fd, addr, segs[n].data_len);
 		if (ret < 0) {
 			fprintf(stderr, "failed to write a packet: %s\n",
 				strerror(errno));
@@ -856,12 +856,12 @@ static void dpdkio_fill_mbuf_tx_offload(struct lkl_dpdkio_slot *slot,
 
 	if (slot->ip_protocol == IPPROTO_TCP) {
 		mbuf->ol_flags |= PKT_TX_TCP_CKSUM;
+		mbuf->l2_len = slot->l2_len;
+		mbuf->l3_len = slot->l3_len;
+		mbuf->l4_len = slot->l4_len;
 
 		if (slot->nsegs > 1) {
 			mbuf->ol_flags |= PKT_TX_TCP_SEG;
-			mbuf->l2_len = slot->l2_len;
-			mbuf->l3_len = slot->l3_len;
-			mbuf->l4_len = slot->l4_len;
 			mbuf->tso_segsz = slot->tso_segsz;
 		}
 	}
@@ -1033,6 +1033,11 @@ static int dpdkio_tx(int portid, struct lkl_dpdkio_slot **slots, int nb_pkts)
 		dpdkio_slot_dump(slots[n]);
 #endif
 
+#ifdef DEBUG_PCAP
+		struct dpdkio_port *port = dpdkio_port_get(portid);
+		/* pcap debugg!!  */
+		pcap_write_packet(port->tx_pcap_fd, slots[n]->segs, slots[n]->nsegs);
+#endif
 		mbuf = dpdkio_tx_slot_to_mbuf(portid, slots[n]);
 
 #ifdef DEBUG_PKT_TX
@@ -1049,6 +1054,9 @@ static int dpdkio_tx(int portid, struct lkl_dpdkio_slot **slots, int nb_pkts)
 		pr_err("0 tx\n");
 		return 0;
 	}
+
+	if (rte_eth_tx_prepare(portid, 0, mbufs, 1) != i)
+		pr_err("tx_prep failed\n");
 
 	return rte_eth_tx_burst(portid, 0, mbufs, i);
 }
@@ -1153,15 +1161,35 @@ static void dpdkio_get_macaddr(int portid, char *mac)
 	memcpy(mac, addr.addr_bytes, LKL_ETH_ALEN);
 }
 
+#define CHECK_INTERVAL 100 /* 100ms */
+#define MAX_CHECK_TIME 90 /* 9s (90 * 100ms) in total */
 static int dpdkio_get_link_status(int portid)
 {
 	struct rte_eth_link link;
-	int ret;
+	int ret, count, old_status;
+	char link_status[RTE_ETH_LINK_MAX_STR_LEN];
 
-	ret = rte_eth_link_get_nowait(portid, &link);
-	if (ret < 0) {
-		pr_err("rte_eth_link_get_nowait: %s\n", strerror(ret * -1));
-		return -1;
+	/* referred from testpmd.c */
+	pr_info("Checking link status...\n");
+	for (count = 0; count <= MAX_CHECK_TIME; count++) {
+		memset(&link, 0, sizeof(link));
+		ret = rte_eth_link_get_nowait(portid, &link);
+		if (ret < 0) {
+			pr_warn("Port %u link get failed: %s\n",
+				portid, rte_strerror(-ret));
+			continue;
+		}
+
+		if (old_status != link.link_status){
+			rte_eth_link_to_str(link_status,
+					    sizeof(link_status), &link);
+			pr_info("Port %d %s\n", portid, link_status);
+		}
+		if (link.link_status == ETH_LINK_UP)
+			break;
+
+		old_status = link.link_status;
+		rte_delay_ms(CHECK_INTERVAL);
 	}
 
 	return link.link_status; /* ETH_LINK_UP 1 or ETH_LINK_DOWN 0 */
