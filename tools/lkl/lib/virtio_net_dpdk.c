@@ -214,7 +214,7 @@ end:
 	header->flags = LKL_VIRTIO_NET_HDR_F_DATA_VALID;
 	rte_eth_dev_get_mtu(nd_dpdk->portid, &mtu);
 
-	if (read > (mtu + sizeof(struct ether_hdr)
+	if (read > (mtu + sizeof(struct rte_ether_hdr)
 		    + sizeof(struct lkl_virtio_net_hdr_v1))) {
 		struct rte_net_hdr_lens hdr_lens;
 		uint32_t ptype;
@@ -397,6 +397,7 @@ struct lkl_netdev *lkl_netdev_dpdk_create(const char *ifparams, int offload,
 
 	memset(&portconf, 0, sizeof(portconf));
 
+#if 0
 	/* offload bits */
 	/* but, we only configure NIC to use TSO *only if* user specifies. */
 	if (offload & (BIT(LKL_VIRTIO_NET_F_GUEST_TSO4) |
@@ -405,6 +406,7 @@ struct lkl_netdev *lkl_netdev_dpdk_create(const char *ifparams, int offload,
 		portconf.rxmode.enable_lro = 1;
 		portconf.rxmode.hw_strip_crc = 1;
 	}
+#endif
 
 	ret = rte_eth_dev_configure(nd->portid, NUMQUEUE, NUMQUEUE,
 				    &portconf);
@@ -423,12 +425,12 @@ struct lkl_netdev *lkl_netdev_dpdk_create(const char *ifparams, int offload,
 		free(nd);
 		return NULL;
 	}
-
+#if 0
 	dev_info.default_txconf.txq_flags = 0;
 
 	dev_info.default_txconf.txq_flags |= ETH_TXQ_FLAGS_NOXSUMSCTP;
 	dev_info.default_txconf.txq_flags |= ETH_TXQ_FLAGS_NOVLANOFFL;
-
+#endif
 
 	ret = rte_eth_tx_queue_setup(nd->portid, 0, NUMDESC, 0,
 				     &dev_info.default_txconf);
