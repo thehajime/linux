@@ -1,3 +1,4 @@
+#include <string.h>
 #include <lkl_host.h>
 #include "virtio.h"
 #include "endian.h"
@@ -77,6 +78,7 @@ int lkl_disk_add(struct lkl_disk *disk)
 	dev = lkl_host_ops.mem_alloc(sizeof(*dev));
 	if (!dev)
 		return -LKL_ENOMEM;
+	memset(dev, 0, sizeof(*dev));
 
 	disk->dev = dev;
 

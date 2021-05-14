@@ -31,10 +31,12 @@
 #include <linux/stat.h>
 #include <sys/sysmacros.h>
 #include <sys/utsname.h>
+#include <sys/sendfile.h>
 
 #include <lkl.h>
 #include <lkl/asm/syscalls.h>
 #include "xlate.h"
+#include "init.h"
 
 //#include <mino.h>
 #include "util.h"
@@ -434,7 +436,7 @@ static long p0; /* this is a little trick for p##mra1 and so on. when
 		      arv, arvlen, arvw)
 	
 
-HOOK_CALL(socket);
+//HOOK_CALL(socket);
 HOOK_CALL(socketpair);
 HOOK_FD_CALL(close);
 
@@ -499,6 +501,20 @@ HOOK_CALL(epoll_create1);
 #define CHECK_CALL(name, ...) _CHECK_CALL(-1, name, __VA_ARGS__)
 #define CHECK_CALL_WITH_FD(fd, name, ...) _CHECK_CALL(fd, name, __VA_ARGS__)
 
+
+#if 0
+HOOK_CALL(socket);
+#else
+WRAP_CALL(socket);
+int socket(int domain, int type, int protocol)
+{
+	CHECK_CALL(socket);
+	if (!lkl_running)
+		return host_socket(domain, type, protocol);
+
+	return lkl_sys_socket(domain, type, protocol);
+}
+#endif
 
 WRAP_CALL(accept);
 int accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
@@ -714,6 +730,9 @@ int select(int n, fd_set *rfds, fd_set *wfds, fd_set *efds, struct timeval *tv)
 WRAP_CALL(epoll_create);
 int epoll_create(int size)
 {
+	if (!lkl_running)
+		return host_epoll_create(size);
+
 	return epoll_create1(0);	/* go to hijacked epoll_create1() */
 }
 
@@ -732,7 +751,7 @@ int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event)
 {
 	long p[6] = { 0, 0, 0, 0, 0, 0 };
 
-	CHECK_CALL_WITH_FD(epfd, epoll_ctl, fd, op, event);
+	CHECK_CALL_WITH_FD(epfd, epoll_ctl, epfd, op, fd, event);
 
 	p[0] = epfd;
 	p[1] = op;
@@ -950,6 +969,12 @@ ssize_t recv(int fd, void *buf, size_t len, int flags)
 	return recvfrom(fd, buf, len, flags, 0, 0);
 }
 
+WRAP_CALL(__recv_chk);
+ssize_t __recv_chk(int fd, void *buf, size_t len, size_t dummy, int flags)
+{
+	return recvfrom(fd, buf, len, flags, 0, 0);
+}
+
 WRAP_CALL(fcntl);
 int fcntl(int fd, int cmd, ...)
 {
@@ -1143,6 +1168,13 @@ static int __fstatat(int fd, const char *path, struct stat *st, int flag)
 WRAP_CALL(__xstat);
 int __xstat(int version, const char *pathname, struct stat *statbuf)
 {
+	return __fstatat(LKL_AT_FDCWD, pathname, statbuf, 0);
+}
+WRAP_CALL(__xstat64);
+int __xstat64(int version, const char *pathname, struct stat *statbuf)
+{
+	if (check_exclude_path(pathname))
+		return host___xstat64(version, pathname, statbuf);
 	return __fstatat(LKL_AT_FDCWD, pathname, statbuf, 0);
 }
 
@@ -1615,16 +1647,16 @@ struct _local_IO_jump_t
 
 struct _local_IO_FILE_plus
 {
-	_IO_FILE file;
+	struct _IO_FILE file;
 	struct _local_IO_jump_t *vtable;
 };
 
-static ssize_t _l_read(_IO_FILE *file, void *buffer, ssize_t size)
+static ssize_t _l_read(struct _IO_FILE *file, void *buffer, ssize_t size)
 {
 	return lkl_sys_read(file->_fileno, buffer, size);
 }
 
-static ssize_t _l_write(_IO_FILE *file, const void *buffer, ssize_t size)
+static ssize_t _l_write(struct _IO_FILE *file, const void *buffer, ssize_t size)
 {
 	ssize_t data_written = lkl_sys_write(file->_fileno, buffer, size);
 	if (data_written == -1)
@@ -1636,22 +1668,22 @@ static ssize_t _l_write(_IO_FILE *file, const void *buffer, ssize_t size)
 	return data_written;
 }
 
-static off_t _l_seek(_IO_FILE *file, off_t where, int whence)
+static off_t _l_seek(struct _IO_FILE *file, off_t where, int whence)
 {
 	return lkl_sys_lseek(file->_fileno, where, whence);
 }
 
-static int _l_close(_IO_FILE *file)
+static int _l_close(struct _IO_FILE *file)
 {
 	return lkl_sys_close(file->_fileno);
 }
 
-static int _l_stat(_IO_FILE *file, void *buf)
+static int _l_stat(struct _IO_FILE *file, void *buf)
 {
 	return lkl_sys_fstat(file->_fileno, (struct lkl_stat *)buf);
 }
 
-void _IO_init (_IO_FILE *fp, int flags);
+void _IO_init (struct _IO_FILE *fp, int flags);
 FILE *fdopen(int fd, const char *mode)
 {
 	FILE* (*host_fopen)(const char *, const char *) = resolve_sym("fopen");
@@ -1723,6 +1755,10 @@ int mode_posix_flags (const char *mode)
 
 FILE *fopen64(const char *path, const char *mode)
 {
+	FILE* (*host_fopen)(const char *, const char *) = resolve_sym("fopen");
+	if (check_exclude_path(path))
+		return host_fopen(path, mode);
+
 	int fd = open(path, mode_posix_flags(mode));
 	if (fd == -1)
 		return 0;
@@ -1743,9 +1779,17 @@ FILE *fopen64(const char *path, const char *mode)
 	return file;
 }
 
-int eventfd(unsigned int initval, int flags)
+WRAP_CALL(eventfd)
+int eventfd(unsigned int count, int flags)
 {
-	return lkl_sys_eventfd2(initval, flags);
+	if (!lkl_running) {
+		int fd;
+		fd = host_eventfd(count, flags);
+		if (is_lklfd(fd))
+			return get_host_eventfd();
+		return fd;
+	}
+	return lkl_sys_eventfd2(count, flags);
 }
 
 ssize_t sendfile64(int out_fd, int in_fd, off_t *offset, size_t count)
@@ -1757,4 +1801,14 @@ WRAP_CALL(uname);
 int uname(struct utsname *buf)
 {
 	return lkl_sys_uname((struct lkl_old_utsname *)buf);
+}
+
+WRAP_CALL(chown);
+int chown(const char *pathname, uid_t owner, gid_t group)
+{
+	if (check_exclude_path(pathname))
+		host_chown(pathname, owner, group);
+
+	/* XXX */
+	return 0;
 }
