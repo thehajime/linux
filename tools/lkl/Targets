@@ -8,6 +8,7 @@ LDLIBS_lib/hijack/liblkl-hijack-y += -ldl
 LDLIBS_lib/hijack/liblkl-hijack-$(LKL_HOST_CONFIG_ARM) += -lgcc -lc
 LDLIBS_lib/hijack/liblkl-hijack-$(LKL_HOST_CONFIG_AARCH64) += -lc
 LDLIBS_lib/hijack/liblkl-hijack-$(LKL_HOST_CONFIG_I386) += -lc_nonshared
+LDLIBS_lib/hijack/liblkl-hijack-y += -lopcodes -lgcc_s
 
 progs-$(LKL_HOST_CONFIG_FUSE) += lklfuse
 LDLIBS_lklfuse-y := -lfuse

@@ -555,10 +555,12 @@ unsigned long lkl_ioctl_req_xlate(unsigned long req)
 		return LKL_SIOCGPGRP;
 	case SIOCATMARK:
 		return LKL_SIOCATMARK;
+#ifdef SIOCGSTAMP
 	case SIOCGSTAMP:
 		return LKL_SIOCGSTAMP;
 	case SIOCGSTAMPNS:
 		return LKL_SIOCGSTAMPNS;
+#endif
 	}
 
 	/* TODO: asm/termios.h translations */

@@ -111,12 +111,16 @@ static int config_load(void)
 	return ret;
 }
 
+void __zpoline_init(void);
 void __attribute__((constructor))
 hijack_init(void)
 {
 	int ret, i, dev_null;
 	int single_cpu_mode = 0;
 	cpu_set_t ori_cpu;
+
+	/* initialize zpoline */
+	__zpoline_init();
 
 	ret = config_load();
 	if (ret < 0)
@@ -187,7 +191,7 @@ hijack_init(void)
 	lkl_running = 1;
 
 	/* initialize epoll manage list */
-	memset(dual_fds, -1, sizeof(int) * LKL_FD_OFFSET);
+//	memset(dual_fds, -1, sizeof(int) * LKL_FD_OFFSET);
 
 	/* restore cpu affinity */
 	if (single_cpu_mode)
