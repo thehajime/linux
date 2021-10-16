@@ -36,7 +36,6 @@ endif
 
 core-y += arch/lkl/kernel/
 core-y += arch/lkl/mm/
-core-y += arch/lkl/drivers/
 
 all: lkl.o
 

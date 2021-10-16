@@ -62,11 +62,7 @@ tests = [
     'lklfuse.sh -t btrfs',
     'lklfuse.sh -t vfat',
     'lklfuse.sh -t xfs',
-    'hijack-test.sh',
-    'disk-vfio-pci.sh -t ext4 run',
-    'disk-vfio-pci.sh -t btrfs run',
-    'disk-vfio-pci.sh -t vfat run',
-    'disk-vfio-pci.sh -t xfs run'
+    'hijack-test.sh'
 ]
 
 parser = argparse.ArgumentParser(description='LKL test runner')
