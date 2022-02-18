@@ -49,6 +49,14 @@ void __init setup_physmem(unsigned long start, unsigned long reserve_end,
 
 }
 
+extern unsigned long long physmem_size;
+static int __init setup_mem_size(char *str)
+{
+        physmem_size = memparse(str, NULL);
+        return 0;
+}
+early_param("mem", setup_mem_size);
+
 void __init mem_init(void)
 {
 	max_mapnr = (((unsigned long)high_memory) - PAGE_OFFSET) >> PAGE_SHIFT;
