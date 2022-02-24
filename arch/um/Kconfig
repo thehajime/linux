@@ -23,7 +23,7 @@ config UML
 	select HAVE_GCC_PLUGINS
 	select TRACE_IRQFLAGS_SUPPORT
 	select TTY # Needed for line.c
-	select HAVE_ARCH_VMAP_STACK
+	select HAVE_ARCH_VMAP_STACK if !UMMODE_LIB
 	select MODULE_REL_CRCS if MODVERSIONS
 
 config UMMODE_LIB

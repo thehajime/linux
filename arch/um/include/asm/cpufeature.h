@@ -6,7 +6,9 @@
 
 #if defined(__KERNEL__) && !defined(__ASSEMBLY__)
 
+#ifndef CONFIG_UMMODE_LIB
 #include <asm/asm.h>
+#endif
 #include <linux/bitops.h>
 
 extern const char * const x86_cap_flags[NCAPINTS*32];

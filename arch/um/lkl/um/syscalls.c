@@ -26,10 +26,10 @@
 typedef long (*syscall_handler_t)(long arg1, ...);
 
 #undef __SYSCALL
-#define __SYSCALL(nr, sym)[nr] = (syscall_handler_t)sym,
+#define __SYSCALL(nr, sym)[nr] = (void *)sym,
 
 syscall_handler_t syscall_table[__NR_syscalls] = {
-	[0 ... __NR_syscalls - 1] =  (syscall_handler_t)sys_ni_syscall,
+	[0 ... __NR_syscalls - 1] =  (void *)sys_ni_syscall,
 #undef __UM_LIBMODE_UAPI_UNISTD_H
 #include <asm/unistd.h>
 

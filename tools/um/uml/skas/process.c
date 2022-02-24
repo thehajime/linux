@@ -294,8 +294,8 @@ static int userspace_tramp(void *stack)
 	return 0;
 }
 
-int userspace_pid[UM_NR_CPUS];
-int kill_userspace_mm[UM_NR_CPUS];
+int userspace_pid[NR_CPUS];
+int kill_userspace_mm[NR_CPUS];
 
 /**
  * start_userspace() - prepare a new userspace process

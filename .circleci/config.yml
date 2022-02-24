@@ -32,7 +32,7 @@ do_steps: &do_steps
         rm -rf ~/junit
   - run: mkdir -p /home/ubuntu/.ccache
   - restore_cache:
-      key: compiler-cache-{{ checksum "~/_cross_compile" }}-{{ .Environment.CACHE_VERSION }}
+      key: compiler-cache-{{ .Environment.CIRCLE_STAGE }}-{{ .Environment.CACHE_VERSION }}
   - run:
       name: preparation
       command: |
@@ -42,14 +42,15 @@ do_steps: &do_steps
         fi
         sudo apt-get update
         sudo apt-get install -y rsync zlib1g-dev libncurses5-dev libgdbm-dev libnss3-dev libssl-dev libreadline-dev libffi-dev libsqlite3-dev wget libbz2-dev
-        if [ $CIRCLE_STAGE = "x86_64" ]; then
+        if [ $CIRCLE_STAGE = "x86_64" ] || [ $CIRCLE_STAGE = "i386" ]; then
           cd /tmp
           wget https://www.python.org/ftp/python/3.9.7/Python-3.9.7.tgz
           tar -xf Python-3.9.7.tgz
           cd Python-3.9.7
-          ./configure --enable-optimizations
+          ./configure
           make -j 4
           sudo make altinstall
+          sudo update-alternatives --install /usr/bin/python3 python /usr/local/bin/python3.9 10
         fi
   - run:
       name: build
@@ -60,7 +61,7 @@ do_steps: &do_steps
   - save_cache:
      paths:
        - /home/ubuntu/.ccache
-     key: compiler-cache-{{ checksum "~/_cross_compile" }}-{{ .Environment.CACHE_VERSION }}-{{ epoch }}
+     key: compiler-cache-{{ .Environment.CIRCLE_STAGE }}-{{ .Environment.CACHE_VERSION }}-{{ epoch }}
   - run:
       name: run tests
       command: |

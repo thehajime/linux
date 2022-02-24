@@ -61,6 +61,45 @@ do {									\
 		goto err_label;						\
 } while (0)
 #else
+/*
+ * Copy a null terminated string from userspace.
+ */
+#ifndef __strncpy_from_user
+static inline long
+__strncpy_from_user(char *dst, const char __user *src, long count)
+{
+	char *tmp;
+	strncpy(dst, (const char __force *)src, count);
+	for (tmp = dst; *tmp && count > 0; tmp++, count--)
+		;
+	return (tmp - dst);
+}
+#endif
+
+static inline long
+strncpy_from_user(char *dst, const char __user *src, long count)
+{
+	return __strncpy_from_user(dst, src, count);
+}
+
+/*
+ * Return the size of a string (including the ending 0)
+ *
+ * Return 0 on exception, a value greater than N if too long
+ */
+#ifndef __strnlen_user
+#define __strnlen_user(s, n) (strnlen((s), (n)) + 1)
+#endif
+
+/*
+ * Unlike strnlen, strnlen_user includes the nul terminator in
+ * its returned count. Callers should check for a returned value
+ * greater than N as an indication the string is too long.
+ */
+static inline long strnlen_user(const char __user *src, long n)
+{
+	return __strnlen_user(src, n);
+}
 #include <asm-generic/uaccess.h>
 #endif /* CONFIG_MMU */
 

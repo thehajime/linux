@@ -3,7 +3,10 @@
  * Copyright (C) 2002 - 2008 Jeff Dike (jdike@{addtoit,linux.intel}.com)
  */
 
-#include <linux/minmax.h>
+//#include <linux/minmax.h>
+#define swap(a, b) \
+	do { typeof(a) __tmp = (a); (a) = (b); (b) = __tmp; } while (0)
+
 #include <unistd.h>
 #include <errno.h>
 #include <fcntl.h>

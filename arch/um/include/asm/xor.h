@@ -8,9 +8,13 @@
 #define CONFIG_X86_32 1
 #endif
 
+#ifndef CONFIG_UMMODE_LIB
 #include <asm/cpufeature.h>
 #include <../../x86/include/asm/xor.h>
 #include <linux/time-internal.h>
+#else /* !CONFIG_UMMODE_LIB */
+#include <asm-generic/xor.h>
+#endif
 
 #ifdef CONFIG_UML_TIME_TRAVEL_SUPPORT
 #undef XOR_SELECT_TEMPLATE

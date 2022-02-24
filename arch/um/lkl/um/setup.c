@@ -10,6 +10,7 @@
 #include <linux/tick.h>
 #include <linux/kernel.h>
 #include <linux/console.h>
+#include <linux/panic_notifier.h>
 #include <asm/host_ops.h>
 #include <asm/irq.h>
 #include <asm/unistd.h>

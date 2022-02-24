@@ -35,10 +35,6 @@ static inline void cpu_relax(void)
 #define KSTK_EIP(tsk)	(0)
 #define KSTK_ESP(tsk)	(0)
 
-static inline void trap_init(void)
-{
-}
-
 static inline void arch_copy_thread(struct arch_thread *from,
 				    struct arch_thread *to)
 {

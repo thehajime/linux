@@ -43,7 +43,6 @@ void setup_thread_stack(struct task_struct *p, struct task_struct *org)
 
 	ti->flags = org_ti->flags;
 	ti->preempt_count = org_ti->preempt_count;
-	ti->addr_limit = org_ti->addr_limit;
 }
 
 static void kill_thread(struct thread_info *ti)
@@ -239,7 +238,7 @@ void threads_cleanup(void)
 		if (t->pid != 1 && !test_ti_thread_flag(ti, TIF_HOST_THREAD))
 			WARN(!(t->flags & PF_KTHREAD),
 			     "non kernel thread task %s\n", t->comm);
-		WARN(t->state == TASK_RUNNING,
+		WARN(t->__state == TASK_RUNNING,
 		     "thread %s still running while halting\n", t->comm);
 
 		kill_thread(ti);

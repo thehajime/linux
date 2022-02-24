@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 
+#include <uapi/linux/audit.h>
+
 int syscalls_init(void);
 void syscalls_cleanup(void);
 long lkl_syscall(long no, long *params);
@@ -14,3 +16,8 @@ void wakeup_idle_host_task(void);
 #define sys_clone sys_ni_syscall
 
 int run_syscalls(void);
+
+static inline int syscall_get_arch(struct task_struct *task)
+{
+	return AUDIT_ARCH_X86_64;
+}

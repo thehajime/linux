@@ -177,17 +177,10 @@ vmlinux_link()
 		libs="${KBUILD_VMLINUX_LIBS}"
 	fi
 
-	if [ "${SRCARCH}" = "um" ]; then
-		wl=-Wl,
-		ld="${CC}"
-		ldflags="${CFLAGS_vmlinux}"
-		ldlibs="-lutil -lrt -lpthread"
-	else
-		wl=
-		ld="${LD}"
-		ldflags="${KBUILD_LDFLAGS} ${LDFLAGS_vmlinux}"
-		ldlibs=
-	fi
+	wl=
+	ld="${LD}"
+	ldflags="${KBUILD_LDFLAGS} ${LDFLAGS_vmlinux}"
+	ldlibs=
 
 	ldflags="${ldflags} ${wl}--script=${objtree}/${KBUILD_LDS}"
 

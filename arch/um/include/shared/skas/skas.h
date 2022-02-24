@@ -7,6 +7,9 @@
 #define __SKAS_H
 
 #include <sysdep/ptrace.h>
+#include <generated/autoconf.h>
+
+#define NR_CPUS CONFIG_NR_CPUS
 
 extern int userspace_pid[];
 

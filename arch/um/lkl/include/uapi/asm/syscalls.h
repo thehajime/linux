@@ -117,7 +117,6 @@ typedef __kernel_long_t	__kernel_old_time_t;
 #include <asm/siginfo.h>
 #include <linux/utime.h>
 #include <asm/socket.h>
-#include <linux/icmp.h>
 #include <linux/ip.h>
 
 /* Define data structures used in system calls that are not defined in UAPI
@@ -141,6 +140,7 @@ struct sockaddr {
 #define __UAPI_DEF_IN_PKTINFO	1
 #define __UAPI_DEF_SOCKADDR_IN	1
 #define __UAPI_DEF_IN_CLASS	1
+#include <linux/icmp.h>
 #include <linux/in.h>
 #include <linux/in6.h>
 #include <linux/sockios.h>

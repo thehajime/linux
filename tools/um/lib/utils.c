@@ -205,3 +205,16 @@ void lkl_bug(const char *fmt, ...)
 
 	lkl_panic();
 }
+
+/* XXX */
+typedef unsigned int u32;
+#define __user
+int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
+			      u32 oldval, u32 newval)
+{
+	return 0;
+}
+int arch_futex_atomic_op_inuser(int op, u32 oparg, int *oval, u32 __user *uaddr)
+{
+	return 0;
+}
