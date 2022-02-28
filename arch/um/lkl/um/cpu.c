@@ -258,6 +258,9 @@ void subarch_cpu_idle(void)
 		lkl_cpu_cleanup(true);
 		lkl_thread_exit();
 	}
+
+	/* switch to idle_host_task */
+	wakeup_idle_host_task();
 }
 
 int lkl_cpu_init(void)

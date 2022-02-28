@@ -104,6 +104,7 @@ long long os_nsecs(void)
  */
 void os_idle_sleep(void)
 {
+#if 0
 	struct itimerspec its;
 	sigset_t set, old;
 
@@ -118,4 +119,17 @@ void os_idle_sleep(void)
 		sigsuspend(&old);
 	/* either way, restore the signal mask */
 	sigprocmask(SIG_UNBLOCK, &set, NULL);
+#else
+	unsigned long long nsecs = UM_NSEC_PER_SEC;
+	struct timespec ts = {
+		.tv_sec  = nsecs / UM_NSEC_PER_SEC,
+		.tv_nsec = nsecs % UM_NSEC_PER_SEC
+	};
+
+	/*
+	 * Relay the signal if clock_nanosleep is interrupted.
+	 */
+	if (clock_nanosleep(CLOCK_MONOTONIC, 0, &ts, NULL))
+		deliver_alarm();
+#endif
 }
