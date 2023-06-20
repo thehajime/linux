@@ -164,7 +164,7 @@ static void thread_bootstrap(void *_tba)
 
 int copy_thread(struct task_struct *p, const struct kernel_clone_args *args)
 {
-	unsigned long esp = args->fn;
+	unsigned long esp = (unsigned long)args->fn;
 	struct thread_info *ti = task_thread_info(p);
 	struct thread_bootstrap_arg *tba;
 
