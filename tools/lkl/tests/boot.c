@@ -501,7 +501,7 @@ static const char *boot_log;
 
 #ifdef LKL_HOST_CONFIG_KASAN_TEST
 
-#define KASAN_CMD_LINE "kunit.filter_glob=kasan* "
+#define KASAN_CMD_LINE "kunit.filter_glob=kasan* printk.time=0"
 
 static int lkl_test_kasan(void)
 {
