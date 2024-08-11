@@ -16,6 +16,14 @@ obj-y = bugs_$(BITS).o delay.o fault.o ldt.o \
 	entry_$(BITS).o \
 	mem_$(BITS).o subarch.o os-$(OS)/
 
+inat_tables_script = $(srctree)/arch/x86/tools/gen-insn-attr-x86.awk
+inat_tables_maps = $(srctree)/arch/x86/lib/x86-opcode-map.txt
+quiet_cmd_inat_tables = GEN     $@
+      cmd_inat_tables = $(AWK) -f $(inat_tables_script) $(inat_tables_maps) > $@
+
+$(obj)/inat-tables.c: $(inat_tables_script) $(inat_tables_maps)
+	$(call cmd,inat_tables)
+
 ifeq ($(CONFIG_X86_32),y)
 
 obj-y += checksum_32.o syscalls_32.o
@@ -27,7 +35,7 @@ else
 
 obj-y += syscalls_64.o do_syscall_64.o vdso/
 
-subarch-y = ../lib/csum-partial_64.o ../lib/memcpy_64.o ../entry/thunk_64.o
+subarch-y = ../lib/csum-partial_64.o ../lib/memcpy_64.o ../entry/thunk_64.o ../lib/insn.o ../lib/inat.o
 
 endif
 

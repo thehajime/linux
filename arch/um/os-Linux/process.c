@@ -324,7 +324,7 @@ static const int allowed_list[] = {
 	SCMP_SYS(fcntl),
 	SCMP_SYS(rt_sigprocmask),
 	SCMP_SYS(ioctl),
-	SCMP_SYS(open),
+	SCMP_SYS(openat),
 	SCMP_SYS(brk),
 	SCMP_SYS(getpid),
 

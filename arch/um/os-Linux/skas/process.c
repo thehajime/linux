@@ -126,6 +126,7 @@ static void handle_segv(int pid, struct uml_pt_regs *regs, unsigned long *aux_fp
 	segv(regs->faultinfo, 0, 1, NULL);
 }
 
+#ifdef CONFIG_MMU
 /*
  * To use the same value of using_sysemu as the caller, ask it that value
  * (in local_using_sysemu
@@ -171,12 +172,12 @@ static void handle_trap(int pid, struct uml_pt_regs *regs,
 
 	handle_syscall(regs);
 }
+#endif
 
 extern char __syscall_stub_start[];
 int userspace_pid[NR_CPUS];
 
 #ifdef CONFIG_MMU
-
 /**
  * userspace_tramp() - userspace trampoline
  * @stack:	pointer to the new userspace stack page, can be NULL, if? FIXME:
@@ -446,6 +447,7 @@ void userspace(struct uml_pt_regs *regs, unsigned long *aux_fp_regs)
 }
 #endif
 
+#ifdef CONFIG_MMU
 static unsigned long thread_regs[MAX_REG_NR];
 static unsigned long thread_fp_regs[FP_SIZE];
 
@@ -464,7 +466,6 @@ static int __init init_thread_regs(void)
 	return 0;
 }
 
-#ifdef CONFIG_MMU
 __initcall(init_thread_regs);
 #endif
 

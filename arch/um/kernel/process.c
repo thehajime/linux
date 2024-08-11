@@ -127,7 +127,7 @@ static void setup_seccomp(void)
 
 	save_kmalloc_ok = kmalloc_ok;
 	kmalloc_ok = 0;
-	os_setup_seccomp();
+//	os_setup_seccomp();
 	kmalloc_ok = save_kmalloc_ok;
 	is_first = false;
 }
