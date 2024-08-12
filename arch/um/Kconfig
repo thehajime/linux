@@ -21,7 +21,6 @@ config UML
 	#select ARCH_HAS_BINFMT_FLAT
 	#select BINFMT_FLAT_ARGVP_ENVP_ON_STACK
 	#select MODULES_USE_ELF_REL
-	select ARCH_BINFMT_ELF_STATE
 
 config MMU
 	bool

@@ -6,6 +6,8 @@
 /* XXX: move those code to x86-64 specifics */
 extern long __kernel_vsyscall(int64_t, int64_t, int64_t, int64_t,
 			      int64_t, int64_t, int64_t);
+extern char __zpoline_start[];
+
 void zpoline_panic(void)
 {
 	panic("zpoline");
@@ -36,26 +38,12 @@ long zpoline_syscall_hook(int64_t rdi, int64_t rsi,
 		}
 	}
 
-	if (rax_on_stack == __NR_vfork && 1) {
-		/* push return address to the stack */
-//		__asm__ __volatile__ ("movq %0, -8(%%rsp)"
-		__asm__ __volatile__ ("pushq %0"
-				      :: "r"(retptr)
-				      : "memory");
-	}
-
 	/* XXX: r9... */
 	__asm__ __volatile__ ("call *%1" : "=a"(ret)
 			      : "r"(__kernel_vsyscall), "a"(rax_on_stack),
 				"D"(rdi), "S"(rsi), "d"(rdx),
 				"r"(r10_on_stack), "r"(r8)//, "r"(_r9)
 			      : "rcx", "r11", "memory");
-
-	if (rax_on_stack == __NR_vfork && 0) {
-		__asm__ __volatile__ ("popq %0"
-				      : "=r"(retptr) ::  "memory");
-
-	}
 
 	return ret;
 }
@@ -101,9 +89,6 @@ void ____asm_impl(void)
 	"asm_syscall_hook: \n\t"
 
 #if 0
-	"cmpq $58, %rax \n\t" // vfork
-	"je do_vfork \n\t"
-
 	"cmpq $15, %rax \n\t" // rt_sigreturn
 	"je do_rt_sigreturn \n\t"
 #endif
@@ -156,17 +141,13 @@ void ____asm_impl(void)
 	"do_rt_sigreturn:"
 	"addq $136, %rsp \n\t"
 	"jmp syscall_addr \n\t"
-
-	"do_vfork:"
-	"addq $136, %rsp \n\t"
-	"jmp __kernel_vsyscall \n\t"
 #endif
 	);
 }
 
 #include <asm/insn.h>
-int arch_check_elf(void *_ehdr, bool has_interpreter, void *_interp_ehdr,
-		   void *state)
+int arch_finalize_exec(struct elfhdr *_ehdr, bool has_interp,
+			struct elfhdr *_interp_ehdr)
 {
 	int err = 0, count = 0;
 	struct insn insn;
@@ -175,14 +156,17 @@ int arch_check_elf(void *_ehdr, bool has_interpreter, void *_interp_ehdr,
 	unsigned long stop;
 	struct elfhdr *ehdr = _interp_ehdr;
 
+	ptr = (void *)_interp_ehdr;
+	head = ptr;
+	stop = ehdr->e_shoff + ehdr->e_shentsize * ehdr->e_shnum;
+
+	/* skip translation of trampoline code */
+	if (ptr <= &__zpoline_start[0] + 0x1000 + 0x0100)
+		return - EINVAL;
+
 	if (down_write_killable(&mm->mmap_sem))
 		return -EINTR;
 
-	current->mm->start_code = 0;
-	ptr = (void *)_interp_ehdr;
-		//current->mm->start_data + sizeof(struct elfhdr);
-	head = ptr;
-	stop = ehdr->e_shoff + ehdr->e_shentsize * ehdr->e_shnum;
 
 	while (ptr < (head + stop)) {
 		insn_init(&insn, ptr, MAX_INSN_SIZE, 1);
@@ -207,14 +191,13 @@ int arch_check_elf(void *_ehdr, bool has_interpreter, void *_interp_ehdr,
 		ptr += insn.length;
 	}
 
-	printk(KERN_INFO "zpoline: rewritten %d syscalls\n", count);
+	printk(KERN_DEBUG "zpoline: rewritten %d syscalls\n", count);
 	up_write(&mm->mmap_sem);
 	return err;
 }
 
 static int setup_zpoline_trampoline(void)
 {
-	extern char __zpoline_start[];
 	extern void asm_syscall_hook(void);
 	int i;
 
