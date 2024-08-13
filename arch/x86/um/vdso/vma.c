@@ -22,6 +22,8 @@ static struct page *um_vdso;
 
 static int __init init_vdso(void)
 {
+	unsigned long pg_um_vdso;
+
 	BUG_ON(vdso_end - vdso_start > PAGE_SIZE);
 
 #ifdef CONFIG_MMU
@@ -39,7 +41,7 @@ static int __init init_vdso(void)
 		goto oom;
 	}
 
-	unsigned long pg_um_vdso = page_address(um_vdso);
+	pg_um_vdso = page_address(um_vdso);
 
 	printk(KERN_ERR "vdso_start=%lx um_vdso_addr=%lx pg_um_vdso=%lx\n\r",
 		vdso_start, um_vdso_addr, pg_um_vdso);

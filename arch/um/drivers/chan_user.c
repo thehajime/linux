@@ -271,7 +271,6 @@ static int winch_tramp(int fd, struct tty_port *port, int *fd_out,
 	return err;
 }
 
-#ifdef CONFIG_UM_SIGWINCH
 void register_winch(int fd, struct tty_port *port)
 {
 	unsigned long stack;
@@ -300,4 +299,3 @@ void register_winch(int fd, struct tty_port *port)
 			       "synchronization byte, err = %d\n", errno);
 	}
 }
-#endif

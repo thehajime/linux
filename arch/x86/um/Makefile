@@ -9,12 +9,14 @@ else
 	BITS := 64
 endif
 
-obj-y = bugs_$(BITS).o delay.o fault.o ldt.o \
-	ptrace_$(BITS).o ptrace_user.o setjmp_$(BITS).o signal.o \
+obj-y = bugs_$(BITS).o delay.o fault.o \
+	ptrace_$(BITS).o setjmp_$(BITS).o signal.o \
 	stub_$(BITS).o stub_segv.o \
 	sys_call_table_$(BITS).o sysrq_$(BITS).o tls_$(BITS).o \
 	entry_$(BITS).o \
 	mem_$(BITS).o subarch.o os-$(OS)/ zpoline.o
+
+obj-$(CONFIG_MMU) += ldt.o ptrace_user.o
 
 inat_tables_script = $(srctree)/arch/x86/tools/gen-insn-attr-x86.awk
 inat_tables_maps = $(srctree)/arch/x86/lib/x86-opcode-map.txt

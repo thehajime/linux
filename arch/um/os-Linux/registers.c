@@ -11,11 +11,6 @@
 #include <sysdep/ptrace_user.h>
 #include <registers.h>
 
-/* This is set once at boot time and not changed thereafter */
-
-static unsigned long exec_regs[MAX_REG_NR];
-static unsigned long exec_fp_regs[FP_SIZE];
-
 #ifdef CONFIG_MMU
 int save_registers(int pid, struct uml_pt_regs *regs)
 {
@@ -36,7 +31,14 @@ int restore_registers(int pid, struct uml_pt_regs *regs)
 		return -errno;
 	return 0;
 }
+#endif
 
+/* This is set once at boot time and not changed thereafter */
+
+static unsigned long exec_regs[MAX_REG_NR];
+static unsigned long exec_fp_regs[FP_SIZE];
+
+#ifdef CONFIG_MMU
 int init_registers(int pid)
 {
 	int err;

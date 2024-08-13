@@ -112,7 +112,6 @@ int get_current_pid(void)
 }
 
 #ifndef CONFIG_MMU
-extern char __um_data_start[];
 extern void __kernel_vsyscall(void);
 
 #endif
@@ -155,9 +154,6 @@ void new_thread_handler(void)
 	n = fn(arg);
 
 #ifdef CONFIG_MMU
-	userspace(&current->thread.regs.regs, current_thread_info()->aux_fp_regs);
-#else
-
 	arch_switch_to(current);
 
 	/* Handle any immediate reschedules or signals */
@@ -165,10 +161,10 @@ void new_thread_handler(void)
 
 	/* Setup seccomp as late as possible (before running untrusted code). */
 	setup_seccomp();
+#endif
 
 	userspace(&current->thread.regs.regs, current_thread_info()->aux_fp_regs);
 
-#endif
 }
 
 /* Called magically, see new_thread_handler above */
@@ -193,10 +189,10 @@ void fork_handler(void)
 	/*
 	 * This fork can only come from libc's vfork, which
 	 * does this:
-	 *	popq %%rcx;
+	 *	popq %%rdx;
 	 *	call *%0; // vsyscall
-	 *	pushq %%rcx;
-	 * %rcx stores the return address which is stored
+	 *	pushq %%rdx;
+	 * %rdx stores the return address which is stored
 	 * at pt_regs[HOST_IP] at the moment. We still
 	 * need to pop the pushed address by "call" though,
 	 * so this is what this next line does.
@@ -299,11 +295,7 @@ static void um_idle_sleep(void)
 
 void arch_cpu_idle(void)
 {
-#ifdef CONFIG_MMU
 	cpu_tasks[current_thread_info()->cpu].pid = os_getpid();
-#else
-	cpu_tasks[current_thread_info()->cpu].pid = 1;
-#endif
 	um_idle_sleep();
 	local_irq_enable();
 }

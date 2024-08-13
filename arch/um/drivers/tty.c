@@ -36,7 +36,7 @@ static void *tty_chan_init(char *str, int device, const struct chan_opts *opts)
 	return data;
 }
 
-static int __um_tty_open(int input, int output, int primary, void *d,
+static int tty_open(int input, int output, int primary, void *d,
 		    char **dev_out)
 {
 	struct tty_chan *data = d;
@@ -70,7 +70,7 @@ static int __um_tty_open(int input, int output, int primary, void *d,
 const struct chan_ops tty_ops = {
 	.type		= "tty",
 	.init		= tty_chan_init,
-	.open		= __um_tty_open,
+	.open		= tty_open,
 	.close		= generic_close,
 	.read		= generic_read,
 	.write		= generic_write,

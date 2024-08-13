@@ -6,7 +6,6 @@
 #include <errno.h>
 #include <ptrace_user.h>
 
-#ifdef CONFIG_MMU
 int ptrace_getregs(long pid, unsigned long *regs_out)
 {
 	if (ptrace(PTRACE_GETREGS, pid, 0, regs_out) < 0)
@@ -20,4 +19,3 @@ int ptrace_setregs(long pid, unsigned long *regs)
 		return -errno;
 	return 0;
 }
-#endif

@@ -22,9 +22,7 @@ void (*sig_info[NSIG])(int, struct siginfo *, struct uml_pt_regs *) = {
 	[SIGTRAP]	= relay_signal,
 	[SIGFPE]	= relay_signal,
 	[SIGILL]	= relay_signal,
-#ifdef CONFIG_UM_SIGWINCH
 	[SIGWINCH]	= winch,
-#endif
 	[SIGBUS]	= bus_handler,
 	[SIGSEGV]	= segv_handler,
 	[SIGIO]		= sigio_handler,
@@ -144,9 +142,7 @@ static void (*handlers[_NSIG])(int sig, struct siginfo *si, mcontext_t *mc) = {
 	[SIGTRAP] = sig_handler,
 
 	[SIGIO] = sig_handler,
-#ifdef CONFIG_UM_SIGWINCH
 	[SIGWINCH] = sig_handler,
-#endif
 	[SIGALRM] = timer_alarm_handler
 };
 
@@ -204,9 +200,7 @@ void set_handler(int sig)
 	/* block irq ones */
 	sigemptyset(&action.sa_mask);
 	sigaddset(&action.sa_mask, SIGIO);
-#ifdef CONFIG_UM_SIGWINCH
 	sigaddset(&action.sa_mask, SIGWINCH);
-#endif
 	sigaddset(&action.sa_mask, SIGALRM);
 
 	if (sig == SIGSEGV)
