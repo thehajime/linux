@@ -161,7 +161,7 @@ int arch_finalize_exec(struct elfhdr *_ehdr, bool has_interp,
 	stop = ehdr->e_shoff + ehdr->e_shentsize * ehdr->e_shnum;
 
 	/* skip translation of trampoline code */
-	if (ptr <= &__zpoline_start[0] + 0x1000 + 0x0100)
+	if (ptr <= (void *)&__zpoline_start[0] + 0x1000 + 0x0100)
 		return - EINVAL;
 
 	if (down_write_killable(&mm->mmap_sem))
@@ -265,7 +265,7 @@ static int setup_zpoline_trampoline(void)
 	__zpoline_start[NR_syscalls + 0x0c] = 0xe3;
 #endif
 
-	os_protect_memory(0, 0x1000, 1, 1, 1);
+	os_protect_memory(0, 0x1000, 1, 0, 1);
 	printk(KERN_ERR "zpoline: setting up trampoline code done\n");
 	return 0;
 }
