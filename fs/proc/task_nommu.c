@@ -230,8 +230,7 @@ static void m_stop(struct seq_file *m, void *_vml)
 {
 	struct proc_maps_private *priv = m->private;
 
-//	if (!IS_ERR_OR_NULL(_vml)) {
-	if (unlikely(atomic_long_read(&priv->mm->mmap_sem.count) > 0)) {
+	if (!IS_ERR_OR_NULL(_vml)) {
 		up_read(&priv->mm->mmap_sem);
 		mmput(priv->mm);
 	}
