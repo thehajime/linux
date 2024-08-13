@@ -54,7 +54,7 @@ ENTRY(__kernel_vsyscall)
 	pushq   %r11		/* pt_regs->sp */
 	pushfq			/* pt_regs->flags */
 	pushq	$0		/* pt_regs->cs */
-	pushq	%rcx		/* pt_regs->ip */
+	pushq	%rdx		/* pt_regs->ip */
 	pushq	%rax		/* pt_regs->orig_ax */
 
 	PUSH_AND_CLEAR_REGS rax=$-ENOSYS

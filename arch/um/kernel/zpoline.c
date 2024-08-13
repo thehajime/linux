@@ -247,30 +247,22 @@ static int setup_zpoline_trampoline(void)
 	__zpoline_start[NR_syscalls + 0x0b] = 0xff;
 	__zpoline_start[NR_syscalls + 0x0c] = 0xe3;
 #else
-	// XXX: musl vfork use rdx instead of rcx
-	// 48 89 d1                mov    %rdx,%rcx
-	__zpoline_start[NR_syscalls + 0x00] = 0x48;
-	__zpoline_start[NR_syscalls + 0x01] = 0x89;
-	__zpoline_start[NR_syscalls + 0x02] = 0xd1;
-
 	// 49 bb [64-bit addr (8-byte)]    movabs [64-bit addr (8-byte)],%r11
-	__zpoline_start[NR_syscalls + 0x03] = 0x49;
-	__zpoline_start[NR_syscalls + 0x04] = 0xbb;
-	__zpoline_start[NR_syscalls + 0x05] = ((uint64_t) __kernel_vsyscall >> (8 * 0)) & 0xff;
-	__zpoline_start[NR_syscalls + 0x06] = ((uint64_t) __kernel_vsyscall >> (8 * 1)) & 0xff;
-	__zpoline_start[NR_syscalls + 0x07] = ((uint64_t) __kernel_vsyscall >> (8 * 2)) & 0xff;
-	__zpoline_start[NR_syscalls + 0x08] = ((uint64_t) __kernel_vsyscall >> (8 * 3)) & 0xff;
-	__zpoline_start[NR_syscalls + 0x09] = ((uint64_t) __kernel_vsyscall >> (8 * 4)) & 0xff;
-	__zpoline_start[NR_syscalls + 0x0a] = ((uint64_t) __kernel_vsyscall >> (8 * 5)) & 0xff;
-	__zpoline_start[NR_syscalls + 0x0b] = ((uint64_t) __kernel_vsyscall >> (8 * 6)) & 0xff;
-	__zpoline_start[NR_syscalls + 0x0c] = ((uint64_t) __kernel_vsyscall >> (8 * 7)) & 0xff;
+	__zpoline_start[NR_syscalls + 0x00] = 0x49;
+	__zpoline_start[NR_syscalls + 0x01] = 0xbb;
+	__zpoline_start[NR_syscalls + 0x02] = ((uint64_t) __kernel_vsyscall >> (8 * 0)) & 0xff;
+	__zpoline_start[NR_syscalls + 0x03] = ((uint64_t) __kernel_vsyscall >> (8 * 1)) & 0xff;
+	__zpoline_start[NR_syscalls + 0x04] = ((uint64_t) __kernel_vsyscall >> (8 * 2)) & 0xff;
+	__zpoline_start[NR_syscalls + 0x05] = ((uint64_t) __kernel_vsyscall >> (8 * 3)) & 0xff;
+	__zpoline_start[NR_syscalls + 0x06] = ((uint64_t) __kernel_vsyscall >> (8 * 4)) & 0xff;
+	__zpoline_start[NR_syscalls + 0x07] = ((uint64_t) __kernel_vsyscall >> (8 * 5)) & 0xff;
+	__zpoline_start[NR_syscalls + 0x08] = ((uint64_t) __kernel_vsyscall >> (8 * 6)) & 0xff;
+	__zpoline_start[NR_syscalls + 0x09] = ((uint64_t) __kernel_vsyscall >> (8 * 7)) & 0xff;
 
 	// 41 ff e3                jmp    *%r11
-	__zpoline_start[NR_syscalls + 0x0d] = 0x41;
-	__zpoline_start[NR_syscalls + 0x0e] = 0xff;
-	__zpoline_start[NR_syscalls + 0x0f] = 0xe3;
-
-
+	__zpoline_start[NR_syscalls + 0x0a] = 0x41;
+	__zpoline_start[NR_syscalls + 0x0b] = 0xff;
+	__zpoline_start[NR_syscalls + 0x0c] = 0xe3;
 #endif
 
 	os_protect_memory(0, 0x1000, 1, 1, 1);
