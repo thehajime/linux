@@ -16,6 +16,7 @@
 static unsigned long exec_regs[MAX_REG_NR];
 static unsigned long exec_fp_regs[FP_SIZE];
 
+#ifdef CONFIG_MMU
 int init_pid_registers(int pid)
 {
 	int err;
@@ -28,6 +29,7 @@ int init_pid_registers(int pid)
 	get_fp_registers(pid, exec_fp_regs);
 	return 0;
 }
+#endif
 
 void get_safe_registers(unsigned long *regs, unsigned long *fp_regs)
 {

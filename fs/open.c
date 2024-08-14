@@ -1404,6 +1404,12 @@ static long do_sys_openat2(int dfd, const char __user *filename,
 	if (fd)
 		return fd;
 
+#ifndef CONFIG_MMU
+	// rkj: only occurring in !CONFIG_MMU
+	if (filename == NULL)
+		return -EINVAL;
+#endif
+
 	tmp = getname(filename);
 	if (IS_ERR(tmp))
 		return PTR_ERR(tmp);

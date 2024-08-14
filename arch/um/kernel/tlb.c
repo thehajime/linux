@@ -15,6 +15,8 @@
 #include <skas.h>
 #include <kern_util.h>
 
+#ifdef CONFIG_MMU
+
 struct host_vm_change {
 	struct host_vm_op {
 		enum { NONE, MMAP, MUNMAP, MPROTECT } type;
@@ -59,6 +61,7 @@ static void report_enomem(void)
 			"This can happen due to a memory limitation or "
 			"vm.max_map_count has been reached.\n");
 }
+
 
 static int do_ops(struct host_vm_change *hvc, int end,
 		  int finished)
@@ -597,3 +600,12 @@ void force_flush_all(void)
 		fix_range(mm, vma->vm_start, vma->vm_end, 1);
 	mmap_read_unlock(mm);
 }
+#else
+void flush_tlb_kernel_vm(void)
+{
+}
+
+void force_flush_all(void)
+{
+}
+#endif /* CONFIG_MMU */

@@ -12,6 +12,8 @@
 #define VDSO_PRELINK 0xffffffffff700000
 #include "vdso-layout.lds.S"
 
+ENTRY(__kernel_vsyscall);
+
 /*
  * This controls what userland symbols we export from the vDSO.
  */

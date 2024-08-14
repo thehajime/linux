@@ -96,6 +96,25 @@ int get_current_pid(void)
 	return task_pid_nr(current);
 }
 
+#ifndef CONFIG_MMU
+extern void __kernel_vsyscall(void);
+#endif
+
+static void setup_seccomp(void)
+{
+	static bool is_first = true;
+	int save_kmalloc_ok;
+
+	if (!is_first)
+		return;
+
+	save_kmalloc_ok = kmalloc_ok;
+	kmalloc_ok = 0;
+//	os_setup_seccomp();
+	kmalloc_ok = save_kmalloc_ok;
+	is_first = false;
+}
+
 /*
  * This is called magically, by its address being stuffed in a jmp_buf
  * and being longjmp-d to.
@@ -116,6 +135,15 @@ void new_thread_handler(void)
 	 * callback returns only if the kernel thread execs a process
 	 */
 	fn(arg);
+#ifndef CONFIG_MMU
+	arch_switch_to(current);
+
+	/* Handle any immediate reschedules or signals */
+	interrupt_end();
+
+	/* Setup seccomp as late as possible (before running untrusted code). */
+	setup_seccomp();
+#endif
 	userspace(&current->thread.regs.regs, current_thread_info()->aux_fp_regs);
 }
 
@@ -124,7 +152,8 @@ static void fork_handler(void)
 {
 	force_flush_all();
 
-	schedule_tail(current->thread.prev_sched);
+	if (current->thread.prev_sched != NULL)
+		schedule_tail(current->thread.prev_sched);
 
 	/*
 	 * XXX: if interrupt_end() calls schedule, this call to
@@ -135,6 +164,22 @@ static void fork_handler(void)
 
 	current->thread.prev_sched = NULL;
 
+#ifndef CONFIG_MMU
+	interrupt_end();
+
+	/*
+	 * This fork can only come from libc's vfork, which
+	 * does this:
+	 *	popq %%rdx;
+	 *	call *%0; // vsyscall
+	 *	pushq %%rdx;
+	 * %rdx stores the return address which is stored
+	 * at pt_regs[HOST_IP] at the moment. We still
+	 * need to pop the pushed address by "call" though,
+	 * so this is what this next line does.
+	 */
+	current->thread.regs.regs.gp[REGS_SP_INDEX] += 8;
+#endif
 	userspace(&current->thread.regs.regs, current_thread_info()->aux_fp_regs);
 }
 

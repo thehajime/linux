@@ -580,6 +580,10 @@ static struct task_struct *find_alive_thread(struct task_struct *p)
 	return NULL;
 }
 
+#ifndef CONFIG_MMU
+extern void machine_halt(void);
+#endif
+
 static struct task_struct *find_child_reaper(struct task_struct *father,
 						struct list_head *dead)
 	__releases(&tasklist_lock)
@@ -842,8 +846,12 @@ void __noreturn do_exit(long code)
 		 * immediately to get a useable coredump.
 		 */
 		if (unlikely(is_global_init(tsk)))
+#ifdef CONFIG_MMU
 			panic("Attempted to kill init! exitcode=0x%08x\n",
 				tsk->signal->group_exit_code ?: (int)code);
+#else
+		machine_halt();
+#endif
 
 #ifdef CONFIG_POSIX_TIMERS
 		hrtimer_cancel(&tsk->signal->real_timer);

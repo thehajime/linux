@@ -9,11 +9,20 @@ else
 	BITS := 64
 endif
 
-obj-y = bugs_$(BITS).o delay.o fault.o ldt.o \
-	ptrace_$(BITS).o ptrace_user.o setjmp_$(BITS).o signal.o \
+obj-y = bugs_$(BITS).o delay.o fault.o \
+	ptrace_$(BITS).o setjmp_$(BITS).o signal.o \
 	stub_$(BITS).o stub_segv.o \
 	sys_call_table_$(BITS).o sysrq_$(BITS).o tls_$(BITS).o \
-	mem_$(BITS).o subarch.o os-Linux/
+	mem_$(BITS).o subarch.o os-Linux/ entry_$(BITS).o zpoline.o
+obj-$(CONFIG_MMU) += ldt.o ptrace_user.o
+
+inat_tables_script = $(srctree)/arch/x86/tools/gen-insn-attr-x86.awk
+inat_tables_maps = $(srctree)/arch/x86/lib/x86-opcode-map.txt
+quiet_cmd_inat_tables = GEN     $@
+      cmd_inat_tables = $(AWK) -f $(inat_tables_script) $(inat_tables_maps) > $@
+
+$(obj)/inat-tables.c: $(inat_tables_script) $(inat_tables_maps)
+	$(call cmd,inat_tables)
 
 ifeq ($(CONFIG_X86_32),y)
 
@@ -27,10 +36,11 @@ subarch-y += ../kernel/sys_ia32.o
 
 else
 
-obj-y += syscalls_64.o vdso/
+obj-y += syscalls_64.o do_syscall_64.o vdso/
 
 subarch-y = ../lib/csum-partial_64.o ../lib/memcpy_64.o \
-	../lib/memmove_64.o ../lib/memset_64.o
+	../lib/memmove_64.o ../lib/memset_64.o \
+	../lib/insn.o ../lib/inat.o
 subarch-$(CONFIG_PREEMPTION) += ../entry/thunk_64.o
 
 endif

@@ -36,7 +36,19 @@ static __always_inline void cpu_relax(void)
 		rep_nop();
 }
 
+#define task_top_of_stack(task) \
+({									\
+	unsigned long __ptr = (unsigned long)task->stack;	\
+	__ptr += THREAD_SIZE;			\
+	__ptr;					\
+})
+
 #define task_pt_regs(t) (&(t)->thread.regs)
+
+#ifndef CONFIG_MMU
+extern long current_top_of_stack;
+extern long current_ptregs;
+#endif
 
 #include <asm/processor-generic.h>
 

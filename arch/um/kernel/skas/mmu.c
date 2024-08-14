@@ -15,6 +15,10 @@
 #include <os.h>
 #include <skas.h>
 
+#ifndef CONFIG_MMU
+int init_new_context(struct task_struct *task, struct mm_struct *mm) {return 0;}
+void destroy_context(struct mm_struct *mm) {}
+#else
 int init_new_context(struct task_struct *task, struct mm_struct *mm)
 {
  	struct mm_context *from_mm = NULL;
@@ -78,3 +82,4 @@ void destroy_context(struct mm_struct *mm)
 	free_pages(mmu->id.stack, ilog2(STUB_DATA_PAGES));
 	free_ldt(mmu);
 }
+#endif

@@ -140,6 +140,7 @@ bad_wait:
 
 extern unsigned long current_stub_stack(void);
 
+#ifdef CONFIG_MMU
 static void get_skas_faultinfo(int pid, struct faultinfo *fi, unsigned long *aux_fp_regs)
 {
 	int err;
@@ -185,9 +186,11 @@ static void handle_trap(int pid, struct uml_pt_regs *regs)
 
 	handle_syscall(regs);
 }
+#endif
 
 extern char __syscall_stub_start[];
 
+#ifdef CONFIG_MMU
 /**
  * userspace_tramp() - userspace trampoline
  * @stack:	pointer to the new userspace stack page
@@ -567,6 +570,7 @@ int copy_context_skas0(unsigned long new_stack, int pid)
 	os_kill_ptraced_process(pid, 1);
 	return err;
 }
+#endif
 
 void new_thread(void *stack, jmp_buf *buf, void (*handler)(void))
 {

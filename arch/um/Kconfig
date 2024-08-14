@@ -35,7 +35,7 @@ config UML
 
 config MMU
 	bool
-	default y
+	default n
 
 config UML_DMA_EMULATION
 	bool
@@ -70,9 +70,13 @@ config STACKTRACE_SUPPORT
 	default y
 	select STACKTRACE
 
+config FREEZER
+	bool
+	default n
+
 config GENERIC_CALIBRATE_DELAY
 	bool
-	default y
+	default n
 
 config HZ
 	int
@@ -130,6 +134,7 @@ config LD_SCRIPT_DYN_RPATH
 
 config HOSTFS
 	tristate "Host filesystem"
+	default n
 	help
 	  While the User-Mode Linux port uses its own root file system for
 	  booting and normal file access, this module lets the UML user
@@ -152,7 +157,7 @@ config HOSTFS
 config MCONSOLE
 	bool "Management console"
 	depends on PROC_FS
-	default y
+	default n
 	help
 	  The user mode linux management console is a low-level interface to
 	  the kernel, somewhat like the i386 SysRq interface.  Since there is
@@ -186,9 +191,13 @@ config MAGIC_SYSRQ
 	  The keys are documented in <file:Documentation/admin-guide/sysrq.rst>. Don't say Y
 	  unless you really know what this hack does.
 
+config ARCH_FORCE_MAX_ORDER
+	default "10" if MMU
+	default "16" if MMU
+
 config KERNEL_STACK_ORDER
 	int "Kernel stack size order"
-	default 2 if 64BIT
+	default 3 if 64BIT
 	range 2 10 if 64BIT
 	default 1 if !64BIT
 	help

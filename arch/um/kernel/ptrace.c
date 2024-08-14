@@ -35,6 +35,7 @@ void ptrace_disable(struct task_struct *child)
 	user_disable_single_step(child);
 }
 
+#ifdef CONFIG_MMU
 long arch_ptrace(struct task_struct *child, long request,
 		 unsigned long addr, unsigned long data)
 {
@@ -105,6 +106,13 @@ long arch_ptrace(struct task_struct *child, long request,
 
 	return ret;
 }
+#else
+long arch_ptrace(struct task_struct *child, long request,
+		 unsigned long addr, unsigned long data)
+{
+	return -EINVAL;
+}
+#endif
 
 static void send_sigtrap(struct uml_pt_regs *regs, int error_code)
 {
@@ -132,6 +140,7 @@ int syscall_trace_enter(struct pt_regs *regs)
 	return ptrace_report_syscall_entry(regs);
 }
 
+#ifdef CONFIG_MMU
 void syscall_trace_leave(struct pt_regs *regs)
 {
 	int ptraced = current->ptrace;
@@ -150,3 +159,4 @@ void syscall_trace_leave(struct pt_regs *regs)
 	if (ptraced & PT_PTRACED)
 		set_thread_flag(TIF_SIGPENDING);
 }
+#endif

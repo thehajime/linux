@@ -79,7 +79,7 @@ vmlinux_link()
 		wl=-Wl,
 		ld="${CC}"
 		ldflags="${CFLAGS_vmlinux}"
-		ldlibs="-lutil -lrt -lpthread"
+		ldlibs="-lutil -lrt -lpthread -lseccomp"
 	else
 		wl=
 		ld="${LD}"

@@ -15,6 +15,13 @@
 #include <kern_util.h>
 #include <os.h>
 #include <string.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <asm/prctl.h> /* XXX This should get the constants from libc */
+#include <linux/kconfig.h>
 
 static timer_t event_high_res_timer = 0;
 
@@ -85,11 +92,26 @@ void os_timer_disable(void)
 	timer_settime(event_high_res_timer, 0, &its, NULL);
 }
 
+extern long long host_fs;
+
 long long os_nsecs(void)
 {
 	struct timespec ts;
+	unsigned long long addr;
 
-	clock_gettime(CLOCK_MONOTONIC,&ts);
+	/*
+	 * We need to restore the original host FS segment value before making
+	 * some calls, like arch_prctl.  Definitely need to investigate this
+	 * further. Also, it might be probably safer to set the host FS for
+	 * every (virtual) system call.
+	 */
+	os_arch_prctl(0, ARCH_GET_FS, (void *)&addr);
+	if (host_fs != -1)
+		os_arch_prctl(0, ARCH_SET_FS, host_fs);
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+
+	os_arch_prctl(0, ARCH_SET_FS, addr);
 	return timespec_to_ns(&ts);
 }
 

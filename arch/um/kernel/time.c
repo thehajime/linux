@@ -720,7 +720,9 @@ static irqreturn_t um_timer(int irq, void *dev)
 	if (get_current()->mm != NULL)
 	{
         /* userspace - relay signal, results in correct userspace timers */
+#ifdef CONFIG_MMU
 		os_alarm_process(get_current()->mm->context.id.u.pid);
+#endif
 	}
 
 	(*timer_clockevent.event_handler)(&timer_clockevent);
@@ -803,6 +805,13 @@ void __init time_init(void)
 	timer_set_signal_handler();
 	late_time_init = um_timer_setup;
 }
+
+#ifndef CONFIG_GENERIC_CALIBRATE_DELAY
+void calibrate_delay(void)
+{
+	pr_info("Calibrating delay loop (skipped)\n");
+}
+#endif
 
 #ifdef CONFIG_UML_TIME_TRAVEL_SUPPORT
 unsigned long calibrate_delay_is_known(void)

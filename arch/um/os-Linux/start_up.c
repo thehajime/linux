@@ -285,6 +285,7 @@ void __init os_early_checks(void)
 	/* Print out the core dump limits early */
 	check_coredump_limit();
 
+#ifdef CONFIG_MMU
 	check_ptrace();
 
 	/* Need to check this early because mmapping happens before the
@@ -296,6 +297,7 @@ void __init os_early_checks(void)
 	if (init_pid_registers(pid))
 		fatal("Failed to initialize default registers");
 	stop_ptraced_child(pid, 1);
+#endif
 }
 
 int __init parse_iomem(char *str, int *add)

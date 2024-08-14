@@ -15,6 +15,14 @@ VERSION {
 
 SECTIONS
 {
+  .zpoline.segment : {
+    __zpoline_start = 0x00000000;
+    *(.zpoline.init)
+    . = 0x00000000 + 0x00001000;
+    __zpoline_end = .;
+  }
+  PROVIDE_HIDDEN(__ehdr_start = 0x60000000);
+
   /* This must contain the right address - not quite the default ELF one.*/
   PROVIDE (__executable_start = START);
   /* Static binaries stick stuff here, like the sigreturn trampoline,

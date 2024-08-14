@@ -1806,3 +1806,8 @@ static int __meminit init_admin_reserve(void)
 	return 0;
 }
 subsys_initcall(init_admin_reserve);
+
+SYSCALL_DEFINE3(madvise, unsigned long, start, size_t, len_in, int, behavior)
+{
+	return 0;
+}

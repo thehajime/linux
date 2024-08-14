@@ -4839,8 +4839,10 @@ void sched_cgroup_fork(struct task_struct *p, struct kernel_clone_args *kargs)
 	 * so use __set_task_cpu().
 	 */
 	__set_task_cpu(p, smp_processor_id());
+#ifdef CONFIG_MMU
 	if (p->sched_class->task_fork)
 		p->sched_class->task_fork(p);
+#endif
 	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
 }
 

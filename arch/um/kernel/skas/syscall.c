@@ -13,6 +13,7 @@
 #include <linux/time-internal.h>
 #include <asm/unistd.h>
 
+#ifdef CONFIG_MMU
 void handle_syscall(struct uml_pt_regs *r)
 {
 	struct pt_regs *regs = container_of(r, struct pt_regs, regs);
@@ -48,3 +49,4 @@ void handle_syscall(struct uml_pt_regs *r)
 out:
 	syscall_trace_leave(regs);
 }
+#endif
