@@ -164,7 +164,7 @@ int arch_finalize_exec(struct elfhdr *_ehdr, bool has_interp,
 	if (ptr <= (void *)&__zpoline_start[0] + 0x1000 + 0x0100)
 		return - EINVAL;
 
-	if (down_write_killable(&mm->mmap_sem))
+	if (down_write_killable(&mm->mmap_lock))
 		return -EINTR;
 
 
@@ -192,7 +192,7 @@ int arch_finalize_exec(struct elfhdr *_ehdr, bool has_interp,
 	}
 
 	printk(KERN_DEBUG "zpoline: rewritten %d syscalls\n", count);
-	up_write(&mm->mmap_sem);
+	up_write(&mm->mmap_lock);
 	return err;
 }
 

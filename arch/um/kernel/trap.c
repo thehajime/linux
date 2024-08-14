@@ -24,13 +24,13 @@
 int handle_page_fault(unsigned long address, unsigned long ip,
 		      int is_write, int is_user, int *code_out)
 {
+#ifdef CONFIG_MMU
 	struct mm_struct *mm = current->mm;
 	struct vm_area_struct *vma;
 	pmd_t *pmd;
 	pte_t *pte;
 	int err = -EFAULT;
 	unsigned int flags = FAULT_FLAG_DEFAULT;
-
 	*code_out = SEGV_MAPERR;
 
 	/*
@@ -128,6 +128,7 @@ out_of_memory:
 	if (!is_user)
 		goto out_nosemaphore;
 	pagefault_out_of_memory();
+#endif
 	return 0;
 }
 

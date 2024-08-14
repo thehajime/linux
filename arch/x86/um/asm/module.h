@@ -18,6 +18,7 @@ struct mod_arch_specific
 #define Elf_Shdr Elf64_Shdr
 #define Elf_Sym Elf64_Sym
 #define Elf_Ehdr Elf64_Ehdr
+#define Elf_Dyn Elf64_Dyn
 
 #endif
 

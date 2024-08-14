@@ -2563,9 +2563,7 @@ __latent_entropy struct task_struct *copy_process(
 	 * Copy seccomp details explicitly here, in case they were changed
 	 * before holding sighand lock.
 	 */
-#ifdef CONFIG_MMU
 	copy_seccomp(p);
-#endif
 
 	init_task_pid_links(p);
 	if (likely(p->pid)) {
@@ -2823,9 +2821,6 @@ pid_t kernel_clone(struct kernel_clone_args *args)
 	unsigned char *stack_copy;
 	struct uml_pt_regs *regs = &current->thread.regs.regs;
 
-	long sp1, sp2, sp3, sp4;
-	long task_test;
-
 	if (clone_flags & CLONE_VFORK) {
 		p->vfork_done = &vfork;
 		init_completion(&vfork);
@@ -2845,7 +2840,7 @@ pid_t kernel_clone(struct kernel_clone_args *args)
 					GFP_KERNEL);
 		if (!stack_copy)
 			return -ENOMEM;
-		memcpy(stack_copy, regs->gp[HOST_SP],
+		memcpy(stack_copy, &regs->gp[HOST_SP],
 					PAGE_SIZE << THREAD_SIZE_ORDER);
 #endif
 	}
@@ -2875,7 +2870,7 @@ pid_t kernel_clone(struct kernel_clone_args *args)
 		 */
 		clear_tsk_thread_flag(current, TIF_SIGPENDING);
 
-		memcpy(regs->gp[HOST_SP], stack_copy,
+		memcpy(&regs->gp[HOST_SP], stack_copy,
 			PAGE_SIZE << THREAD_SIZE_ORDER);
 #endif
 	}

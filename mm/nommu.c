@@ -321,6 +321,12 @@ void vm_unmap_aliases(void)
 }
 EXPORT_SYMBOL_GPL(vm_unmap_aliases);
 
+struct vm_struct *find_vm_area(const void *addr)
+{
+	BUG();
+}
+EXPORT_SYMBOL_GPL(find_vm_area);
+
 void free_vm_area(struct vm_struct *area)
 {
 	BUG();

@@ -160,3 +160,9 @@ void syscall_trace_leave(struct pt_regs *regs)
 		set_thread_flag(TIF_SIGPENDING);
 }
 #endif
+
+const struct user_regset_view *task_user_regset_view(struct task_struct *task)
+{
+	BUG();
+	return 0;
+}

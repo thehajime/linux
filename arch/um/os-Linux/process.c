@@ -372,3 +372,14 @@ void os_setup_seccomp(void)
 
 	seccomp_release(ctx);
 }
+
+#ifndef CONFIG_MMU
+
+#include <unistd.h>
+#include <sys/syscall.h>   /* For SYS_xxx definitions */
+
+int os_arch_prctl(int pid, int option, unsigned long *arg2)
+{
+	return syscall(158, option, arg2);
+}
+#endif

@@ -84,6 +84,7 @@ void __init mem_init(void)
  */
 static void __init one_page_table_init(pmd_t *pmd)
 {
+#ifdef CONFIG_MMU
 	if (pmd_none(*pmd)) {
 		pte_t *pte = (pte_t *) memblock_alloc_low(PAGE_SIZE,
 							  PAGE_SIZE);
@@ -95,11 +96,13 @@ static void __init one_page_table_init(pmd_t *pmd)
 					   (unsigned long) __pa(pte)));
 		BUG_ON(pte != pte_offset_kernel(pmd, 0));
 	}
+#endif
 }
 
 static void __init one_md_table_init(pud_t *pud)
 {
 #ifdef CONFIG_3_LEVEL_PGTABLES
+#ifdef CONFIG_MMU
 	pmd_t *pmd_table = (pmd_t *) memblock_alloc_low(PAGE_SIZE, PAGE_SIZE);
 	if (!pmd_table)
 		panic("%s: Failed to allocate %lu bytes align=%lx\n",
@@ -108,11 +111,13 @@ static void __init one_md_table_init(pud_t *pud)
 	set_pud(pud, __pud(_KERNPG_TABLE + (unsigned long) __pa(pmd_table)));
 	BUG_ON(pmd_table != pmd_offset(pud, 0));
 #endif
+#endif
 }
 
 static void __init fixrange_init(unsigned long start, unsigned long end,
 				 pgd_t *pgd_base)
 {
+#ifdef CONFIG_MMU
 	pgd_t *pgd;
 	p4d_t *p4d;
 	pud_t *pud;
@@ -137,6 +142,7 @@ static void __init fixrange_init(unsigned long start, unsigned long end,
 		}
 		j = 0;
 	}
+#endif
 }
 
 static void __init fixaddr_user_init( void)
@@ -237,4 +243,6 @@ static const pgprot_t protection_map[16] = {
 	[VM_SHARED | VM_EXEC | VM_WRITE]		= PAGE_SHARED,
 	[VM_SHARED | VM_EXEC | VM_WRITE | VM_READ]	= PAGE_SHARED
 };
+#ifdef CONFIG_MMU
 DECLARE_VM_GET_PAGE_PROT
+#endif

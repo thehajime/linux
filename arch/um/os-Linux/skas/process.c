@@ -189,6 +189,9 @@ static void handle_trap(int pid, struct uml_pt_regs *regs)
 #endif
 
 extern char __syscall_stub_start[];
+int userspace_pid[NR_CPUS];
+int kill_userspace_mm[NR_CPUS];
+
 
 #ifdef CONFIG_MMU
 /**
@@ -254,9 +257,6 @@ static int userspace_tramp(void *stack)
 	kill(os_getpid(), SIGSTOP);
 	return 0;
 }
-
-int userspace_pid[NR_CPUS];
-int kill_userspace_mm[NR_CPUS];
 
 /**
  * start_userspace() - prepare a new userspace process

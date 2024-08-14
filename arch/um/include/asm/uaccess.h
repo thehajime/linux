@@ -38,8 +38,8 @@ static inline int __access_ok(const void __user *ptr, unsigned long size);
 
 static inline int __access_ok(const void __user *ptr, unsigned long size)
 {
-	unsigned long addr = (unsigned long)ptr;
 #ifdef CONFIG_MMU
+	unsigned long addr = (unsigned long)ptr;
 	return __addr_range_nowrap(addr, size) &&
 		(__under_task_size(addr, size) ||
 		 __access_ok_vsyscall(addr, size));

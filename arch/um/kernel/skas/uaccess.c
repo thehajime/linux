@@ -136,11 +136,23 @@ static long buffer_op(unsigned long addr, int len, int is_write,
 	return remain;
 }
 #else
+pte_t *virt_to_pte(struct mm_struct *mm, unsigned long addr)
+{
+	return 0;
+}
+
 static long buffer_op(unsigned long addr, int len, int is_write,
 		      int (*op)(unsigned long, int, void *), void *arg)
 {
 	return 0;
 }
+
+static pte_t *maybe_map(unsigned long virt, int is_write)
+{
+	pte_t *pte = virt_to_pte(current->mm, virt);
+	return pte;
+}
+
 #endif
 
 static int copy_chunk_from_user(unsigned long from, int len, void *arg)

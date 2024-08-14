@@ -10,7 +10,6 @@
 #include <sysdep/ptrace.h>
 #include <sysdep/ptrace_user.h>
 #include <sysdep/syscalls.h>
-#include <shared/timer-internal.h>
 #include <asm/unistd.h>
 #include <os.h>
 
