@@ -665,7 +665,7 @@ static int create_elf_fdpic_tables(struct linux_binprm *bprm,
 	NEW_AUX_ENT(AT_EGID,	(elf_addr_t) from_kgid_munged(cred->user_ns, cred->egid));
 	NEW_AUX_ENT(AT_SECURE,	bprm->secureexec);
 	/* XXX ? */
-	bprm->exec += exec_params->load_addr;
+//	bprm->exec += exec_params->load_addr;
 	NEW_AUX_ENT(AT_EXECFN,	bprm->exec);
 	if (k_platform)
 		NEW_AUX_ENT(AT_PLATFORM,

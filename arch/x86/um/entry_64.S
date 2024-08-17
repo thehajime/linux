@@ -88,7 +88,7 @@ ENTRY(userspace)
 
 	movq	current_ptregs, %rsp
 
-//	POP_REGS skip_r11rcx=1
+	POP_REGS
 
 	addq	$8, %rsp	/* skip orig_ax */
 	popq	%r11	/* pt_regs->ip */

@@ -144,7 +144,13 @@ pte_t *virt_to_pte(struct mm_struct *mm, unsigned long addr)
 static long buffer_op(unsigned long addr, int len, int is_write,
 		      int (*op)(unsigned long, int, void *), void *arg)
 {
+	int n;
+	n = (*op)(addr, len, arg);
+
+	if (n != 0)
+		return -1;
 	return 0;
+
 }
 
 static pte_t *maybe_map(unsigned long virt, int is_write)
@@ -233,7 +239,8 @@ static int strnlen_chunk(unsigned long str, int len, void *arg)
 	n = strnlen((void *) str, len);
 	*len_ptr += n;
 
-	if (n < len)
+	/* XXX: really ? */
+	if (n > len)
 		return 1;
 	return 0;
 }

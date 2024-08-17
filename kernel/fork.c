@@ -271,6 +271,7 @@ err:
 
 static int alloc_thread_stack_node(struct task_struct *tsk, int node)
 {
+#ifdef CONFIG_MMU
 	struct vm_struct *vm;
 	void *stack;
 	int i;
@@ -328,6 +329,16 @@ static int alloc_thread_stack_node(struct task_struct *tsk, int node)
 	stack = kasan_reset_tag(stack);
 	tsk->stack = stack;
 	return 0;
+#else
+	struct page *page = alloc_pages_node(node, THREADINFO_GFP,
+					     THREAD_SIZE_ORDER);
+
+	if (likely(page)) {
+		tsk->stack = kasan_reset_tag(page_address(page));
+		return 0;
+	}
+	return -ENOMEM;
+#endif
 }
 
 static void free_thread_stack(struct task_struct *tsk)
