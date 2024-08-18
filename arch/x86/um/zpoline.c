@@ -174,6 +174,7 @@ int arch_finalize_exec(struct elfhdr *_ehdr, bool has_interp,
 
 		insn_get_opcode(&insn);
 
+//		printk(KERN_INFO "zpoline: %lx: looking for\n", (unsigned long)ptr);
 		switch (insn.opcode.bytes[0]) {
 		case 0xf:
 			switch (insn.opcode.bytes[1]) {
@@ -189,6 +190,11 @@ int arch_finalize_exec(struct elfhdr *_ehdr, bool has_interp,
 		}
 
 		ptr += insn.length;
+		if (insn.length == 0) {
+			//printk(KERN_INFO "zpoline: %lx: length zero with byte %lx. skip ?\n",
+			//       (unsigned long)ptr, insn.opcode.bytes[0]);
+			ptr += 1;
+		}
 	}
 
 	printk(KERN_DEBUG "zpoline: rewritten %d syscalls\n", count);
@@ -200,6 +206,8 @@ static int setup_zpoline_trampoline(void)
 {
 	extern void asm_syscall_hook(void);
 	int i;
+
+	/* FIXME: allocate tramploine area at runtime (not in a linker script)? */
 
 	for (i = 0; i < NR_syscalls; i++)
 		__zpoline_start[i] = 0x90;

@@ -61,7 +61,7 @@ KBUILD_CFLAGS += $(CFLAGS) $(CFLAGS-y) -D__arch_um__ \
 	$(ARCH_INCLUDE) $(MODE_INCLUDE) -Dvmap=kernel_vmap	\
 	-Dlongjmp=kernel_longjmp -Dsetjmp=kernel_setjmp \
 	-Din6addr_loopback=kernel_in6addr_loopback \
-	-Din6addr_any=kernel_in6addr_any -Dstrrchr=kernel_strrchr
+	-Din6addr_any=kernel_in6addr_any -Dstrrchr=kernel_strrchr -g -O0
 
 KBUILD_RUSTFLAGS += -Crelocation-model=pie
 

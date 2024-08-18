@@ -113,7 +113,7 @@ static void __exit rng_cleanup(void)
 	os_close_file(random_fd);
 }
 
-module_init (rng_init);
+//module_init (rng_init);
 module_exit (rng_cleanup);
 __uml_exitcall(cleanup);
 

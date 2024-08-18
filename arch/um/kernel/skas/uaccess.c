@@ -200,7 +200,8 @@ static int strncpy_chunk_from_user(unsigned long from, int len, void *arg)
 	n = strnlen(to, len);
 	*to_ptr += n;
 
-	if (n < len)
+	/* XXX: really ? */
+	if (n > len)
 	        return 1;
 	return 0;
 }
