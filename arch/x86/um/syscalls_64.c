@@ -36,26 +36,19 @@ long arch_prctl(struct task_struct *task, int option,
 #ifdef CONFIG_MMU
 		current->thread.regs.regs.gp[FS_BASE / sizeof(unsigned long)] =
 			(unsigned long) arg2;
-		ret = 0;
 #else
-		if (host_fs == -1) {
-			os_arch_prctl(0, ARCH_GET_FS, (void *)&host_fs);
-		}
-		ret = os_arch_prctl(0, ARCH_SET_FS, (void *)arg2);
 		current->thread.regs.regs.gp[HOST_FS] = (unsigned long) arg2;
-		return ret;
+		ret = 0;
 #endif
 		break;
 	case ARCH_SET_GS:
 #ifdef CONFIG_MMU
 		current->thread.regs.regs.gp[GS_BASE / sizeof(unsigned long)] =
 			(unsigned long) arg2;
-		ret = 0;
 #else
-		ret = os_arch_prctl(0, ARCH_SET_GS, (void *)arg2);
 		current->thread.regs.regs.gp[HOST_GS] = (unsigned long) arg2;
-		return ret;
 #endif
+		ret = 0;
 		break;
 	case ARCH_GET_FS:
 		ret = put_user(current->thread.regs.regs.gp[FS_BASE / sizeof(unsigned long)], arg2);
@@ -65,7 +58,12 @@ long arch_prctl(struct task_struct *task, int option,
 		break;
 	}
 
+#ifndef CONFIG_MMU
+	if (host_fs == -1) {
+		os_arch_prctl(0, ARCH_GET_FS, (void *)&host_fs);
+	}
 	ret = os_arch_prctl(0, option, arg2);
+#endif
 	return ret;
 }
 
@@ -84,13 +82,14 @@ void arch_switch_to(struct task_struct *to)
 	current_top_of_stack = task_top_of_stack(to);
 	current_ptregs = task_pt_regs(to);
 
-	if (to->mm == NULL)
+	if ((to->thread.regs.regs.gp[FS_BASE / sizeof(unsigned long)] == NULL)
+	    || (to->mm == NULL))
 		return;
 
 	/* XXX: FIXME */
 	// rkj: this changes the FS on every context switch
-//	arch_prctl(to, ARCH_SET_FS,
-//		   (void __user *) to->thread.regs.regs.gp[FS_BASE / sizeof(unsigned long)]);
+	arch_prctl(to, ARCH_SET_FS,
+		   (void __user *) to->thread.regs.regs.gp[FS_BASE / sizeof(unsigned long)]);
 #endif
 }
 

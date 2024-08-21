@@ -24,6 +24,7 @@
 #include "mconsole_kern.h"
 #include <net_kern.h>
 #include <net_user.h>
+#include <shared/os.h>
 
 #define DRIVER_NAME "uml-netdev"
 
@@ -730,6 +731,8 @@ static int uml_inetaddr_event(struct notifier_block *this, unsigned long event,
 	struct uml_net_private *lp;
 	void (*proc)(unsigned char *, unsigned char *, void *);
 	unsigned char addr_buf[4], netmask_buf[4];
+
+	os_arch_prctl(0, 0x1002, (void *)host_fs);
 
 	if (dev->netdev_ops->ndo_open != uml_net_open)
 		return NOTIFY_DONE;

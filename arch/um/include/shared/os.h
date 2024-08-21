@@ -213,6 +213,7 @@ extern int os_drop_memory(void *addr, int length);
 extern int can_drop_memory(void);
 extern int os_mincore(void *addr, unsigned long len);
 extern void os_setup_seccomp(void);
+extern long long host_fs;
 int os_arch_prctl(int, int, unsigned long *);
 
 /* execvp.c */

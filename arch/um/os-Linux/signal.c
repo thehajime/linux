@@ -321,6 +321,8 @@ void unblock_signals(void)
 		signals_enabled = 0;
 		um_trace_signals_off();
 
+//		if (host_fs != -1)
+//			os_arch_prctl(0, 0x1002, (void *)host_fs);
 		/*
 		 * Deal with SIGIO first because the alarm handler might
 		 * schedule, leaving the pending SIGIO stranded until we come
