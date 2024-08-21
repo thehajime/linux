@@ -33,6 +33,8 @@ void (*sig_info[NSIG])(int, struct siginfo *, struct uml_pt_regs *) = {
 static void sig_handler_common(int sig, struct siginfo *si, mcontext_t *mc)
 {
 	struct uml_pt_regs r;
+//	if (host_fs != -1)
+//		os_arch_prctl(0, 0x1002, (void *)host_fs);
 	int save_errno = errno;
 
 	r.is_user = 0;
