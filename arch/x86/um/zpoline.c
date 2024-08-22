@@ -1,17 +1,14 @@
 #include <linux/module.h>
 #include <linux/sched.h>
 #include <asm/unistd.h>
+#include <asm/insn.h>
 #include <os.h>
 
-/* XXX: move those code to x86-64 specifics */
 extern long __kernel_vsyscall(int64_t, int64_t, int64_t, int64_t,
 			      int64_t, int64_t, int64_t);
-extern char __zpoline_start[];
+/* start of trampoline code area */
+static char *__zpoline_start;
 
-void zpoline_panic(void)
-{
-	panic("zpoline");
-}
 
 long zpoline_syscall_hook(int64_t rdi, int64_t rsi,
 				 int64_t rdx, int64_t __rcx __attribute__((unused)),
@@ -145,7 +142,7 @@ void ____asm_impl(void)
 	);
 }
 
-#include <asm/insn.h>
+int arch_finalize_exec(struct elfhdr *, bool, struct elfhdr *);
 int arch_finalize_exec(struct elfhdr *_ehdr, bool has_interp,
 			struct elfhdr *_interp_ehdr)
 {
@@ -205,9 +202,14 @@ int arch_finalize_exec(struct elfhdr *_ehdr, bool has_interp,
 static int setup_zpoline_trampoline(void)
 {
 	extern void asm_syscall_hook(void);
-	int i;
+	int i, ret;
 
-	/* FIXME: allocate tramploine area at runtime (not in a linker script)? */
+	__zpoline_start = 0x0;
+
+	ret = os_map_memory((void *) 0, -1, 0, 0x1000, 1, 1, 1);
+	if (ret) {
+		panic("map failed\n NOTE: /proc/sys/vm/mmap_min_addr should be set 0\n");
+	}
 
 	for (i = 0; i < NR_syscalls; i++)
 		__zpoline_start[i] = 0x90;
