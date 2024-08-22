@@ -23,7 +23,7 @@ UM_GLOBAL_VAR(current_ptregs)
 #define END(x)   .size x, . - x
 
 /*
- * %rcx has the return address (we set it like that in musl).
+ * %rdx has the return address (we set it like that in musl).
  *
  * Registers on entry:
  * rax  system call number
@@ -72,7 +72,7 @@ ENTRY(__kernel_vsyscall)
 	movq	current_ptregs, %rsp
 
 	POP_REGS
-	
+
 	addq	$8, %rsp	/* skip orig_ax */
 	addq	$8, %rsp	/* skip ip */
 	addq	$8, %rsp	/* skip cs */

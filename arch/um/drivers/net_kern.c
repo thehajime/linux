@@ -76,6 +76,7 @@ static int uml_net_rx(struct net_device *dev)
 	struct uml_net_private *lp = netdev_priv(dev);
 	int pkt_len;
 	struct sk_buff *skb;
+	os_arch_prctl(0, 0x1002, (void *)host_fs);
 
 	/* If we can't allocate memory, try again next round. */
 	skb = dev_alloc_skb(lp->max_packet);
@@ -211,6 +212,7 @@ static netdev_tx_t uml_net_start_xmit(struct sk_buff *skb, struct net_device *de
 	unsigned long flags;
 	int len;
 
+	os_arch_prctl(0, 0x1002, (void *)host_fs);
 	netif_stop_queue(dev);
 
 	spin_lock_irqsave(&lp->lock, flags);

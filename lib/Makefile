@@ -430,5 +430,3 @@ endif
 # Some architectures define __NO_FORTIFY if __SANITIZE_ADDRESS__ is undefined.
 # Pass CFLAGS_KASAN to avoid warnings.
 $(foreach x, $(patsubst %.log,%.o,$(TEST_FORTIFY_LOGS)), $(eval KASAN_SANITIZE_$(x) := y))
-
-CFLAGS_iov_iter.o = -g -O0

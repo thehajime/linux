@@ -92,7 +92,6 @@ void arch_switch_to(struct task_struct *to)
 	    || (to->mm == NULL))
 		return;
 
-	/* XXX: FIXME */
 	// rkj: this changes the FS on every context switch
 	arch_prctl(to, ARCH_SET_FS,
 		   (void __user *) to->thread.regs.regs.gp[HOST_FS]);
@@ -142,10 +141,3 @@ SYSCALL_DEFINE6(mmap, unsigned long, addr, unsigned long, len,
 #endif
 	return ksys_mmap_pgoff(addr, len, prot, flags, fd, off >> PAGE_SHIFT);
 }
-#if 0
-SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
-               unsigned long, prot)
-{
-	return 0;
-}
-#endif

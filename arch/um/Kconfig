@@ -70,13 +70,9 @@ config STACKTRACE_SUPPORT
 	default y
 	select STACKTRACE
 
-config FREEZER
-	bool
-	default n
-
 config GENERIC_CALIBRATE_DELAY
 	bool
-	default n
+	default y
 
 config HZ
 	int
@@ -134,7 +130,6 @@ config LD_SCRIPT_DYN_RPATH
 
 config HOSTFS
 	tristate "Host filesystem"
-	default n
 	help
 	  While the User-Mode Linux port uses its own root file system for
 	  booting and normal file access, this module lets the UML user
@@ -157,7 +152,7 @@ config HOSTFS
 config MCONSOLE
 	bool "Management console"
 	depends on PROC_FS
-	default n
+	default y
 	help
 	  The user mode linux management console is a low-level interface to
 	  the kernel, somewhat like the i386 SysRq interface.  Since there is
