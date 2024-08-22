@@ -77,8 +77,6 @@ int generic_console_write(int fd, const char *buf, int n)
 	struct termios save, new;
 	int err;
 
-	os_arch_prctl(0, 0x1002, (void *)host_fs);
-
 	if (isatty(fd)) {
 		sigemptyset(&no_sigio);
 		sigaddset(&no_sigio, SIGIO);

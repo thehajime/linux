@@ -88,14 +88,14 @@ void arch_switch_to(struct task_struct *to)
 	current_top_of_stack = task_top_of_stack(to);
 	current_ptregs = task_pt_regs(to);
 
-	if ((to->thread.regs.regs.gp[FS_BASE / sizeof(unsigned long)] == NULL)
+	if ((to->thread.regs.regs.gp[HOST_FS] == NULL)
 	    || (to->mm == NULL))
 		return;
 
 	/* XXX: FIXME */
 	// rkj: this changes the FS on every context switch
 	arch_prctl(to, ARCH_SET_FS,
-		   (void __user *) to->thread.regs.regs.gp[FS_BASE / sizeof(unsigned long)]);
+		   (void __user *) to->thread.regs.regs.gp[HOST_FS]);
 #endif
 }
 
