@@ -19,7 +19,9 @@ UM_GLOBAL_VAR(current_ptregs)
 .section .entry.text, "ax"
 
 .align 8
+#undef ENTRY
 #define ENTRY(x) .text; .globl x; .type x,%function; x:
+#undef END
 #define END(x)   .size x, . - x
 
 /*

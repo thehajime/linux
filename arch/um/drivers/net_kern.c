@@ -76,6 +76,9 @@ static int uml_net_rx(struct net_device *dev)
 	struct uml_net_private *lp = netdev_priv(dev);
 	int pkt_len;
 	struct sk_buff *skb;
+	unsigned long long old_fs;
+
+	os_arch_prctl(0, 0x1003, (void *)&old_fs);
 	os_arch_prctl(0, 0x1002, (void *)host_fs);
 
 	/* If we can't allocate memory, try again next round. */
@@ -85,6 +88,7 @@ static int uml_net_rx(struct net_device *dev)
 		/* Read a packet into drop_skb and don't do anything with it. */
 		(*lp->read)(lp->fd, drop_skb, lp);
 		dev->stats.rx_dropped++;
+		os_arch_prctl(0, 0x1002, (void *)old_fs);
 		return 0;
 	}
 
@@ -92,6 +96,7 @@ static int uml_net_rx(struct net_device *dev)
 	skb_put(skb, lp->max_packet);
 	skb_reset_mac_header(skb);
 	pkt_len = (*lp->read)(lp->fd, skb, lp);
+	os_arch_prctl(0, 0x1002, (void *)old_fs);
 
 	if (pkt_len > 0) {
 		skb_trim(skb, pkt_len);
@@ -148,6 +153,10 @@ static int uml_net_open(struct net_device *dev)
 {
 	struct uml_net_private *lp = netdev_priv(dev);
 	int err;
+	unsigned long long old_fs;
+
+	os_arch_prctl(0, 0x1003, (void *)&old_fs);
+	os_arch_prctl(0, 0x1002, (void *)host_fs);
 
 	if (lp->fd >= 0) {
 		err = -ENXIO;
@@ -180,17 +189,23 @@ static int uml_net_open(struct net_device *dev)
 	list_add(&lp->list, &opened);
 	spin_unlock(&opened_lock);
 
+	os_arch_prctl(0, 0x1002, (void *)old_fs);
 	return 0;
 out_close:
 	if (lp->close != NULL) (*lp->close)(lp->fd, &lp->user);
 	lp->fd = -1;
 out:
+	os_arch_prctl(0, 0x1002, (void *)old_fs);
 	return err;
 }
 
 static int uml_net_close(struct net_device *dev)
 {
 	struct uml_net_private *lp = netdev_priv(dev);
+	unsigned long long old_fs;
+
+	os_arch_prctl(0, 0x1003, (void *)&old_fs);
+	os_arch_prctl(0, 0x1002, (void *)host_fs);
 
 	netif_stop_queue(dev);
 
@@ -203,6 +218,7 @@ static int uml_net_close(struct net_device *dev)
 	list_del(&lp->list);
 	spin_unlock(&opened_lock);
 
+	os_arch_prctl(0, 0x1002, (void *)old_fs);
 	return 0;
 }
 
@@ -211,14 +227,18 @@ static netdev_tx_t uml_net_start_xmit(struct sk_buff *skb, struct net_device *de
 	struct uml_net_private *lp = netdev_priv(dev);
 	unsigned long flags;
 	int len;
+	unsigned long long old_fs;
 
+	os_arch_prctl(0, 0x1003, (void *)&old_fs);
 	os_arch_prctl(0, 0x1002, (void *)host_fs);
+
 	netif_stop_queue(dev);
 
 	spin_lock_irqsave(&lp->lock, flags);
 
 	len = (*lp->write)(lp->fd, skb, lp);
 	skb_tx_timestamp(skb);
+	os_arch_prctl(0, 0x1002, (void *)old_fs);
 
 	if (len == skb->len) {
 		dev->stats.tx_packets++;
@@ -342,12 +362,17 @@ static void net_device_release(struct device *dev)
 	struct uml_net *device = dev_get_drvdata(dev);
 	struct net_device *netdev = device->dev;
 	struct uml_net_private *lp = netdev_priv(netdev);
+	unsigned long long old_fs;
+
+	os_arch_prctl(0, 0x1003, (void *)&old_fs);
+	os_arch_prctl(0, 0x1002, (void *)host_fs);
 
 	if (lp->remove != NULL)
 		(*lp->remove)(&lp->user);
 	list_del(&device->list);
 	kfree(device);
 	free_netdev(netdev);
+	os_arch_prctl(0, 0x1002, (void *)old_fs);
 }
 
 static const struct net_device_ops uml_netdev_ops = {
@@ -733,7 +758,9 @@ static int uml_inetaddr_event(struct notifier_block *this, unsigned long event,
 	struct uml_net_private *lp;
 	void (*proc)(unsigned char *, unsigned char *, void *);
 	unsigned char addr_buf[4], netmask_buf[4];
+	unsigned long long old_fs;
 
+	os_arch_prctl(0, 0x1003, (void *)&old_fs);
 	os_arch_prctl(0, 0x1002, (void *)host_fs);
 
 	if (dev->netdev_ops->ndo_open != uml_net_open)
@@ -755,6 +782,7 @@ static int uml_inetaddr_event(struct notifier_block *this, unsigned long event,
 		memcpy(netmask_buf, &ifa->ifa_mask, sizeof(netmask_buf));
 		(*proc)(addr_buf, netmask_buf, &lp->user);
 	}
+	os_arch_prctl(0, 0x1002, (void *)old_fs);
 	return NOTIFY_DONE;
 }
 
@@ -809,6 +837,10 @@ static void close_devices(void)
 {
 	struct list_head *ele;
 	struct uml_net_private *lp;
+	unsigned long long old_fs;
+
+	os_arch_prctl(0, 0x1003, (void *)&old_fs);
+	os_arch_prctl(0, 0x1002, (void *)host_fs);
 
 	spin_lock(&opened_lock);
 	list_for_each(ele, &opened) {
@@ -820,6 +852,7 @@ static void close_devices(void)
 			(*lp->remove)(&lp->user);
 	}
 	spin_unlock(&opened_lock);
+	os_arch_prctl(0, 0x1002, (void *)old_fs);
 }
 
 __uml_exitcall(close_devices);

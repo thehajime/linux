@@ -114,7 +114,9 @@ void os_fix_helper_signals(void)
 
 void os_dump_core(void)
 {
+#ifdef CONFIG_MMU
 	int pid;
+#endif
 
 	signal(SIGSEGV, SIG_DFL);
 

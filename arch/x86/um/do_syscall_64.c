@@ -17,6 +17,7 @@
 
 #ifndef CONFIG_MMU
 
+__visible void do_syscall_64(struct pt_regs *);
 __visible void do_syscall_64(struct pt_regs *regs)
 {
 	int syscall;
@@ -37,7 +38,7 @@ __visible void do_syscall_64(struct pt_regs *regs)
 #endif
 
 	/* execve succeeded */
-	if (syscall == 59 && regs->regs.gp[HOST_AX] == 0) {
+	if (syscall == __NR_execve && regs->regs.gp[HOST_AX] == 0) {
 		userspace(&current->thread.regs.regs,
 			current_thread_info()->aux_fp_regs);
 	}

@@ -114,6 +114,7 @@ long arch_ptrace(struct task_struct *child, long request,
 }
 #endif
 
+#ifdef CONFIG_MMU
 static void send_sigtrap(struct uml_pt_regs *regs, int error_code)
 {
 	/* Send us the fake SIGTRAP */
@@ -140,7 +141,6 @@ int syscall_trace_enter(struct pt_regs *regs)
 	return ptrace_report_syscall_entry(regs);
 }
 
-#ifdef CONFIG_MMU
 void syscall_trace_leave(struct pt_regs *regs)
 {
 	int ptraced = current->ptrace;
@@ -161,6 +161,7 @@ void syscall_trace_leave(struct pt_regs *regs)
 }
 #endif
 
+const struct user_regset_view *task_user_regset_view(struct task_struct *);
 const struct user_regset_view *task_user_regset_view(struct task_struct *task)
 {
 	BUG();

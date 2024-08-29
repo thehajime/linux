@@ -31,24 +31,17 @@ long arch_prctl(struct task_struct *task, int option,
 		unsigned long __user *arg2)
 {
 	long ret = -EINVAL;
+#ifdef CONFIG_MMU
 
 	switch (option) {
 	case ARCH_SET_FS:
-#ifdef CONFIG_MMU
 		current->thread.regs.regs.gp[FS_BASE / sizeof(unsigned long)] =
 			(unsigned long) arg2;
-#else
-		current->thread.regs.regs.gp[HOST_FS] = (unsigned long) arg2;
 		ret = 0;
-#endif
 		break;
 	case ARCH_SET_GS:
-#ifdef CONFIG_MMU
 		current->thread.regs.regs.gp[GS_BASE / sizeof(unsigned long)] =
 			(unsigned long) arg2;
-#else
-		current->thread.regs.regs.gp[HOST_GS] = (unsigned long) arg2;
-#endif
 		ret = 0;
 		break;
 	case ARCH_GET_FS:
@@ -59,18 +52,50 @@ long arch_prctl(struct task_struct *task, int option,
 		break;
 	}
 
-#ifndef CONFIG_MMU
-	if (host_fs == -1) {
-		os_arch_prctl(0, ARCH_GET_FS, (void *)&host_fs);
-	}
+	return ret;
+#else
+
+	unsigned long *ptr = arg2, tmp;
+	int pid = task->mm->context.id.u.pid;
+
 	switch (option) {
 	case ARCH_SET_FS:
+		if (host_fs == -1)
+			os_arch_prctl(0, ARCH_GET_FS, (void *)&host_fs);
+		ret = 0;
+		break;
 	case ARCH_SET_GS:
-		ret = os_arch_prctl(0, option, arg2);
+		ret = 0;
+		break;
+	case ARCH_GET_FS:
+	case ARCH_GET_GS:
+		ptr = &tmp;
 		break;
 	}
-#endif
+
+	ret = os_arch_prctl(pid, option, ptr);
+	if (ret)
+		return ret;
+
+	switch (option) {
+	case ARCH_SET_FS:
+		current->thread.regs.regs.gp[FS_BASE / sizeof(unsigned long)] =
+			(unsigned long) arg2;
+		break;
+	case ARCH_SET_GS:
+		current->thread.regs.regs.gp[GS_BASE / sizeof(unsigned long)] =
+			(unsigned long) arg2;
+		break;
+	case ARCH_GET_FS:
+		ret = put_user(current->thread.regs.regs.gp[FS_BASE / sizeof(unsigned long)], arg2);
+		break;
+	case ARCH_GET_GS:
+		ret = put_user(current->thread.regs.regs.gp[GS_BASE / sizeof(unsigned long)], arg2);
+		break;
+	}
+
 	return ret;
+#endif
 }
 
 SYSCALL_DEFINE2(arch_prctl, int, option, unsigned long, arg2)
@@ -86,15 +111,15 @@ void arch_switch_to(struct task_struct *to)
 	 */
 #ifndef CONFIG_MMU
 	current_top_of_stack = task_top_of_stack(to);
-	current_ptregs = task_pt_regs(to);
+	current_ptregs = (long)task_pt_regs(to);
 
-	if ((to->thread.regs.regs.gp[HOST_FS] == NULL)
+	if ((to->thread.regs.regs.gp[FS_BASE / sizeof(unsigned long)] == 0)
 	    || (to->mm == NULL))
 		return;
 
 	// rkj: this changes the FS on every context switch
 	arch_prctl(to, ARCH_SET_FS,
-		   (void __user *) to->thread.regs.regs.gp[HOST_FS]);
+		   (void __user *) to->thread.regs.regs.gp[FS_BASE / sizeof(unsigned long)]);
 #endif
 }
 
@@ -136,8 +161,22 @@ SYSCALL_DEFINE6(mmap, unsigned long, addr, unsigned long, len,
 		return -EINVAL;
 
 #ifndef CONFIG_MMU
-	if (flags & MAP_FIXED)
-		return mmap_fixed(addr, len, prot, flags, fd, off);
+	if (flags & MAP_FIXED) {
+		void *ret;
+		ret = mmap_fixed((void *)addr, len, prot, flags, fd, off);
+		if (ret == (void *)-1)
+			return -EINVAL;
+		return (unsigned long)ret;
+	}
 #endif
 	return ksys_mmap_pgoff(addr, len, prot, flags, fd, off >> PAGE_SHIFT);
 }
+#if 0
+SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
+               unsigned long, prot)
+{
+	os_protect_memory((void *)start, len, prot & PROT_READ, prot & PROT_WRITE,
+		prot & PROT_EXEC);
+	return 0;
+}
+#endif

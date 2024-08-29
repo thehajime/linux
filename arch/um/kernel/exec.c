@@ -22,8 +22,10 @@
 
 void flush_thread(void)
 {
+#ifdef CONFIG_MMU
 	void *data = NULL;
 	int ret;
+#endif
 
 	arch_flush_thread(&current->thread.arch);
 
@@ -49,8 +51,11 @@ void start_thread(struct pt_regs *regs, unsigned long eip, unsigned long esp)
 #ifdef SUBARCH_EXECVE1
 	SUBARCH_EXECVE1(regs->regs);
 #endif
+#ifndef CONFIG_MMU
 	current->thread.regs.regs.gp[REGS_IP_INDEX] = eip;
 	current->thread.regs.regs.gp[REGS_SP_INDEX] = esp;
-	new_thread(task_stack_page(current), &current->thread.switch_buf, eip);
+	new_thread(task_stack_page(current), &current->thread.switch_buf,
+		   (void *)eip);
+#endif
 }
 EXPORT_SYMBOL(start_thread);

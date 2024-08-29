@@ -806,13 +806,6 @@ void __init time_init(void)
 	late_time_init = um_timer_setup;
 }
 
-#ifndef CONFIG_GENERIC_CALIBRATE_DELAY
-void calibrate_delay(void)
-{
-	pr_info("Calibrating delay loop (skipped)\n");
-}
-#endif
-
 #ifdef CONFIG_UML_TIME_TRAVEL_SUPPORT
 unsigned long calibrate_delay_is_known(void)
 {

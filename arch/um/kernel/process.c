@@ -96,10 +96,6 @@ int get_current_pid(void)
 	return task_pid_nr(current);
 }
 
-#ifndef CONFIG_MMU
-extern void __kernel_vsyscall(void);
-#endif
-
 static void setup_seccomp(void)
 {
 	static bool is_first = true;

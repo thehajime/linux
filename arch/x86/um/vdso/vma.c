@@ -41,10 +41,10 @@ static int __init init_vdso(void)
 		goto oom;
 	}
 
-	pg_um_vdso = page_address(um_vdso);
+	pg_um_vdso = (unsigned long)page_address(um_vdso);
 
 	printk(KERN_ERR "vdso_start=%lx um_vdso_addr=%lx pg_um_vdso=%lx\n\r",
-		vdso_start, um_vdso_addr, pg_um_vdso);
+	       (unsigned long)vdso_start, um_vdso_addr, pg_um_vdso);
 	copy_page(pg_um_vdso, vdso_start);
 	*vdsop = um_vdso;
 

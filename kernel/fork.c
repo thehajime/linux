@@ -2222,8 +2222,10 @@ __latent_entropy struct task_struct *copy_process(
 	if (!(clone_flags & CLONE_THREAD))
 		hlist_add_head(&delayed.node, &current->signal->multiprocess);
 	recalc_sigpending();
+#ifndef CONFIG_MMU
 	// XXX: rkj: suspicious
 	clear_thread_flag(TIF_SIGPENDING);
+#endif
 
 	spin_unlock_irq(&current->sighand->siglock);
 	retval = -ERESTARTNOINTR;

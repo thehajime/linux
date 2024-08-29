@@ -82,9 +82,9 @@ void __init mem_init(void)
  * Create a page table and place a pointer to it in a middle page
  * directory entry.
  */
+#ifdef CONFIG_MMU
 static void __init one_page_table_init(pmd_t *pmd)
 {
-#ifdef CONFIG_MMU
 	if (pmd_none(*pmd)) {
 		pte_t *pte = (pte_t *) memblock_alloc_low(PAGE_SIZE,
 							  PAGE_SIZE);
@@ -96,13 +96,11 @@ static void __init one_page_table_init(pmd_t *pmd)
 					   (unsigned long) __pa(pte)));
 		BUG_ON(pte != pte_offset_kernel(pmd, 0));
 	}
-#endif
 }
 
 static void __init one_md_table_init(pud_t *pud)
 {
 #ifdef CONFIG_3_LEVEL_PGTABLES
-#ifdef CONFIG_MMU
 	pmd_t *pmd_table = (pmd_t *) memblock_alloc_low(PAGE_SIZE, PAGE_SIZE);
 	if (!pmd_table)
 		panic("%s: Failed to allocate %lu bytes align=%lx\n",
@@ -111,8 +109,8 @@ static void __init one_md_table_init(pud_t *pud)
 	set_pud(pud, __pud(_KERNPG_TABLE + (unsigned long) __pa(pmd_table)));
 	BUG_ON(pmd_table != pmd_offset(pud, 0));
 #endif
-#endif
 }
+#endif
 
 static void __init fixrange_init(unsigned long start, unsigned long end,
 				 pgd_t *pgd_base)

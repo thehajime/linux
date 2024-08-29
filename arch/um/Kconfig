@@ -34,8 +34,8 @@ config UML
 	select HAVE_RUST			if X86_64
 
 config MMU
-	bool
-	default n
+	bool "MMU-based Paged Memory Management Support"
+	default y
 
 config UML_DMA_EMULATION
 	bool
