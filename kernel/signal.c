@@ -3109,7 +3109,7 @@ void __set_current_blocked(const sigset_t *newset)
  */
 int sigprocmask(int how, sigset_t *set, sigset_t *oldset)
 {
-#ifdef CONFIG_MMU
+//#ifdef CONFIG_MMU
 	struct task_struct *tsk = current;
 	sigset_t newset;
 
@@ -3132,7 +3132,7 @@ int sigprocmask(int how, sigset_t *set, sigset_t *oldset)
 	}
 
 	__set_current_blocked(&newset);
-#endif
+//#endif
 	return 0;
 }
 EXPORT_SYMBOL(sigprocmask);
@@ -3195,7 +3195,7 @@ int set_compat_user_sigmask(const compat_sigset_t __user *umask,
 SYSCALL_DEFINE4(rt_sigprocmask, int, how, sigset_t __user *, nset,
 		sigset_t __user *, oset, size_t, sigsetsize)
 {
-#ifdef CONFIG_MMU
+//#ifdef CONFIG_MMU
 	sigset_t old_set, new_set;
 	int error;
 
@@ -3221,9 +3221,9 @@ SYSCALL_DEFINE4(rt_sigprocmask, int, how, sigset_t __user *, nset,
 	}
 
 	return 0;
-#else
-	return 0;
-#endif
+//#else
+//	return 0;
+//#endif
 }
 
 #ifdef CONFIG_COMPAT
@@ -4492,7 +4492,7 @@ SYSCALL_DEFINE4(rt_sigaction, int, sig,
 		struct sigaction __user *, oact,
 		size_t, sigsetsize)
 {
-#ifdef CONFIG_MMU
+//#ifdef CONFIG_MMU
 	struct k_sigaction new_sa, old_sa;
 	int ret;
 
@@ -4511,10 +4511,10 @@ SYSCALL_DEFINE4(rt_sigaction, int, sig,
 		return -EFAULT;
 
 	return 0;
-#else
+//#else
 	// rkj: XXX: implement me for UM NOMMU
-	return 0;
-#endif
+//	return 0;
+//#endif
 }
 #ifdef CONFIG_COMPAT
 COMPAT_SYSCALL_DEFINE4(rt_sigaction, int, sig,

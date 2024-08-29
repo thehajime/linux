@@ -87,7 +87,7 @@ static void handle_signal(struct ksignal *ksig, struct pt_regs *regs)
 		err = setup_signal_stack_sc(sp, ksig, regs, oldset);
 	else
 #endif
-		err = setup_signal_stack_si(sp, ksig, regs, oldset);
+//		err = setup_signal_stack_si(sp, ksig, regs, oldset);
 
 	signal_setup_done(err, ksig, singlestep);
 }
