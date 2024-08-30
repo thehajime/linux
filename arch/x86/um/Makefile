@@ -10,11 +10,11 @@ else
 endif
 
 obj-y = bugs_$(BITS).o delay.o fault.o \
-	ptrace_$(BITS).o setjmp_$(BITS).o signal.o \
+	ptrace_$(BITS).o ptrace_user.o setjmp_$(BITS).o signal.o \
 	stub_$(BITS).o stub_segv.o \
 	sys_call_table_$(BITS).o sysrq_$(BITS).o tls_$(BITS).o \
 	mem_$(BITS).o subarch.o os-Linux/ entry_$(BITS).o zpoline.o
-obj-$(CONFIG_MMU) += ldt.o ptrace_user.o
+obj-$(CONFIG_MMU) += ldt.o
 
 inat_tables_script = $(srctree)/arch/x86/tools/gen-insn-attr-x86.awk
 inat_tables_maps = $(srctree)/arch/x86/lib/x86-opcode-map.txt
@@ -60,3 +60,4 @@ UNPROFILE_OBJS := stub_segv.o
 CFLAGS_stub_segv.o := $(CFLAGS_NO_HARDENING)
 
 include $(srctree)/arch/um/scripts/Makefile.rules
+CFLAGS_syscalls_64.o=-g -O0

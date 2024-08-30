@@ -196,12 +196,15 @@ extern int arch_setup_additional_pages(struct linux_binprm *bprm,
 extern unsigned long um_vdso_addr;
 #define AT_SYSINFO      32
 #define AT_SYSINFO_EHDR 33
+#ifdef CONFIG_MMU
+#define ARCH_DLINFO    NEW_AUX_ENT(AT_SYSINFO_EHDR, um_vdso_addr)
+#else
 #define ARCH_DLINFO						\
 do {								\
 	NEW_AUX_ENT(AT_SYSINFO, 0);				\
 	NEW_AUX_ENT(AT_SYSINFO_EHDR, um_vdso_addr);		\
 } while (0)
-
+#endif
 #endif
 
 typedef unsigned long elf_greg_t;

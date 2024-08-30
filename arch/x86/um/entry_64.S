@@ -10,6 +10,7 @@
 #error need to stash these variables somewhere else
 #endif
 
+#ifndef CONFIG_MMU
 #define UM_GLOBAL_VAR(x) .data; .align 8; .globl x; x:; .long 0
 
 UM_GLOBAL_VAR(current_top_of_stack)
@@ -101,3 +102,4 @@ ENTRY(userspace)
 	jmp	*%r11
 
 END(userspace)
+#endif // !CONFIG_MMU

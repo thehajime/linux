@@ -46,7 +46,6 @@ void check_host_supports_tls(int *supports_tls, int *tls_min)
 	*supports_tls = 0;
 }
 
-#ifdef CONFIG_MMU
 int os_set_thread_area(user_desc_t *info, int pid)
 {
 	int ret;
@@ -68,4 +67,3 @@ int os_get_thread_area(user_desc_t *info, int pid)
 		ret = -errno;
 	return ret;
 }
-#endif

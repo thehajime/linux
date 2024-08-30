@@ -140,7 +140,6 @@ bad_wait:
 
 extern unsigned long current_stub_stack(void);
 
-#ifdef CONFIG_MMU
 static void get_skas_faultinfo(int pid, struct faultinfo *fi, unsigned long *aux_fp_regs)
 {
 	int err;
@@ -186,14 +185,9 @@ static void handle_trap(int pid, struct uml_pt_regs *regs)
 
 	handle_syscall(regs);
 }
-#endif
 
 extern char __syscall_stub_start[];
-int userspace_pid[NR_CPUS];
-int kill_userspace_mm[NR_CPUS];
 
-
-#ifdef CONFIG_MMU
 /**
  * userspace_tramp() - userspace trampoline
  * @stack:	pointer to the new userspace stack page
@@ -257,6 +251,9 @@ static int userspace_tramp(void *stack)
 	kill(os_getpid(), SIGSTOP);
 	return 0;
 }
+
+int userspace_pid[NR_CPUS];
+int kill_userspace_mm[NR_CPUS];
 
 /**
  * start_userspace() - prepare a new userspace process
@@ -339,6 +336,7 @@ int start_userspace(unsigned long stub_stack)
 	return err;
 }
 
+#ifdef UML_CONFIG_MMU
 void userspace(struct uml_pt_regs *regs, unsigned long *aux_fp_regs)
 {
 	int err, status, op, pid = userspace_pid[0];
@@ -463,6 +461,7 @@ void userspace(struct uml_pt_regs *regs, unsigned long *aux_fp_regs)
 		}
 	}
 }
+#endif /* UML_CONFIG_MMU */
 
 static unsigned long thread_regs[MAX_REG_NR];
 static unsigned long thread_fp_regs[FP_SIZE];
@@ -570,7 +569,6 @@ int copy_context_skas0(unsigned long new_stack, int pid)
 	os_kill_ptraced_process(pid, 1);
 	return err;
 }
-#endif
 
 void new_thread(void *stack, jmp_buf *buf, void (*handler)(void))
 {

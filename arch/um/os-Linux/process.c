@@ -26,7 +26,6 @@
 #define STAT_PATH_LEN sizeof("/proc/#######/stat\0")
 #define COMM_SCANF "%*[^)])"
 
-#ifdef CONFIG_MMU
 unsigned long os_process_pc(int pid)
 {
 	char proc_stat[STAT_PATH_LEN], buf[256];
@@ -92,7 +91,6 @@ int os_process_parent(int pid)
 
 	return parent;
 }
-#endif
 
 void os_alarm_process(int pid)
 {
@@ -111,8 +109,6 @@ void os_kill_process(int pid, int reap_child)
 		CATCH_EINTR(waitpid(pid, NULL, __WALL));
 }
 
-#ifdef CONFIG_MMU
-
 /* Kill off a ptraced child by all means available.  kill it normally first,
  * then PTRACE_KILL it, then PTRACE_CONT it in case it's in a run state from
  * which it can't exit directly.
@@ -126,8 +122,6 @@ void os_kill_ptraced_process(int pid, int reap_child)
 	if (reap_child)
 		CATCH_EINTR(waitpid(pid, NULL, __WALL));
 }
-
-#endif
 
 /* Don't use the glibc version, which caches the result in TLS. It misses some
  * syscalls, and also breaks with clone(), which does not unshare the TLS.
@@ -152,7 +146,7 @@ int os_map_memory(void *virt, int fd, unsigned long long off, unsigned long len,
 	prot = (r ? PROT_READ : 0) | (w ? PROT_WRITE : 0) |
 		(x ? PROT_EXEC : 0);
 
-#ifdef CONFIG_MMU
+#ifdef UML_CONFIG_MMU
 	loc = mmap64((void *) virt, len, prot, MAP_SHARED | MAP_FIXED,
 		     fd, off);
 #else

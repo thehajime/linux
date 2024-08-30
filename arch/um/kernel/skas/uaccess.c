@@ -200,8 +200,12 @@ static int strncpy_chunk_from_user(unsigned long from, int len, void *arg)
 	n = strnlen(to, len);
 	*to_ptr += n;
 
+#ifdef CONFIG_MMU
+	if (n < len)
+#else
 	/* XXX: really ? */
 	if (n > len)
+#endif
 	        return 1;
 	return 0;
 }
@@ -240,8 +244,12 @@ static int strnlen_chunk(unsigned long str, int len, void *arg)
 	n = strnlen((void *) str, len);
 	*len_ptr += n;
 
+#ifdef CONFIG_MMU
+	if (n < len)
+#else
 	/* XXX: really ? */
 	if (n > len)
+#endif
 		return 1;
 	return 0;
 }

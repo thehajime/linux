@@ -114,9 +114,7 @@ void os_fix_helper_signals(void)
 
 void os_dump_core(void)
 {
-#ifdef CONFIG_MMU
 	int pid;
-#endif
 
 	signal(SIGSEGV, SIG_DFL);
 
@@ -152,10 +150,8 @@ void os_dump_core(void)
 	 * nothing reasonable to do if that fails.
 	 */
 
-#ifdef CONFIG_MMU
 	while ((pid = waitpid(-1, NULL, WNOHANG | __WALL)) > 0)
 		os_kill_ptraced_process(pid, 0);
-#endif
 
 	uml_abort();
 }

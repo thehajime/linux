@@ -30,7 +30,7 @@ config UML
 	select ARCH_SUPPORTS_LTO_CLANG_THIN
 	select TRACE_IRQFLAGS_SUPPORT
 	select TTY # Needed for line.c
-	select HAVE_ARCH_VMAP_STACK
+	select HAVE_ARCH_VMAP_STACK if MMU
 	select HAVE_RUST			if X86_64
 
 config MMU
@@ -193,7 +193,8 @@ config ARCH_FORCE_MAX_ORDER
 
 config KERNEL_STACK_ORDER
 	int "Kernel stack size order"
-	default 3 if 64BIT
+	default 2 if 64BIT
+	default 3 if !MMU
 	range 2 10 if 64BIT
 	default 1 if !64BIT
 	help

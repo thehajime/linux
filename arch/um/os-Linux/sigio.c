@@ -540,11 +540,7 @@ static void __init check_sigio(void)
 		       "skipping pty SIGIO check\n");
 		return;
 	}
-#ifdef CONFIG_MMU
-	// rkj: for some reason, this test is failing
-	// what's the worst that can happen? we leak fds?
 	check_one_sigio(tty_output);
-#endif
 }
 
 /* Here because it only does the SIGIO testing for now */

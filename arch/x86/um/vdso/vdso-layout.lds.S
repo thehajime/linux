@@ -8,6 +8,7 @@
 
 SECTIONS
 {
+#ifndef CONFIG_MMU
 	/*
 	 * User/kernel shared data is before the vDSO.  This may be a little
 	 * uglier than putting it after the vDSO, but it avoids issues with
@@ -24,6 +25,7 @@ SECTIONS
 #include <asm/vvar.h>
 #undef __VVAR_KERNEL_LDS
 #undef EMIT_VVAR
+#endif /* !CONFIG_MMU */
 
 	. = VDSO_PRELINK + SIZEOF_HEADERS;
 

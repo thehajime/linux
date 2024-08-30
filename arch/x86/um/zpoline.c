@@ -4,6 +4,7 @@
 #include <asm/insn.h>
 #include <os.h>
 
+#ifndef CONFIG_MMU
 extern long __kernel_vsyscall(int64_t, int64_t, int64_t, int64_t,
 			      int64_t, int64_t, int64_t);
 /* start of trampoline code area */
@@ -119,3 +120,4 @@ static int setup_zpoline_trampoline(void)
 	return 0;
 }
 __initcall(setup_zpoline_trampoline);
+#endif /* !CONFIG_MMU */
