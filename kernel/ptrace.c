@@ -1161,7 +1161,6 @@ int ptrace_request(struct task_struct *child, long request,
 		break;
 
 #ifdef CONFIG_BINFMT_ELF_FDPIC
-#ifdef CONFIG_MMU
 	case PTRACE_GETFDPIC: {
 		struct mm_struct *mm = get_task_mm(child);
 		unsigned long tmp = 0;
@@ -1185,7 +1184,6 @@ int ptrace_request(struct task_struct *child, long request,
 		ret = put_user(tmp, datalp);
 		break;
 	}
-#endif
 #endif
 
 	case PTRACE_SINGLESTEP:
