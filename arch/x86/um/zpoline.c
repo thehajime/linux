@@ -26,12 +26,15 @@ int arch_finalize_exec(struct elfhdr *_ehdr, bool has_interp,
 	stop = ehdr->e_shoff + ehdr->e_shentsize * ehdr->e_shnum;
 
 	/* skip translation of trampoline code */
-	if (ptr <= (void *)&__zpoline_start[0] + 0x1000 + 0x0100)
-		return - EINVAL;
+	if (ptr <= (void *)&__zpoline_start[0] + 0x1000 + 0x0100) {
+		err = -EINVAL;
+		goto out;
+	}
 
-	if (down_write_killable(&mm->mmap_lock))
-		return -EINTR;
-
+	if (down_write_killable(&mm->mmap_lock)) {
+		err = -EINTR;
+		goto out;
+	}
 
 	while (ptr < (head + stop)) {
 		insn_init(&insn, ptr, MAX_INSN_SIZE, 1);
@@ -64,6 +67,8 @@ int arch_finalize_exec(struct elfhdr *_ehdr, bool has_interp,
 
 	printk(KERN_DEBUG "zpoline: rewritten %d syscalls\n", count);
 	up_write(&mm->mmap_lock);
+
+out:
 	return err;
 }
 

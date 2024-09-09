@@ -537,6 +537,14 @@ int setup_signal_stack_si(unsigned long stack_top, struct ksignal *ksig,
 		/* could use a vstub here */
 		return err;
 
+#ifndef CONFIG_MMU
+	/* XXX: need to push handler address at SP */
+	frame = (struct rt_sigframe __user *) ((unsigned long) frame -
+					       sizeof(unsigned long));
+	err |= __put_user((void *)ksig->ka.sa.sa_handler,
+			  (unsigned long *)frame);
+#endif
+
 	if (err)
 		return err;
 
@@ -562,6 +570,10 @@ SYSCALL_DEFINE0(rt_sigreturn)
 	unsigned long sp = PT_REGS_SP(&current->thread.regs);
 	struct rt_sigframe __user *frame =
 		(struct rt_sigframe __user *)(sp - sizeof(long));
+#ifndef CONFIG_MMU
+	/* XXX: need to pop handler address at SP */
+	frame = (struct rt_sigframe __user *)((unsigned long)frame + sizeof(long));
+#endif
 	struct ucontext __user *uc = &frame->uc;
 	sigset_t set;
 

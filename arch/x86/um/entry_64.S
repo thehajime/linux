@@ -30,7 +30,7 @@ UM_GLOBAL_VAR(current_ptregs)
  *
  * Registers on entry:
  * rax  system call number
- * rcx  return address
+ * rdx  return address
  * rdi  arg0
  * rsi  arg1
  * rdx  arg2

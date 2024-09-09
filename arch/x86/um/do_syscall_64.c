@@ -40,7 +40,7 @@ __visible void do_syscall_64(struct pt_regs *regs)
 
 	PT_REGS_SYSCALL_RET(regs) = regs->regs.gp[HOST_AX];
 	/* force do_signal() --> is_syscall() */
-//	set_thread_flag(TIF_SIGPENDING);
+	set_thread_flag(TIF_SIGPENDING);
 	interrupt_end();
 
 	/* execve succeeded */
