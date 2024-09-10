@@ -121,6 +121,40 @@ void arch_switch_to(struct task_struct *to)
 #endif
 }
 
+#ifndef CONFIG_MMU
+/*
+ * XXX: copied from musl dynlink.c
+ * musl has a switch, DL_NOMMU_SUPPORT, to support nommu kernel, but it's
+ * a compilation-time switch, which isn't enabled on x86_64 platform.  so
+ * emulate the behavior of DL_NOMMU_SUPPORT here, until musl supports it over
+ * a runtime-switch.
+ */
+
+static void *mmap_fixed(void *p, size_t n, int prot, int flags, int fd, off_t off)
+{
+	char *q;
+	ssize_t r;
+
+	/* Fallbacks for MAP_FIXED failure on NOMMU kernels. */
+	if (flags & MAP_ANONYMOUS) {
+		memset(p, 0, n);
+		return p;
+	}
+	if (sys_lseek(fd, off, SEEK_SET) < 0)
+		return (void *)-1;
+	for (q = p; n; q += r, off += r, n -= r) {
+		r = ksys_read(fd, q, n);
+		if (r < 0 && r != -EINTR)
+			return (void *)-1;
+		if (!r) {
+			memset(q, 0, n);
+			break;
+		}
+	}
+	return p;
+}
+#endif
+
 SYSCALL_DEFINE6(mmap, unsigned long, addr, unsigned long, len,
 		unsigned long, prot, unsigned long, flags,
 		unsigned long, fd, unsigned long, off)
@@ -128,5 +162,15 @@ SYSCALL_DEFINE6(mmap, unsigned long, addr, unsigned long, len,
 	if (off & ~PAGE_MASK)
 		return -EINVAL;
 
+#ifndef CONFIG_MMU
+	if (flags & MAP_FIXED) {
+		void *ret;
+
+		ret = mmap_fixed((void *)addr, len, prot, flags, fd, off);
+		if (ret == (void *)-1)
+			return -EINVAL;
+		return (unsigned long)ret;
+	}
+#endif
 	return ksys_mmap_pgoff(addr, len, prot, flags, fd, off >> PAGE_SHIFT);
 }
