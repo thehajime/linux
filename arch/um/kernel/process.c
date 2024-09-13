@@ -117,13 +117,17 @@ void new_thread_handler(void)
 	 * callback returns only if the kernel thread execs a process
 	 */
 	fn(arg);
+#ifndef CONFIG_MMU
+	arch_switch_to(current);
+#endif
 	userspace(&current->thread.regs.regs, current_thread_info()->aux_fp_regs);
 }
 
 /* Called magically, see new_thread_handler above */
 static void fork_handler(void)
 {
-	schedule_tail(current->thread.prev_sched);
+	if (current->thread.prev_sched != NULL)
+		schedule_tail(current->thread.prev_sched);
 
 	/*
 	 * XXX: if interrupt_end() calls schedule, this call to
@@ -134,6 +138,21 @@ static void fork_handler(void)
 
 	current->thread.prev_sched = NULL;
 
+#ifndef CONFIG_MMU
+	/*
+	 * This fork can only come from libc's vfork, which
+	 * does this:
+	 *	popq %%rdx;
+	 *	call *%0; // vsyscall
+	 *	pushq %%rdx;
+	 * %rdx stores the return address which is stored
+	 * at pt_regs[HOST_IP] at the moment. We still
+	 * need to pop the pushed address by "call" though,
+	 * so this is what this next line does.
+	 */
+	if (current->thread.regs.regs.gp[HOST_ORIG_AX] == __NR_vfork)
+		current->thread.regs.regs.gp[REGS_SP_INDEX] += 8;
+#endif
 	userspace(&current->thread.regs.regs, current_thread_info()->aux_fp_regs);
 }
 
