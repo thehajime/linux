@@ -29,6 +29,7 @@ extern syscall_handler_t sys_arch_prctl;
 extern void do_syscall_64(struct pt_regs *regs);
 extern long __kernel_vsyscall(int64_t a0, int64_t a1, int64_t a2, int64_t a3,
 			      int64_t a4, int64_t a5, int64_t a6);
+extern void arch_fixup_stack(struct uml_pt_regs *regs);
 #endif
 
 #endif

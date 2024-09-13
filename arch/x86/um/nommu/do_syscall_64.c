@@ -6,9 +6,28 @@
 #include <sysdep/syscalls.h>
 #include <os.h>
 
+/*
+ * save/restore the return address stored in the stack, as the child overwrites
+ * the contents after returning to userspace (i.e., by push %rdx).
+ *
+ * see the detail in fork_handler().
+ */
+static void vfork_save_stack(void *stack)
+{
+	memcpy(stack,
+	       (void *)current->thread.regs.regs.gp[HOST_SP], 8);
+}
+
+static void vfork_restore_stack(void *stack_copy)
+{
+	memcpy((void *)current->thread.regs.regs.gp[HOST_SP],
+	       stack_copy, 8);
+}
+
 __visible void do_syscall_64(struct pt_regs *regs)
 {
 	int syscall;
+	unsigned long stack_copy;
 
 	syscall = PT_SYSCALL_NR(regs->regs.gp);
 	UPT_SYSCALL_NR(&regs->regs) = syscall;
@@ -16,6 +35,9 @@ __visible void do_syscall_64(struct pt_regs *regs)
 	pr_debug("syscall(%d) (current=%lx) (fn=%lx)\n",
 		 syscall, (unsigned long)current,
 		 (unsigned long)sys_call_table[syscall]);
+
+	if (syscall == __NR_vfork)
+		vfork_save_stack(&stack_copy);
 
 	if (likely(syscall < NR_syscalls)) {
 		PT_REGS_SET_SYSCALL_RETURN(regs,
@@ -30,6 +52,10 @@ __visible void do_syscall_64(struct pt_regs *regs)
 	/* execve succeeded */
 	if (syscall == __NR_execve && regs->regs.gp[HOST_AX] == 0)
 		userspace(&current->thread.regs.regs);
+
+	/* only parents of vfork restores the contents of stack */
+	if (syscall == __NR_vfork && regs->regs.gp[HOST_AX] > 0)
+		vfork_restore_stack(&stack_copy);
 
 	/* force do_signal() --> is_syscall() */
 	set_thread_flag(TIF_SIGPENDING);
