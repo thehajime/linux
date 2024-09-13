@@ -22,11 +22,14 @@
 
 void flush_thread(void)
 {
+#ifdef CONFIG_MMU
 	void *data = NULL;
 	int ret;
+#endif
 
 	arch_flush_thread(&current->thread.arch);
 
+#ifdef CONFIG_MMU
 	ret = unmap(&current->mm->context.id, 0, TASK_SIZE, 1, &data);
 	if (ret) {
 		printk(KERN_ERR "%s - clearing address space failed, err = %d\n",
@@ -35,6 +38,7 @@ void flush_thread(void)
 	}
 	get_safe_registers(current_pt_regs()->regs.gp,
 			   current_pt_regs()->regs.fp);
+#endif
 
 	__switch_mm(&current->mm->context.id);
 }
@@ -46,6 +50,12 @@ void start_thread(struct pt_regs *regs, unsigned long eip, unsigned long esp)
 	clear_thread_flag(TIF_SINGLESTEP);
 #ifdef SUBARCH_EXECVE1
 	SUBARCH_EXECVE1(regs->regs);
+#endif
+#ifndef CONFIG_MMU
+	current->thread.regs.regs.gp[REGS_IP_INDEX] = eip;
+	current->thread.regs.regs.gp[REGS_SP_INDEX] = esp;
+	new_thread(task_stack_page(current), &current->thread.switch_buf,
+		   (void *)eip);
 #endif
 }
 EXPORT_SYMBOL(start_thread);
