@@ -29,6 +29,12 @@ struct pt_regs {
 
 #define PTRACE_OLDSETOPTIONS 21
 
+#ifdef CONFIG_BINFMT_ELF_FDPIC
+#define PTRACE_GETFDPIC		31
+#define PTRACE_GETFDPIC_EXEC	0
+#define PTRACE_GETFDPIC_INTERP	1
+#endif
+
 struct task_struct;
 
 extern long subarch_ptrace(struct task_struct *child, long request,
@@ -43,6 +49,17 @@ extern int arch_set_tls(struct task_struct *new, unsigned long tls);
 extern void clear_flushed_tls(struct task_struct *task);
 extern int syscall_trace_enter(struct pt_regs *regs);
 extern void syscall_trace_leave(struct pt_regs *regs);
+
+#ifndef CONFIG_MMU
+#include <asm-generic/bug.h>
+
+static inline const struct user_regset_view *task_user_regset_view(
+	struct task_struct *task)
+{
+	WARN_ON_ONCE(true);
+	return 0;
+}
+#endif
 
 #endif
 

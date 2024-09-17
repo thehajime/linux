@@ -12,6 +12,10 @@
 typedef struct mm_context {
 	struct mm_id id;
 	struct uml_arch_mm_context arch;
+#ifdef CONFIG_BINFMT_ELF_FDPIC
+	unsigned long   exec_fdpic_loadmap;
+	unsigned long   interp_fdpic_loadmap;
+#endif
 } mm_context_t;
 
 /* Avoid tangled inclusion with asm/ldt.h */
