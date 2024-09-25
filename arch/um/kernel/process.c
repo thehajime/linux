@@ -29,6 +29,7 @@
 #include <asm/mmu_context.h>
 #include <asm/switch_to.h>
 #include <asm/exec.h>
+#include <asm/tlbflush.h>
 #include <linux/uaccess.h>
 #include <as-layout.h>
 #include <kern_util.h>
