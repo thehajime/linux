@@ -35,7 +35,17 @@ static void sig_handler_common(int sig, struct siginfo *si, mcontext_t *mc)
 	struct uml_pt_regs r;
 	int save_errno = errno;
 
-	r.is_user = 0;
+#ifndef CONFIG_MMU
+	/** XXX:  we should use is_user=1 when the IP is from userspace code.
+	 * but currently this causes endless SIGSEGV which cannot stop by do_exit().
+	 * do_exit stops all SIGNALS in os_idle_sleep(). thus it panics for the moment.
+	 */
+	if (mc && (REGS_IP(mc->gregs) > uml_reserved
+	    && REGS_IP(mc->gregs) < high_physmem))
+	    r.is_user = 0;
+	else
+#endif
+	    r.is_user = 0;
 	if (sig == SIGSEGV) {
 		/* For segfaults, we want the data from the sigcontext. */
 		get_regs_from_mc(&r, mc);
