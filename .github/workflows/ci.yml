@@ -70,11 +70,19 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
       - name: image for test
         run: |
-          container_id=$(docker create kollerr/alpine-test:latest)
-          #container_id=$(docker create alpine:latest)
+          #container_id=$(docker create kollerr/alpine-test:latest)
+          container_id=$(docker create alpine:3.20.3 apk add utmps-libs)
+          docker start $container_id
+          docker wait $container_id
+          docker logs $container_id
           docker export $container_id > alpine.tar
           docker rm $container_id
           mnt=$(mktemp -d)
+          curl -L -o output.zip \
+               "https://gitlab.alpinelinux.org/thehajime/aports/-/jobs/1543371/artifacts/download?file_type=archive"
+          unzip output.zip
+          tar xfz packages/main/x86_64/busybox-nommu-1.36.1-r32.apk
+
           dd if=/dev/zero of=alpine.ext4 bs=1 count=0 seek=1G
           sudo chmod og+wr "alpine.ext4"
           yes 2>/dev/null | mkfs.ext4 "alpine.ext4" || true
@@ -88,8 +96,10 @@ jobs:
           sudo mknod -m 444 $mnt/dev/random c 1 8
           sudo mknod -m 444 $mnt/dev/urandom c 1 9
 
-          sudo cp .github/workflows/busybox $mnt/bin/busybox
+          sudo cp bin/busybox.nommu $mnt/bin/busybox
+          #sudo cp .github/workflows/busybox $mnt/bin/busybox
           echo "/sbin/halt" >> .github/workflows/rcS
+          sudo mkdir -p $mnt/etc/init.d/
           sudo cp .github/workflows/rcS $mnt/etc/init.d/
           sudo cp .github/workflows/inittab $mnt/etc/
           cat .github/workflows/bench.sh | sed "s/time //" > /tmp/bench.sh
