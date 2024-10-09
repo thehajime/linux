@@ -148,6 +148,7 @@ out:
 static int setup_zpoline_trampoline(void)
 {
 	int i, ret;
+	int ptr;
 
 	/* zpoline: map area of trampoline code started from addr 0x0 */
 	__zpoline_start = 0x0;
@@ -179,41 +180,41 @@ static int setup_zpoline_trampoline(void)
 	 * jmpq   *%r11
 	 *
 	 */
-
+	ptr = NR_syscalls;
 	/* 49 bb [64-bit addr (8-byte)]    movabs [64-bit addr (8-byte)],%r11 */
-	__zpoline_start[NR_syscalls + 0x00] = 0x49;
-	__zpoline_start[NR_syscalls + 0x01] = 0xbb;
-	__zpoline_start[NR_syscalls + 0x02] = ((uint64_t) __kernel_vsyscall >>
-					       (8 * 0)) & 0xff;
-	__zpoline_start[NR_syscalls + 0x03] = ((uint64_t) __kernel_vsyscall >>
-					       (8 * 1)) & 0xff;
-	__zpoline_start[NR_syscalls + 0x04] = ((uint64_t) __kernel_vsyscall >>
-					       (8 * 2)) & 0xff;
-	__zpoline_start[NR_syscalls + 0x05] = ((uint64_t) __kernel_vsyscall >>
-					       (8 * 3)) & 0xff;
-	__zpoline_start[NR_syscalls + 0x06] = ((uint64_t) __kernel_vsyscall >>
-					       (8 * 4)) & 0xff;
-	__zpoline_start[NR_syscalls + 0x07] = ((uint64_t) __kernel_vsyscall >>
-					       (8 * 5)) & 0xff;
-	__zpoline_start[NR_syscalls + 0x08] = ((uint64_t) __kernel_vsyscall >>
-					       (8 * 6)) & 0xff;
-	__zpoline_start[NR_syscalls + 0x09] = ((uint64_t) __kernel_vsyscall >>
-					       (8 * 7)) & 0xff;
+	__zpoline_start[ptr++] = 0x49;
+	__zpoline_start[ptr++] = 0xbb;
+	__zpoline_start[ptr++] = ((uint64_t)
+				  __kernel_vsyscall >> (8 * 0)) & 0xff;
+	__zpoline_start[ptr++] = ((uint64_t)
+				  __kernel_vsyscall >> (8 * 1)) & 0xff;
+	__zpoline_start[ptr++] = ((uint64_t)
+				  __kernel_vsyscall >> (8 * 2)) & 0xff;
+	__zpoline_start[ptr++] = ((uint64_t)
+				  __kernel_vsyscall >> (8 * 3)) & 0xff;
+	__zpoline_start[ptr++] = ((uint64_t)
+				  __kernel_vsyscall >> (8 * 4)) & 0xff;
+	__zpoline_start[ptr++] = ((uint64_t)
+				  __kernel_vsyscall >> (8 * 5)) & 0xff;
+	__zpoline_start[ptr++] = ((uint64_t)
+				  __kernel_vsyscall >> (8 * 6)) & 0xff;
+	__zpoline_start[ptr++] = ((uint64_t)
+				  __kernel_vsyscall >> (8 * 7)) & 0xff;
 
 	/*
 	 * pretending to be syscall instruction by putting return
 	 * address in %rcx.
 	 */
 	/* 48 8b 0c 24               mov    (%rsp),%rcx */
-	__zpoline_start[NR_syscalls + 0x0a] = 0x48;
-	__zpoline_start[NR_syscalls + 0x0b] = 0x8b;
-	__zpoline_start[NR_syscalls + 0x0c] = 0x0c;
-	__zpoline_start[NR_syscalls + 0x0d] = 0x24;
+	__zpoline_start[ptr++] = 0x48;
+	__zpoline_start[ptr++] = 0x8b;
+	__zpoline_start[ptr++] = 0x0c;
+	__zpoline_start[ptr++] = 0x24;
 
 	/* 41 ff e3                jmp    *%r11 */
-	__zpoline_start[NR_syscalls + 0x0e] = 0x41;
-	__zpoline_start[NR_syscalls + 0x0f] = 0xff;
-	__zpoline_start[NR_syscalls + 0x10] = 0xe3;
+	__zpoline_start[ptr++] = 0x41;
+	__zpoline_start[ptr++] = 0xff;
+	__zpoline_start[ptr++] = 0xe3;
 
 	/* permission: XOM (PROT_EXEC only) */
 	ret = os_protect_memory(0, 0x1000, 0, 0, 1);
