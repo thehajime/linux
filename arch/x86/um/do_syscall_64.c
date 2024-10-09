@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 
+//#define DEBUG 1
 #include <linux/kernel.h>
 #include <linux/ptrace.h>
 #include <asm/fsgsbase.h>
@@ -36,18 +37,10 @@ static int os_x86_arch_prctl(int pid, int option, unsigned long *arg2)
 }
 
 /*
- * Make a copy of the stack, so the child does whatever it
- * wants with it.  This copy is restored before exiting from
- * this function.
+ * save/restore the return address stored in the stack, as the child overwrites
+ * the contents after returning to userspace (i.e., by push %rdx).
  *
- * (IIUC) the vfork(2) doesn't need to copy stack, and share all
- * memory including stack between parent and child. so this function
- * isn't needed, but some programs (in our case hush, a shell for
- * nommu env of busybox) corrupts stack between vfork(2)=>execve(2).
- * the hush implementation looks fine (calling immediate execve(2)
- * after vfork(2)), but corrupted.
- *
- * so, this workaround exists.
+ * see the detail in fork_handler().
  */
 static void *vfork_save_stack(void)
 {
@@ -59,8 +52,7 @@ static void *vfork_save_stack(void)
 		return NULL;
 
 	memcpy(stack_copy,
-	       (void *)current->thread.regs.regs.gp[HOST_SP],
-	       PAGE_SIZE << THREAD_SIZE_ORDER);
+	       (void *)current->thread.regs.regs.gp[HOST_SP], 8);
 
 	return stack_copy;
 }
@@ -69,7 +61,7 @@ static void vfork_restore_stack(void *stack_copy)
 {
 	WARN_ON_ONCE(!stack_copy);
 	memcpy((void *)current->thread.regs.regs.gp[HOST_SP],
-	       stack_copy, PAGE_SIZE << THREAD_SIZE_ORDER);
+	       stack_copy, 8);
 }
 
 __visible void do_syscall_64(struct pt_regs *regs)
@@ -114,6 +106,7 @@ __visible void do_syscall_64(struct pt_regs *regs)
 		userspace(&current->thread.regs.regs,
 			current_thread_info()->aux_fp_regs);
 	}
+	/* only parents of vfork restores the contents of stack */
 	if (syscall == __NR_vfork && regs->regs.gp[HOST_AX] > 0)
 		vfork_restore_stack(stack_copy);
 }
