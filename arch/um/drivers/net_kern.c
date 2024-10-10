@@ -24,6 +24,7 @@
 #include "mconsole_kern.h"
 #include <net_kern.h>
 #include <net_user.h>
+#include <shared/os.h>
 
 #define DRIVER_NAME "uml-netdev"
 

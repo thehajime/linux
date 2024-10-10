@@ -1,0 +1,15 @@
+# /etc/inittab
+
+::sysinit:/etc/init.d/rcS
+
+::respawn:/bin/sh
+# XXX: '-' makes endless loop with busybox 1.36.1
+#::respawn:-/bin/sh
+
+# Stuff to do when restarting the init process
+::restart:/sbin/init
+
+# Stuff to do before rebooting
+::ctrlaltdel:/sbin/reboot
+::shutdown:/bin/umount -a -r
+::shutdown:/sbin/swapoff -a

@@ -24,7 +24,9 @@ static int __init init_vdso(void)
 
 	BUG_ON(vdso_end - vdso_start > PAGE_SIZE);
 
+#ifdef CONFIG_MMU
 	um_vdso_addr = task_size - PAGE_SIZE;
+#endif
 
 	vdsop = kmalloc(sizeof(struct page *), GFP_KERNEL);
 	if (!vdsop)
@@ -40,16 +42,25 @@ static int __init init_vdso(void)
 	copy_page(page_address(um_vdso), vdso_start);
 	*vdsop = um_vdso;
 
+#ifndef CONFIG_MMU
+	/* this is fine with NOMMU as everything is accessible */
+	um_vdso_addr = (unsigned long)page_address(um_vdso);
+	pr_debug("vdso_start=%lx um_vdso_addr=%lx pg_um_vdso=%lx",
+	       (unsigned long)vdso_start, um_vdso_addr,
+	       (unsigned long)page_address(um_vdso));
+#endif
+
 	return 0;
 
 oom:
-	printk(KERN_ERR "Cannot allocate vdso\n");
+	pr_err("Cannot allocate vdso");
 	vdso_enabled = 0;
 
 	return -ENOMEM;
 }
 subsys_initcall(init_vdso);
 
+#ifdef CONFIG_MMU
 int arch_setup_additional_pages(struct linux_binprm *bprm, int uses_interp)
 {
 	int err;
@@ -70,3 +81,4 @@ int arch_setup_additional_pages(struct linux_binprm *bprm, int uses_interp)
 
 	return err;
 }
+#endif
