@@ -53,6 +53,26 @@ jobs:
         run: |
           sudo apt update -y
           sudo apt install -y ccache libseccomp-dev
+      - name: Setup latest Alpine Linux
+        uses: jirutka/setup-alpine@v1
+        with:
+           branch: v3.20
+           packages: >
+             alpine-sdk
+             doas
+             libtirpc-dev
+             linux-headers
+      - name: build bench tools
+        run: |
+          git clone https://github.com/ricarkol/lmbench2.git
+          cd lmbench2
+          touch src/Makefile
+          touch Makefile
+          make
+          cd ..
+          cc .github/workflows/do_getpid.c -o do_getpid
+        shell: alpine.sh {0}
+      # --root {0}
       # - name: Setup tmate session
       #   uses: mxschmitt/action-tmate@v3
       #   with:
@@ -71,7 +91,7 @@ jobs:
       - name: image for test
         run: |
           #container_id=$(docker create kollerr/alpine-test:latest)
-          container_id=$(docker create alpine:3.20.3 apk add utmps-libs)
+          container_id=$(docker create alpine:3.20.3 apk add utmps-libs libtirpc)
           docker start $container_id
           docker wait $container_id
           docker logs $container_id
@@ -79,9 +99,10 @@ jobs:
           docker rm $container_id
           mnt=$(mktemp -d)
           curl -L -o output.zip \
-               "https://gitlab.alpinelinux.org/thehajime/aports/-/jobs/1543371/artifacts/download?file_type=archive"
+               "https://gitlab.alpinelinux.org/thehajime/aports/-/jobs/1552615/artifacts/download?file_type=archive"
           unzip output.zip
           tar xfz packages/main/x86_64/busybox-nommu-1.36.1-r32.apk
+          tar xfz packages/main/x86_64/musl-nommu-1.2.5-r5.apk
 
           dd if=/dev/zero of=alpine.ext4 bs=1 count=0 seek=1G
           sudo chmod og+wr "alpine.ext4"
@@ -98,6 +119,7 @@ jobs:
 
           sudo cp bin/busybox.nommu $mnt/bin/busybox
           #sudo cp .github/workflows/busybox $mnt/bin/busybox
+          sudo cp lib/ld-musl-x86_64.so.1 $mnt/lib/
           echo "/sbin/halt" >> .github/workflows/rcS
           sudo mkdir -p $mnt/etc/init.d/
           sudo cp .github/workflows/rcS $mnt/etc/init.d/
@@ -105,7 +127,10 @@ jobs:
           cat .github/workflows/bench.sh | sed "s/time //" > /tmp/bench.sh
           chmod +x /tmp/bench.sh
           sudo cp /tmp/bench.sh $mnt/
-          sudo cp .github/workflows/do_getpid.alpine $mnt/root/do_getpid
+          sudo cp -rpf lmbench2 $mnt/
+          sudo cp .github/workflows/lmbench_run.sh $mnt/lmbench2/bin/x86_64-linux-gnulibc1
+          #sudo cp .github/workflows/do_getpid.alpine $mnt/root/do_getpid
+          sudo cp do_getpid $mnt/root/do_getpid
           sudo umount $mnt
       - name: test-0
         run: |
