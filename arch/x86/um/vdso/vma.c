@@ -9,6 +9,7 @@
 #include <asm/page.h>
 #include <asm/elf.h>
 #include <linux/init.h>
+#include <os.h>
 
 static unsigned int __read_mostly vdso_enabled = 1;
 unsigned long um_vdso_addr;
@@ -45,6 +46,7 @@ static int __init init_vdso(void)
 #ifndef CONFIG_MMU
 	/* this is fine with NOMMU as everything is accessible */
 	um_vdso_addr = (unsigned long)page_address(um_vdso);
+	os_protect_memory((void *)um_vdso_addr, vdso_end - vdso_start, 1, 1, 1);
 	pr_debug("vdso_start=%lx um_vdso_addr=%lx pg_um_vdso=%lx",
 	       (unsigned long)vdso_start, um_vdso_addr,
 	       (unsigned long)page_address(um_vdso));
