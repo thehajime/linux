@@ -67,7 +67,11 @@ void __init mem_init(void)
 	 * to be turned on.
 	 */
 	brk_end = (unsigned long) UML_ROUND_UP(sbrk(0));
+#ifdef CONFIG_MMU
 	map_memory(brk_end, __pa(brk_end), uml_reserved - brk_end, 1, 1, 0);
+#else
+	map_memory(brk_end, __pa(brk_end), uml_reserved - brk_end, 1, 1, 1);
+#endif
 	memblock_free((void *)brk_end, uml_reserved - brk_end);
 	uml_reserved = brk_end;
 
