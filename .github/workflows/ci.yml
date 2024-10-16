@@ -99,7 +99,7 @@ jobs:
           docker rm $container_id
           mnt=$(mktemp -d)
           curl -L -o output.zip \
-               "https://gitlab.alpinelinux.org/thehajime/aports/-/jobs/1552615/artifacts/download?file_type=archive"
+               "https://gitlab.alpinelinux.org/thehajime/aports/-/jobs/1562242/artifacts/download?file_type=archive"
           unzip output.zip
           tar xfz packages/main/x86_64/busybox-nommu-1.36.1-r32.apk
           tar xfz packages/main/x86_64/musl-nommu-1.2.5-r5.apk
