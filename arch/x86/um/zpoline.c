@@ -145,7 +145,7 @@ out:
  *
  * loaded binary by exec(2) is translated to call the function.
  */
-static int setup_zpoline_trampoline(void)
+static int __init setup_zpoline_trampoline(void)
 {
 	int i, ret;
 	int ptr;
