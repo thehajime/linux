@@ -90,7 +90,11 @@ void __init setup_physmem(unsigned long start, unsigned long reserve_end,
 		exit(1);
 	}
 
+#ifdef CONFIG_MMU
 	physmem_fd = create_mem_file(len + highmem);
+#else
+	physmem_fd = -1;
+#endif
 
 	err = os_map_memory((void *) reserve_end, physmem_fd, reserve,
 			    map_size, 1, 1, 1);
@@ -101,6 +105,7 @@ void __init setup_physmem(unsigned long start, unsigned long reserve_end,
 		exit(1);
 	}
 
+#ifdef CONFIG_MMU
 	/*
 	 * Special kludge - This page will be mapped in to userspace processes
 	 * from physmem_fd, so it needs to be written out there.
@@ -108,6 +113,7 @@ void __init setup_physmem(unsigned long start, unsigned long reserve_end,
 	os_seek_file(physmem_fd, __pa(__syscall_stub_start));
 	os_write_file(physmem_fd, __syscall_stub_start, PAGE_SIZE);
 	os_fsync_file(physmem_fd);
+#endif
 
 	memblock_add(__pa(start), len + highmem);
 	memblock_reserve(__pa(start), reserve);
