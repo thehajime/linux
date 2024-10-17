@@ -2,9 +2,7 @@
 
 ::sysinit:/etc/init.d/rcS
 
-::respawn:/bin/sh
-# XXX: '-' makes endless loop with busybox 1.36.1
-#::respawn:-/bin/sh
+::respawn:-/bin/sh
 
 # Stuff to do when restarting the init process
 ::restart:/sbin/init
