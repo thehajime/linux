@@ -19,13 +19,24 @@
  *  - flush_tlb_range(vma, start, end) flushes a range of pages
  */
 
+#ifdef CONFIG_MMU
+extern void force_flush_all(void);
 extern void flush_tlb_all(void);
 extern void flush_tlb_mm(struct mm_struct *mm);
-extern void flush_tlb_range(struct vm_area_struct *vma, unsigned long start, 
+extern void flush_tlb_range(struct vm_area_struct *vma, unsigned long start,
 			    unsigned long end);
 extern void flush_tlb_page(struct vm_area_struct *vma, unsigned long address);
 extern void flush_tlb_kernel_vm(void);
 extern void flush_tlb_kernel_range(unsigned long start, unsigned long end);
 extern void __flush_tlb_one(unsigned long addr);
+#else
+static inline void force_flush_all(void)
+{
+}
+
+static inline void flush_tlb_kernel_vm(void)
+{
+}
+#endif
 
 #endif
