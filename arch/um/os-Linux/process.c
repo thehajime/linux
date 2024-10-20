@@ -296,3 +296,14 @@ void init_new_thread_signals(void)
 	set_handler(SIGIO);
 	signal(SIGWINCH, SIG_IGN);
 }
+
+#ifndef CONFIG_MMU
+
+#include <unistd.h>
+#include <sys/syscall.h>   /* For SYS_xxx definitions */
+
+int os_arch_prctl(int pid, int option, unsigned long *arg2)
+{
+	return syscall(SYS_arch_prctl, option, arg2);
+}
+#endif

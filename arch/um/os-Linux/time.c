@@ -89,7 +89,8 @@ long long os_nsecs(void)
 {
 	struct timespec ts;
 
-	clock_gettime(CLOCK_MONOTONIC,&ts);
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+
 	return timespec_to_ns(&ts);
 }
 
