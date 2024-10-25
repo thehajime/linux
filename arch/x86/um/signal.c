@@ -537,6 +537,18 @@ int setup_signal_stack_si(unsigned long stack_top, struct ksignal *ksig,
 		/* could use a vstub here */
 		return err;
 
+#ifndef CONFIG_MMU
+	/*
+	 * we need to push handler address at top of stack, as
+	 * __kernel_vsyscall, called after this returns with ret with
+	 * stack contents, thus push the handler here.
+	 */
+	frame = (struct rt_sigframe __user *) ((unsigned long) frame -
+					       sizeof(unsigned long));
+	err |= __put_user((unsigned long)ksig->ka.sa.sa_handler,
+			  (unsigned long *)frame);
+#endif
+
 	if (err)
 		return err;
 
@@ -562,6 +574,20 @@ SYSCALL_DEFINE0(rt_sigreturn)
 	unsigned long sp = PT_REGS_SP(&current->thread.regs);
 	struct rt_sigframe __user *frame =
 		(struct rt_sigframe __user *)(sp - sizeof(long));
+#ifndef CONFIG_MMU
+	/**
+	 * we enter here with:
+	 *
+	 * __restore_rt:
+	 *     mov $15, %rax
+	 *     call *%rax (translated from syscall)
+	 *
+	 * (code is from musl libc)
+	 * so, stack needs to be popped of "call"ed address before
+	 * looking at rt_sigframe.
+	 */
+	frame = (struct rt_sigframe __user *)((unsigned long)frame + sizeof(long));
+#endif
 	struct ucontext __user *uc = &frame->uc;
 	sigset_t set;
 

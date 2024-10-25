@@ -12,6 +12,7 @@
 #include <sched.h>
 #include <signal.h>
 #include <string.h>
+#include <longjmp.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -278,6 +279,49 @@ void  __init get_host_cpu_features(
 	}
 }
 
+/**
+ * get_host_cpu_features() return true with X86_FEATURE_FSGSBASE even
+ * if the kernel is older and disabled using fsgsbase instruction.
+ * thus detection is based on whether SIGILL is raised or not.
+ */
+static jmp_buf jmpbuf;
+static int has_fsgsbase;
+
+static void sigill(int sig, siginfo_t *si, void *ctx_void)
+{
+	longjmp(jmpbuf, 1);
+}
+
+static int __init check_fsgsbase(void)
+{
+	unsigned long fsbase;
+	struct sigaction sa;
+
+	/* Probe FSGSBASE */
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_sigaction = sigill;
+	sa.sa_flags = SA_SIGINFO | SA_RESETHAND;
+	sigemptyset(&sa.sa_mask);
+	if (sigaction(SIGILL, &sa, 0))
+		os_warn("sigaction");
+
+	os_info("Checking FSGSBASE instructions...");
+	if (setjmp(jmpbuf) == 0) {
+		asm volatile("rdfsbase %0" : "=r" (fsbase) :: "memory");
+		has_fsgsbase = 1;
+		os_info("OK\n");
+	} else {
+		has_fsgsbase = 0;
+		os_info("disabled\n");
+	}
+
+	return 0;
+}
+
+int os_has_fsgsbase(void)
+{
+	return has_fsgsbase;
+}
 
 void __init os_early_checks(void)
 {
@@ -292,6 +336,9 @@ void __init os_early_checks(void)
 	 * kernel is running.
 	 */
 	check_tmpexec();
+
+	/* probe fsgsbase instruction */
+	check_fsgsbase();
 
 	pid = start_ptraced_child();
 	if (init_pid_registers(pid))

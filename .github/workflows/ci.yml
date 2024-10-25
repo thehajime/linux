@@ -1,0 +1,272 @@
+on:
+  push:
+    branches:
+      - '**'
+  #pull_request:
+  #  branches:
+  #    - master
+
+jobs:
+  tests:
+    runs-on: ${{ matrix.runs_on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - displayTargetName: ubuntu-22.04
+            os: unix
+            runs_on: ubuntu-22.04
+            shell: bash
+            defconfig: defconfig
+            testname: um-mmu
+          - displayTargetName: ubuntu-22.04 (nommu)
+            os: unix
+            runs_on: ubuntu-22.04
+            shell: bash
+            defconfig: x86_64_nommu_defconfig
+            kunit_opts: --kconfig_add CONFIG_MMU=n
+            testname: um-nommu
+    timeout-minutes: 100
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      USE_CCACHE: 1
+
+    defaults:
+       run:
+         shell: ${{ matrix.shell }}
+
+    steps:
+      - name: Set env
+        shell: bash
+        run: |
+          echo "/usr/lib/ccache/bin:/usr/lib/ccache:${{ github.workspace }}/bin" >> $GITHUB_PATH
+          echo "export PATH=/usr/lib/ccache/bin:/usr/lib/ccache:${{ github.workspace }}/bin:$PATH" >> $HOME/.bashrc
+
+      - name: Checkout
+        uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ runner.os }}-${{ matrix.defconfig }}-ccache-build-${{ github.sha }}
+          restore-keys: ${{ runner.os }}-${{ matrix.defconfig }}-ccache-build-
+      - name: Install packages
+        run: |
+          sudo apt update -y
+          sudo apt install -y ccache libseccomp-dev
+      - name: Setup latest Alpine Linux
+        uses: jirutka/setup-alpine@v1
+        with:
+           branch: v3.20
+           packages: >
+             alpine-sdk
+             doas
+             libtirpc-dev
+             linux-headers
+      - name: build bench tools
+        run: |
+          git clone https://github.com/ricarkol/lmbench2.git
+          cd lmbench2
+          touch src/Makefile
+          touch Makefile
+          make
+          cd ..
+          cc .github/workflows/do_getpid.c -o do_getpid
+        shell: alpine.sh {0}
+      # --root {0}
+      # - name: Setup tmate session
+      #   uses: mxschmitt/action-tmate@v3
+      #   with:
+      #     detached: true
+      - name: Setup faketty
+        uses: Yuri6037/Action-FakeTTY@v1.1 
+      - name: build-0 (static)
+        run: |
+          make ARCH=um ${{ matrix.defconfig }} O=build
+          cat build/.config | sed "s/.*CONFIG_STATIC_LINK.*/CONFIG_STATIC_LINK=y/" > /tmp/a; mv /tmp/a build/.config
+          make -j8 ARCH=um O=build
+      - name: Log in to docker.io
+        uses: docker/login-action@v3.2.0
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: image for test
+        run: |
+          #container_id=$(docker create kollerr/alpine-test:latest)
+          container_id=$(docker create alpine:3.20.3 apk add utmps-libs libtirpc)
+          docker start $container_id
+          docker wait $container_id
+          docker logs $container_id
+          docker export $container_id > alpine.tar
+          docker rm $container_id
+          mnt=$(mktemp -d)
+          curl -L -o output.zip \
+               "https://gitlab.alpinelinux.org/thehajime/aports/-/jobs/1566363/artifacts/download?file_type=archive"
+          unzip output.zip
+          tar xfz packages/main/x86_64/musl-nommu-1.2.5-r5.apk
+          tar xfz packages/main/x86_64/busybox-nommu-1.36.1-r32.apk
+
+          dd if=/dev/zero of=alpine.ext4 bs=1 count=0 seek=1G
+          sudo chmod og+wr "alpine.ext4"
+          yes 2>/dev/null | mkfs.ext4 "alpine.ext4" || true
+          sudo mount "alpine.ext4" $mnt
+          sudo tar -xf alpine.tar -C $mnt
+
+          sudo mknod -m 666 $mnt/dev/null c 1 3
+          sudo mknod -m 666 $mnt/dev/zero c 1 5
+          sudo mknod -m 666 $mnt/dev/ptmx c 5 2
+          sudo mknod -m 666 $mnt/dev/tty c 5 0
+          sudo mknod -m 444 $mnt/dev/random c 1 8
+          sudo mknod -m 444 $mnt/dev/urandom c 1 9
+
+          sudo cp lib/ld-musl-x86_64.so.1 $mnt/lib/
+          sudo cp bin/busybox $mnt/bin/
+          sudo mkdir -p $mnt/etc/init.d/
+          sudo cp .github/workflows/rcS  $mnt/etc/init.d/
+          sudo sh -c "echo '/sbin/halt' >> $mnt/etc/init.d/rcS"
+          sudo cp .github/workflows/inittab $mnt/etc/
+          sudo sh -c "echo "nameserver 8.8.8.8" > /etc/resolv.conf"
+          sudo cp .github/workflows/bench.sh $mnt/
+          sudo cp -rpf lmbench2 $mnt/
+          sudo cp .github/workflows/lmbench_run.sh $mnt/lmbench2/bin/x86_64-linux-gnulibc1
+          sudo cp do_getpid $mnt/root/do_getpid
+          sudo umount $mnt
+      - name: test-0
+        continue-on-error: true  # static-link with mmu-um fails (upstream bug?)
+        run: |
+          sudo sh -c "echo 0 > /proc/sys/vm/mmap_min_addr"
+          sudo ip tuntap add dev tap100 mode tap user ${USER}
+          faketty ./build/vmlinux eth0=tuntap,tap100,0e:fd:0:0:0:1,172.17.0.1 ubd0=./alpine.ext4 rw mem=1024m loglevel=8 console=tty init=/sbin/init 2>&1 | tee /tmp/log.txt
+          echo "========="
+          cat /tmp/log.txt
+      - name: kunit test
+        run: |
+          for config in `find ./ -name .kunitconfig | grep -v -E "kfence|sunrpc|handshake|kcsan|gpu|damon" `; do \
+            echo "==" $config "==" ; \
+            ./tools/testing/kunit/kunit.py run --kunitconfig=$config ${{ matrix.kunit_opts }}
+          done
+      - name: build-1
+        run: |
+          make ARCH=um ${{ matrix.defconfig }}
+          make -j8 ARCH=um
+      - name: test-1
+        run: |
+          faketty ./vmlinux eth0=tuntap,tap100,0e:fd:0:0:0:1,172.17.0.1 ubd0=./alpine.ext4 rw mem=1024m loglevel=8 init=/sbin/init 2>&1 | tee /tmp/log.txt
+          echo "========="
+          cat /tmp/log.txt
+      - name: benchmark-0
+        run: |
+           mkdir -p output
+           faketty ./vmlinux eth0=tuntap,tap100,0e:fd:0:0:0:1,172.17.0.1 ubd0=./alpine.ext4 rw mem=1024m \
+             loglevel=0 console=tty init=/bench.sh | tee output/${{ matrix.testname }}.dat
+      - name: prep for docker build
+        run: |
+           cp build/vmlinux .github/workflows/
+           cp -rpf lmbench2 .github/workflows/
+           cp do_getpid .github/workflows/
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+      - name: Log in to the ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .github/workflows
+          push: true
+          tags: |
+            ghcr.io/thehajime/alpine:3.20.3-${{ matrix.testname }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench-result-${{ matrix.testname }}
+          path: output/${{ matrix.testname }}.dat
+
+  checkpatch:
+    runs-on: ubuntu-22.04
+    name: checkpatch
+    steps:
+      - name: Checkout
+        with:
+          fetch-depth: 0
+        uses: actions/checkout@v4
+      - name: Install pip dependencies
+        run: sudo pip install ply GitPython
+      #- name: Setup tmate session
+      #  uses: mxschmitt/action-tmate@v3
+      #  with:
+      #    detached: true
+      - name: Check coding style
+        run: |
+           git checkout -b tmp
+           git remote add linus git://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git
+           git fetch linus
+           git format-patch -o p1 linus/master..HEAD~1
+           ./scripts/checkpatch.pl --summary-file --ignore FILE_PATH_CHANGES p1/*.patch
+
+  bench-result:
+    runs-on: ubuntu-22.04
+    name: bench-result
+    needs: tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+            path: output
+            pattern: bench-result-*
+            merge-multiple: true
+      - name: Display structure of downloaded files
+        run: ls -R output
+      - name: Install packages
+        run: |
+          sudo apt update -y
+          sudo apt install -y gnuplot lmbench
+      - name: benchmark-host
+        run: |
+           mkdir -p output
+           sudo ln -s /usr/include/x86_64-linux-gnu/sys /usr/include/sys
+           sudo mkdir -p /var/tmp/lmbench/
+           sudo chown ${USER} /var/tmp/lmbench/
+           sh .github/workflows/lmbench_run.sh |& tee output/native.dat
+           gcc -o do_getpid .github/workflows/do_getpid.c
+           ./do_getpid -c 100 | tee -a output/native.dat
+      - name: bench data parse/out
+        run: |
+          export TMP_OUTPUT=$(bash .github/workflows/um-nommu-plot.sh output)
+          echo "TMP_OUTPUT<<EOF" >> $GITHUB_ENV
+          echo "$TMP_OUTPUT" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+          echo ${{env.TMP_OUTPUT}}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench-result-all
+          path: output/out/lmbench.*
+      - name: publish to imgur
+        uses: devicons/public-upload-to-imgur@v2.2.2
+        id: publish-to-imgur
+        with:
+          path: "output/out/*.png"
+          client_id: ${{secrets.IMGUR_CLIENT_ID}}
+      - name: bench data parse/out
+        run: |
+          export SCRIPT_OUTPUT="${{ join(fromJSON(steps.publish-to-imgur.outputs.markdown_urls)) }}"
+          echo "SCRIPT_OUTPUT<<EOF" >> $GITHUB_ENV
+          echo "$TMP_OUTPUT" >> $GITHUB_ENV
+          echo "" >> $GITHUB_ENV
+          echo "$SCRIPT_OUTPUT" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+          echo ${{env.SCRIPT_OUTPUT}}
+      - uses: actions/github-script@v7
+        env:
+          COMMENT_BODY: ${{env.SCRIPT_OUTPUT}}
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: 1,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: process.env.COMMENT_BODY
+            })

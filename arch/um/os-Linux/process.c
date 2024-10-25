@@ -92,7 +92,10 @@ int os_process_parent(int pid)
 
 void os_alarm_process(int pid)
 {
+/* !CONFIG_MMU doesn't send alarm signal to other processes */
+#ifdef UML_CONFIG_MMU
 	kill(pid, SIGALRM);
+#endif
 }
 
 void os_stop_process(int pid)
@@ -114,11 +117,14 @@ void os_kill_process(int pid, int reap_child)
 
 void os_kill_ptraced_process(int pid, int reap_child)
 {
+/* !CONFIG_MMU doesn't have ptraced process */
+#ifdef UML_CONFIG_MMU
 	kill(pid, SIGKILL);
 	ptrace(PTRACE_KILL, pid);
 	ptrace(PTRACE_CONT, pid);
 	if (reap_child)
 		CATCH_EINTR(waitpid(pid, NULL, __WALL));
+#endif
 }
 
 /* Don't use the glibc version, which caches the result in TLS. It misses some
@@ -144,8 +150,13 @@ int os_map_memory(void *virt, int fd, unsigned long long off, unsigned long len,
 	prot = (r ? PROT_READ : 0) | (w ? PROT_WRITE : 0) |
 		(x ? PROT_EXEC : 0);
 
+#ifdef UML_CONFIG_MMU
 	loc = mmap64((void *) virt, len, prot, MAP_SHARED | MAP_FIXED,
 		     fd, off);
+#else
+	loc = mmap64((void *) virt, len, prot, MAP_SHARED | MAP_FIXED | MAP_ANONYMOUS,
+		     fd, off);
+#endif
 	if (loc == MAP_FAILED)
 		return -errno;
 	return 0;
@@ -285,3 +296,14 @@ void init_new_thread_signals(void)
 	set_handler(SIGIO);
 	signal(SIGWINCH, SIG_IGN);
 }
+
+#ifndef CONFIG_MMU
+
+#include <unistd.h>
+#include <sys/syscall.h>   /* For SYS_xxx definitions */
+
+int os_arch_prctl(int pid, int option, unsigned long *arg2)
+{
+	return syscall(SYS_arch_prctl, option, arg2);
+}
+#endif

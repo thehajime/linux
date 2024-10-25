@@ -141,6 +141,7 @@ bad_wait:
 
 extern unsigned long current_stub_stack(void);
 
+#ifdef UML_CONFIG_MMU
 static void get_skas_faultinfo(int pid, struct faultinfo *fi, unsigned long *aux_fp_regs)
 {
 	int err;
@@ -186,6 +187,7 @@ static void handle_trap(int pid, struct uml_pt_regs *regs)
 
 	handle_syscall(regs);
 }
+#endif
 
 extern char __syscall_stub_start[];
 
@@ -336,6 +338,7 @@ int start_userspace(unsigned long stub_stack)
 	return err;
 }
 
+#ifdef UML_CONFIG_MMU
 void userspace(struct uml_pt_regs *regs, unsigned long *aux_fp_regs)
 {
 	int err, status, op, pid = userspace_pid[0];
@@ -472,6 +475,7 @@ void userspace(struct uml_pt_regs *regs, unsigned long *aux_fp_regs)
 		}
 	}
 }
+#endif /* UML_CONFIG_MMU */
 
 void new_thread(void *stack, jmp_buf *buf, void (*handler)(void))
 {

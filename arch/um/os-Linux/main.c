@@ -16,6 +16,7 @@
 #include <kern_util.h>
 #include <os.h>
 #include <um_malloc.h>
+#include <asm/prctl.h> /* XXX This should get the constants from libc */
 #include "internal.h"
 
 #define PGD_BOUND (4 * 1024 * 1024)
@@ -141,6 +142,10 @@ int __init main(int argc, char **argv, char **envp)
 
 	change_sig(SIGPIPE, 0);
 	ret = linux_main(argc, argv);
+
+#ifndef CONFIG_MMU
+	os_arch_prctl(0, ARCH_SET_FS, (void *)host_fs);
+#endif
 
 	/*
 	 * Disable SIGPROF - I have no idea why libc doesn't do this or turn

@@ -3,7 +3,8 @@
 # Copyright (C) 2002 - 2007 Jeff Dike (jdike@{addtoit,linux.intel}.com)
 #
 
-obj-y := stub.o mmu.o process.o syscall.o uaccess.o
+obj-y := stub.o process.o
+obj-$(CONFIG_MMU) += mmu.o syscall.o uaccess.o
 
 # stub.o is in the stub, so it can't be built with profiling
 # GCC hardened also auto-enables -fpic, but we need %ebx so it can't work ->
