@@ -50,6 +50,12 @@ static void sig_handler_common(int sig, struct siginfo *si, mcontext_t *mc)
 	(*sig_info[sig])(sig, si, &r);
 
 	errno = save_errno;
+
+#ifndef CONFIG_MMU
+	/* !MMU: force handle signals after rt_sigreturn() */
+	if (r.is_user && sig == SIGSEGV)
+		mc_set_regs_ip_relay(mc);
+#endif
 }
 
 /*
