@@ -19,6 +19,8 @@
 #include <linux/regset.h>
 #include <asm/sigframe.h>
 
+#include <sysdep/signal.h>
+
 #ifdef CONFIG_X86_32
 struct _xstate_64 {
 	struct _fpstate_64		fpstate;
@@ -370,6 +372,13 @@ int setup_signal_stack_si(unsigned long stack_top, struct ksignal *ksig,
 	frame = (struct rt_sigframe __user *)
 		round_down(stack_top - sizeof(struct rt_sigframe), 16);
 
+#ifndef CONFIG_MMU
+	/*
+	 * the sig_frame on !MMU needs be aligned for SSE as
+	 * the frame is used as-is.
+	 */
+	math_size = round_down(math_size, 16);
+#endif
 	/* Add required space for math frame */
 	frame = (struct rt_sigframe __user *)((unsigned long)frame - math_size);
 
@@ -417,6 +426,8 @@ int setup_signal_stack_si(unsigned long stack_top, struct ksignal *ksig,
 		/* could use a vstub here */
 		return err;
 
+	/* fixup rt_sigframe for nommu */
+	err |= arch_setup_signal_stack_si(&frame, ksig);
 	if (err)
 		return err;
 
@@ -442,8 +453,12 @@ SYSCALL_DEFINE0(rt_sigreturn)
 	unsigned long sp = PT_REGS_SP(&current->thread.regs);
 	struct rt_sigframe __user *frame =
 		(struct rt_sigframe __user *)(sp - sizeof(long));
-	struct ucontext __user *uc = &frame->uc;
+	struct ucontext __user *uc;
 	sigset_t set;
+
+	/* fixup rt_sigframe for nommu */
+	frame = arch_setup_rt_sigreturn(frame);
+	uc = &frame->uc;
 
 	if (copy_from_user(&set, &uc->uc_sigmask, sizeof(set)))
 		goto segfault;

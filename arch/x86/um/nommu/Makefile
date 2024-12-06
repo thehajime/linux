@@ -5,4 +5,4 @@ else
 	BITS := 64
 endif
 
-obj-y = do_syscall_$(BITS).o entry_$(BITS).o process.o syscalls_$(BITS).o os-Linux/
+obj-y = do_syscall_$(BITS).o entry_$(BITS).o process.o signal.o syscalls_$(BITS).o os-Linux/
