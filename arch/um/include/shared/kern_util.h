@@ -67,4 +67,12 @@ void um_idle_sleep(void);
 
 void kasan_map_memory(void *start, size_t len);
 
+#ifdef CONFIG_MMU
+static inline void arch_sigsys_handler(int sig, struct siginfo *si, void *mc)
+{
+}
+#else
+extern void arch_sigsys_handler(int sig, struct siginfo *si, void *mc);
+#endif
+
 #endif

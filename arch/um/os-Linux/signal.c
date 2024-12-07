@@ -172,12 +172,18 @@ void register_pm_wake_signal(void)
 	set_handler(SIGUSR1);
 }
 
+static void sigsys_handler(int sig, struct siginfo *unused_si, mcontext_t *mc)
+{
+	arch_sigsys_handler(sig, unused_si, mc);
+}
+
 static void (*handlers[_NSIG])(int sig, struct siginfo *si, mcontext_t *mc) = {
 	[SIGSEGV] = sig_handler,
 	[SIGBUS] = sig_handler,
 	[SIGILL] = sig_handler,
 	[SIGFPE] = sig_handler,
 	[SIGTRAP] = sig_handler,
+	[SIGSYS] = sigsys_handler,
 
 	[SIGIO] = sig_handler,
 	[SIGWINCH] = sig_handler,
