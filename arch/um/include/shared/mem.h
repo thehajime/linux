@@ -19,4 +19,12 @@ static inline void *uml_to_virt(unsigned long phys)
 	return((void *) uml_physmem + phys);
 }
 
+#ifdef CONFIG_MMU
+extern void um_fixrange_init(void);
+#else
+static inline void um_fixrange_init(void)
+{
+}
+#endif
+
 #endif

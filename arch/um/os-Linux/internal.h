@@ -3,6 +3,11 @@
 #define __UM_OS_LINUX_INTERNAL_H
 
 /*
+ * process.c
+ */
+extern int userspace_pid[];
+
+/*
  * elf_aux.c
  */
 void scan_elf_aux(char **envp);
