@@ -155,7 +155,7 @@ jobs:
           sudo apt install -y binutils-dev lib32gcc-s1 libgcc-s1:amd64
           git clone https://github.com/yasukata/zpoline
           cd zpoline
-          git checkout 022a3b8c7a5c23bfd99162b478bf3eb5f70c07a2
+          git checkout 56aec879727af984ed7ebc28067f4f9c7cb60bdf
           make
           cd ..
           # This is the whole point of zpoline
