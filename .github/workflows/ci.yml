@@ -139,7 +139,7 @@ jobs:
       - name: install zpoline
         if: matrix.displayTargetName == 'zpoline'
         run: |
-          sudo apt install -y binutils-dev lib32gcc-s1
+          sudo apt install -y binutils-dev lib32gcc-s1 libgcc-s1:amd64
           git clone https://github.com/yasukata/zpoline
           cd zpoline
           git checkout 56aec879727af984ed7ebc28067f4f9c7cb60bdf
