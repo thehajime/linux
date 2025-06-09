@@ -422,6 +422,11 @@ void __init setup_arch(char **cmdline_p)
 		add_bootloader_randomness(rng_seed, sizeof(rng_seed));
 		memzero_explicit(rng_seed, sizeof(rng_seed));
 	}
+
+	/* install seccomp filter */
+#ifdef CONFIG_UML_NOMMU_SAS
+	os_setup_seccomp();
+#endif
 }
 
 void __init arch_cpu_finalize_init(void)

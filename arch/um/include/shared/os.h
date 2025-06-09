@@ -356,4 +356,14 @@ static inline void os_local_ipi_enable(void) { }
 static inline void os_local_ipi_disable(void) { }
 #endif /* CONFIG_SMP */
 
+/* seccomp.c */
+#ifdef CONFIG_MMU
+static inline int os_setup_seccomp(void)
+{
+	return 0;
+}
+#else
+extern int os_setup_seccomp(void);
+#endif
+
 #endif
