@@ -1,3 +1,5 @@
+include $(srctree)/init/Makefile.nolibc
+
 obj-$(CONFIG_KUNIT) +=			kunit.o
 
 kunit-objs +=				test.o \
@@ -33,3 +35,10 @@ obj-$(CONFIG_KUNIT_TEST) +=		assert_test.o
 endif
 
 obj-$(CONFIG_KUNIT_EXAMPLE_TEST) +=	kunit-example-test.o
+
+userprogs +=				kunit-example-uapi
+kunit-example-uapi-userccflags :=	-static $(NOLIBC_USERCFLAGS)
+
+ifdef CONFIG_KUNIT_UAPI
+$(obj)/kunit-example-test.o: $(obj)/kunit-example-uapi
+endif
