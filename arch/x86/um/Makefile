@@ -15,6 +15,8 @@ obj-y = bugs_$(BITS).o delay.o fault.o \
 	sys_call_table_$(BITS).o sysrq_$(BITS).o tls_$(BITS).o \
 	subarch.o os-Linux/
 
+obj-y += tests/
+
 ifeq ($(CONFIG_X86_32),y)
 
 obj-y += syscalls_32.o
