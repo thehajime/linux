@@ -71,6 +71,7 @@
 #include <linux/unwind_deferred.h>
 #include <linux/uaccess.h>
 #include <linux/pidfs.h>
+#include <linux/export.h>
 
 #include <uapi/linux/wait.h>
 
@@ -1935,6 +1936,7 @@ int kernel_wait(pid_t pid, int *stat)
 	put_pid(wo.wo_pid);
 	return ret;
 }
+EXPORT_SYMBOL_FOR_MODULES(kernel_wait, "kunit-uapi");
 
 SYSCALL_DEFINE4(wait4, pid_t, upid, int __user *, stat_addr,
 		int, options, struct rusage __user *, ru)

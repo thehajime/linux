@@ -69,6 +69,7 @@
 #include <linux/user_events.h>
 #include <linux/rseq.h>
 #include <linux/ksm.h>
+#include <linux/export.h>
 
 #include <linux/uaccess.h>
 #include <asm/mmu_context.h>
@@ -1921,6 +1922,7 @@ int kernel_execve(const char *kernel_filename,
 
 	return bprm_execve(bprm);
 }
+EXPORT_SYMBOL_FOR_MODULES(kernel_execve, "kunit-uapi");
 
 void set_binfmt(struct linux_binfmt *new)
 {
