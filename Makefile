@@ -1251,8 +1251,8 @@ ifneq ($(CONFIG_ARCH_VMLINUX_NEEDS_RELOCS),)
 LDFLAGS_vmlinux	+= --emit-relocs --discard-none
 endif
 
-# Align the architecture of userspace programs with the kernel
-USERFLAGS_FROM_KERNEL := --target=%
+# Align the bit size, byte order and architecture of userspace programs with the kernel
+USERFLAGS_FROM_KERNEL := -m32 -m64 -mlittle-endian -mbig-endian --target=% -march=% -mabi=%
 
 ifdef CONFIG_ARCH_USERFLAGS
 KBUILD_USERCFLAGS += $(CONFIG_ARCH_USERFLAGS)
