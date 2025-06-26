@@ -15,7 +15,13 @@ kunit-objs +=				test.o \
 					platform.o \
 					bug.o
 
+userprogs +=				uapi-preinit
+uapi-preinit-userccflags +=		-static $(NOLIBC_USERCFLAGS) \
+					-include include/generated/autoconf.h \
+					-include $(srctree)/tools/include/linux/kconfig.h
 obj-$(CONFIG_KUNIT_UAPI) +=		kunit-uapi.o
+
+$(obj)/kunit-uapi.o: $(obj)/uapi-preinit
 
 ifeq ($(CONFIG_KUNIT_DEBUGFS),y)
 kunit-objs +=				debugfs.o
