@@ -2,12 +2,18 @@
 # Compiler flags, which are necessary to build userspace applications with the
 # in-kernel libc "nolibc".
 
+ifeq ($(CONFIG_MMU),y)
+     NOLIBC_STATIC_FLAG := -static
+else
+     NOLIBC_STATIC_FLAG := -static-pie
+endif
+
 ifeq ($(and $(CONFIG_ARCH_HAS_NOLIBC),$(CONFIG_HEADERS_INSTALL)),y)
 
-NOLIBC_USERCFLAGS := -nostdlib -nostdinc -static -ffreestanding \
+NOLIBC_USERCFLAGS := -nostdlib -nostdinc $(NOLIBC_STATIC_FLAG) -ffreestanding \
 		     -fno-asynchronous-unwind-tables -fno-stack-protector \
 		     -isystem $(objtree)/usr/include -isystem $(srctree)/tools/include/nolibc/
 
-NOLIBC_USERLDFLAGS := -nostdlib -nostdinc -static
+NOLIBC_USERLDFLAGS := -nostdlib -nostdinc $(NOLIBC_STATIC_FLAG)
 
 endif # CONFIG_ARCH_HAS_NOLIBC && CONFIG_HEADERS_INSTALL

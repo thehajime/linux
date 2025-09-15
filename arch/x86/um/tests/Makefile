@@ -5,7 +5,7 @@ ccflags-y := -I$(obj)
 um-tests-y += registers.o
 
 userprogs += test-fp-save-restore
-test-fp-save-restore-userccflags := -static $(NOLIBC_USERCFLAGS) -msse
+test-fp-save-restore-userccflags := $(NOLIBC_USERCFLAGS) -msse
 
 obj-$(CONFIG_KUNIT_UAPI) += um-tests.o
 
