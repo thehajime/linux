@@ -1,0 +1,221 @@
+#add-auto-load-safe-path /home/tazaki/gitworks/osv/scripts/loader.py
+
+handle SIGUSR1 nostop
+#set annotate 1
+set history save on
+set history size 10000
+set history filename ~/.gdb_history
+set print pretty on
+set print static-members off
+set charset ASCII
+set print thread-events off
+directory /home/tazaki/work/nabla-linux/tests/busybox.git:/home/tazaki/work/nabla-linux/tests/musl-git/:/home/tazaki/work/deb-src/glibc-2.39/
+
+define ntoa
+        set $ipv4 = $arg0
+        echo IPV4 =.
+        p $ipv4
+        set $val1 = ($ipv4 >> 24) & 0xff
+        set $val2 = ($ipv4 >> 16) & 0xff
+        set $val3 = ($ipv4 >>  8) & 0xff
+        set $val4 = ($ipv4 >>  0) & 0xff
+       printf "IPV4=%u=0x%02x.%02x.%02x.%02x =%d.%d.%d.%d\n", $ipv4, $val1, $val2, $val3, $val4, $val1, $val2, $val3, $val4
+    end
+
+# change prompt
+#source /home/tazaki/gdb-prompt.py
+
+define walk_list
+	set $temp = $arg0
+	while ($temp)
+	printf "(%d,0x%X)-->",((sll*)$temp)->data,((sll*)$temp)->next
+	set $temp = ((sll*)$temp)->next
+	end
+	printf "Done\n"
+end
+
+define walk_tailq
+	set $temp = $arg0->tqh_first
+	while ($temp)
+	printf "(%s,0x%lx,runnable=%d)-->", ((struct thread *)$temp)->name,(struct thread *)$temp, is_runnable((struct thread *)$temp)
+	set $temp = ((struct thread *)$temp)->thread_list->tqe_next
+	end
+	printf "Done\n"
+end
+
+define lkl_hijack
+	set environment LD_LIBRARY_PATH=../openssl:tools/lkl/lib/hijack/:lib/hijack/
+	set exec-wrapper env 'LD_PRELOAD=liblkl-hijack.so'
+end
+
+define zpoline
+	set exec-wrapper env 'LD_PRELOAD=./libzpoline.so'
+	set environment LIBZPHOOK=libzphook_basic.so
+	set environment LD_LIBRARY_PATH=/home/tazaki/work/zpoline/zpoline/apps/basic/
+end
+
+define zpoline_lkl
+	set environment LKL_HIJACK_ZPOLINE=1
+	set environment LIBZPHOOK=liblkl-zpoline.so
+	set environment LD_LIBRARY_PATH=../openssl:tools/lkl/lib/hijack/:lib/hijack/:/home/tazaki/work/zpoline/zpoline
+	set exec-wrapper env 'LD_PRELOAD=libzpoline.so'
+end
+
+define zpoline_rsocket
+	set environment LIBZPHOOK=librszpoline.so
+	set environment LD_LIBRARY_PATH=./build/lib/:/home/tazaki/work/zpoline/zpoline
+	set exec-wrapper env 'LD_PRELOAD=libzpoline.so'
+end
+
+define rsocket
+	set environment LD_LIBRARY_PATH=./build/lib/
+	set exec-wrapper env 'LD_PRELOAD=librspreload.so'
+end
+
+define upregs
+  set $regs = 0
+  if $argc == 0
+    set $regs = (((struct pt_regs *)current_ptregs)->regs->gp)
+  else
+    set $regs = ((struct uml_pt_regs *)$arg0)->gp
+  end
+
+  printf "rax=0x%08lx\t\tAX[10]=0x%08lx\t\tO_AX[15]=0x%lx\n", $rax, $regs[10], $regs[15]
+  printf "rbx=0x%08lx\t\tBX[5]=0x%08lx\n", $rbx, $regs[5]
+  printf "rcx=0x%08lx\t\tCX[11]=0x%08lx\n", $rcx,$regs[11]
+  printf "rdx=0x%08lx\t\tDX[12]=0x%08lx\n", $rdx,$regs[12]
+  printf "rsi=0x%08lx\t\tSI[13]=0x%08lx\n", $rsi, $regs[13]
+  printf "rdi=0x%08lx\t\tDI[14]=0x%08lx\n", $rdi, $regs[14]
+  printf "rbp=0x%08lx\t\tBP[4]=0x%08lx\n", $rbp, $regs[4]
+  printf "rsp=0x%08lx\t\tSP[19]=0x%08lx\n", $rsp, $regs[19]
+  printf " r8=0x%08lx\t\tR8[9]=0x%08lx\n", $r8,$regs[9]
+  printf " r9=0x%08lx\t\tR9[8]=0x%08lx\n", $r9,$regs[8]
+  printf "r10=0x%08lx\t\tR10[7]=0x%08lx\n", $r10,$regs[7]
+  printf "r11=0x%08lx\t\tR11[6]=0x%08lx\n", $r11,$regs[6]
+  printf "r12=0x%08lx\t\tR12[3]=0x%08lx\n", $r12,$regs[3]
+  printf "r13=0x%08lx\t\tR13[2]=0x%08lx\n", $r13,$regs[2]
+  printf "r14=0x%08lx\t\tR14[1]=0x%08lx\n", $r14,$regs[1]
+  printf "r15=0x%08lx\t\tR15[0]=0x%08lx\n", $r15,$regs[0]
+  printf "rip=0x%08lx\t\tIP[16]=0x%08lx\n", $rip,$regs[16]
+  printf "eflags=0x%08lx\t\tEFLAGS[18]=0x%lx\n", $eflags,$regs[18]
+  printf "CS[17]=0x%lx, ", $regs[17]
+  printf "SS[20]=0x%lx\n", $regs[20]
+end
+
+define pregs
+  if $argc == 1
+    print $arg0 *(struct pt_regs *)current_ptregs
+  else
+    print *(struct pt_regs *)current_ptregs
+  end
+  printf "pregs=0x%x, AX[10]=%ld, CX[11]=0x%lx, DX[12]=0x%lx, ORIG_AX[15]=%ld, IP[16]=0x%x, SP[19]=0x%x HOST_FS[25]=0x%x, FS[21]=0x%x, FP=0x%x\n", \
+     current_ptregs, ((struct pt_regs *)current_ptregs)->regs.gp[10], \
+     ((struct pt_regs *)current_ptregs)->regs.gp[11], ((struct pt_regs *)current_ptregs)->regs.gp[12],\
+     ((struct pt_regs *)current_ptregs)->regs.gp[15], ((struct pt_regs *)current_ptregs)->regs.gp[16],\
+     ((struct pt_regs *)current_ptregs)->regs.gp[19], ((struct pt_regs *)current_ptregs)->regs.gp[25],\
+     ((struct pt_regs *)current_ptregs)->regs.gp[21], ((struct pt_regs *)current_ptregs)->regs.fp
+end
+
+## source /home/tazaki/.gdbinit_defs
+## 
+## define syscall
+##   printf "syscall/rax\t = %d(%s)\n", ((struct pt_regs *)current_ptregs)->regs.gp[15], \
+##   	$syscall_tbl[((struct pt_regs *)current_ptregs)->regs.gp[15]]
+##   printf "ret/rax\t\t\t = %d\n", $rax
+##   printf "retp/rcx\t\t = 0x%x\n", $rcx
+##   printf "arg0/rdi\t\t = 0x%x\n", $rdi
+##   printf "arg1/rsi\t\t = 0x%x\n", $rsi
+##   printf "arg2/rdx\t\t = 0x%x\n", $rdx
+##   printf "arg3/r10\t\t = 0x%x\n", $r10
+##   printf "arg4/r8\t\t\t = 0x%x\n", $r8
+##   printf "arg5/r9\t\t\t = 0x%x\n", $r9
+## end
+
+source /home/tazaki/work/mino/mino/gdbinit-minoc
+
+python
+import subprocess
+import re
+
+def relocatesections(filename, addr):
+    p = subprocess.Popen(["readelf", "-S", filename], stdout = subprocess.PIPE)
+
+    sections = []
+    textaddr = '0'
+    for line in p.stdout.readlines():
+        line = line.decode("utf-8").strip()
+        if not line.startswith('[') or line.startswith('[Nr]'):
+            continue
+
+        line = re.sub(r' +', ' ', line)
+        line = re.sub(r'\[ *(\d+)\]', r"\g<1>", line)
+        fieldsvalue = line.split(' ')
+        fieldsname = ['number', 'name', 'type', 'addr', 'offset', 'size', 'entsize', 'flags', 'link', 'info', 'addralign']
+        sec = dict(zip(fieldsname, fieldsvalue))
+
+        if sec['number'] == '0':
+            continue
+
+        sections.append(sec)
+
+        if sec['name'] == '.text':
+            textaddr = sec['addr']
+
+    return (textaddr, sections)
+
+
+class AddSymbolFileAll(gdb.Command):
+    """The right version for add-symbol-file"""
+
+    def __init__(self):
+        super(AddSymbolFileAll, self).__init__("add-symbol-file-all", gdb.COMMAND_USER)
+        self.dont_repeat()
+
+    def invoke(self, arg, from_tty):
+        argv = gdb.string_to_argv(arg)
+        filename = argv[0]
+
+        if len(argv) > 1:
+            offset = int(str(gdb.parse_and_eval(argv[1])), 0)
+        else:
+            offset = 0
+
+        (textaddr, sections) = relocatesections(filename, offset)
+
+        cmd = "add-symbol-file %s 0x%08x" % (filename, int(textaddr, 16) + offset)
+
+        for s in sections:
+            addr = int(s['addr'], 16)
+            if s['name'] == '.text' or addr == 0:
+                continue
+
+            cmd += " -s %s 0x%08x" % (s['name'], addr + offset)
+
+        gdb.execute(cmd)
+
+class RemoveSymbolFileAll(gdb.Command):
+    """The right version for remove-symbol-file"""
+
+    def __init__(self):
+        super(RemoveSymbolFileAll, self).__init__("remove-symbol-file-all", gdb.COMMAND_USER)
+        self.dont_repeat()
+
+    def invoke(self, arg, from_tty):
+        argv = gdb.string_to_argv(arg)
+        filename = argv[0]
+
+        if len(argv) > 1:
+            offset = int(str(gdb.parse_and_eval(argv[1])), 0)
+        else:
+            offset = 0
+
+        (textaddr, _) = relocatesections(filename, offset)
+
+        cmd = "remove-symbol-file -a 0x%08x" % (int(textaddr, 16) + offset)
+        gdb.execute(cmd)
+
+
+AddSymbolFileAll()
+RemoveSymbolFileAll()
+end
+#source /home/tazaki/work/gdb-symbols.py

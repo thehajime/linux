@@ -1,0 +1,79 @@
+#nommu limitations?
+# sad thread..
+# https://lore.gnuweeb.org/io-uring/2026042115-body-attention-d15b@gregkh/T/
+#
+#io_uring01
+#io_uring02
+#io_uring03
+
+# alpine limitation
+fmtmsg01
+timer_create01
+timer_create03
+
+# gh CI fail
+ioctl09
+
+# numa
+move_pages
+set_mempolicy
+migrate_pages
+mbind
+get_mempolicy
+
+# aio w/ nommu doesn't work ...
+# io_setup(2) fails ENOMEM (mmap flags)
+eventfd06
+io_cancel
+io_getevents
+io_pgetevents
+io_setup
+io_submit
+io_destroy01
+io_destroy02
+io_getevents01
+io_setup02
+io_submit02
+io_submit03
+
+
+#Old API
+pipeio_1
+pipeio_2
+pipeio_3
+pipeio_4
+pipeio_5
+pipeio_6
+pipeio_7
+pipeio_8
+nftw01
+nftw6401
+
+
+nice05
+timerfd_settime02
+
+timer_settime01
+timer_settime03
+unshare03
+unshare04
+abort01
+perf_event_open02
+
+clock_gettime01
+fork13
+fork14
+
+# XXX
+ptrace07
+ptrace08
+ptrace09
+ptrace10
+keyctl02
+keyctl05
+
+# um-mmu case
+sched_setscheduler04
+
+# riscv pthread?
+epoll01
