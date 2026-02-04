@@ -10,10 +10,47 @@
 #include <linux/sched/mm.h>
 #include <linux/syscalls.h>
 #include <linux/uaccess.h>
+#include <asm/fsgsbase.h>
 #include <asm/prctl.h> /* XXX This should get the constants from libc */
 #include <registers.h>
 #include <os.h>
 #include "syscalls.h"
+
+/*
+ * The guest libc can change FS, which confuses the host libc.
+ * In fact, changing FS directly is not supported (check
+ * man arch_prctl). So, whenever we make a host syscall,
+ * we should be changing FS to the original FS (not the
+ * one set by the guest libc). This original FS is stored
+ * in host_fs.
+ */
+long long host_fs = -1;
+
+int os_x86_arch_prctl(int pid, int option, unsigned long *arg2)
+{
+	if (!host_has_fsgsbase)
+		return os_arch_prctl(pid, option, arg2);
+
+	switch (option) {
+	case ARCH_SET_FS:
+		wrfsbase(*arg2);
+		break;
+	case ARCH_SET_GS:
+		wrgsbase(*arg2);
+		break;
+	case ARCH_GET_FS:
+		*arg2 = rdfsbase();
+		break;
+	case ARCH_GET_GS:
+		*arg2 = rdgsbase();
+		break;
+	default:
+		pr_warn("%s: unsupported option: 0x%x", __func__, option);
+		break;
+	}
+
+	return 0;
+}
 
 void arch_set_stack_to_current(void)
 {
@@ -35,6 +72,15 @@ void arch_switch_to(struct task_struct *to)
 		return;
 
 	/* this changes the FS on every context switch */
-	arch_prctl(to, ARCH_SET_FS,
+	os_x86_arch_prctl(0, ARCH_SET_FS,
 		   (void __user *) to->thread.regs.regs.gp[FS_BASE / sizeof(unsigned long)]);
 }
+
+static int __init um_nommu_setup_hostfs(void)
+{
+	/* initialize the host_fs value at boottime */
+	os_x86_arch_prctl(0, ARCH_GET_FS, (void *)&host_fs);
+
+	return 0;
+}
+arch_initcall(um_nommu_setup_hostfs);
