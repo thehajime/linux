@@ -21,6 +21,7 @@ void set_mc_relay_signal(mcontext_t *mc)
 
 void set_mc_sigsys_hook(mcontext_t *mc)
 {
+	os_x86_set_hostfs();
 	mc->gregs[REG_RCX] = mc->gregs[REG_RIP];
 	mc->gregs[REG_RIP] = (unsigned long) __kernel_vsyscall;
 }

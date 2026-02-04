@@ -15,5 +15,6 @@ extern long current_ptregs;
 
 int os_x86_arch_prctl(int pid, int option, unsigned long *arg2);
 void arch_set_stack_to_current(void);
+void os_x86_set_hostfs(void);
 
 #endif

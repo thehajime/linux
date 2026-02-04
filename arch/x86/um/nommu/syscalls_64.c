@@ -84,3 +84,11 @@ static int __init um_nommu_setup_hostfs(void)
 	return 0;
 }
 arch_initcall(um_nommu_setup_hostfs);
+
+void os_x86_set_hostfs(void)
+{
+	if (host_fs == -1)
+		um_nommu_setup_hostfs();
+
+	os_x86_arch_prctl(0, ARCH_SET_FS, (void *)host_fs);
+}
