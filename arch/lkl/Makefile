@@ -73,6 +73,8 @@ configh-$(CONFIG_KASAN_KUNIT_TEST) += && printf '\#define LKL_CONFIG_KASAN_KUNIT
 quiet_cmd_gen_configh = GEN     $@
       cmd_gen_configh = mkdir -p $(dir $@); ($(configh-y)) > $@
 
+OBJCOPY += --strip-debug
+
 targets += arch/lkl/include/generated/uapi/asm/config.h
 
 arch/lkl/include/generated/uapi/asm/config.h: FORCE
