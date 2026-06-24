@@ -25,7 +25,7 @@ EXPORT_SYMBOL(high_physmem);
 void map_memory(unsigned long virt, unsigned long phys, unsigned long len,
 		int r, int w, int x)
 {
-	__u64 offset;
+	__u64 offset = 0;
 	int fd, err;
 
 	fd = phys_mapping(phys, &offset);
@@ -36,7 +36,7 @@ void map_memory(unsigned long virt, unsigned long phys, unsigned long len,
 			       "/proc/sys/vm/max_map_count to <physical "
 			       "memory size>/4096\n");
 		panic("map_memory(0x%lx, %d, 0x%llx, %ld, %d, %d, %d) failed, "
-		      "err = %d\n", virt, fd, offset, len, r, w, x, err);
+		      "err = %d, phys=0x%lx\n", virt, fd, offset, len, r, w, x, err, phys);
 	}
 }
 
