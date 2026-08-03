@@ -1,3 +1,3 @@
 # SPDX-License-Identifier: GPL-2.0
 
-obj-y := trap.o os-Linux/
+obj-$(CONFIG_UML_NOMMU_SAS) := os-Linux/
