@@ -46,6 +46,11 @@ ARCH_INCLUDE	:= -I$(srctree)/$(SHARED_HEADERS)
 ARCH_INCLUDE	+= -I$(srctree)/$(HOST_DIR)/um/shared
 KBUILD_CPPFLAGS += -I$(srctree)/$(HOST_DIR)/um
 
+ifneq ($(CONFIG_MMU),y)
+core-y += $(ARCH_DIR)/nommu/
+KBUILD_CPPFLAGS += -I$(srctree)/$(HOST_DIR)/um/nommu
+endif
+
 # -Dstrrchr=kernel_strrchr (as well as the various in6addr symbols) prevents
 #  anything from referencing
 # libc symbols with the same name, which can cause a linker error.

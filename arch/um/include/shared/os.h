@@ -370,6 +370,9 @@ static inline int os_setup_seccomp(void)
 }
 #else
 extern int os_setup_seccomp(void);
+
+/* zpoline.c */
+extern int um_zpoline_enabled;
 #endif
 
 #endif
