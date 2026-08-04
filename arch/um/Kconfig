@@ -305,6 +305,7 @@ config KASAN_SHADOW_OFFSET
 
 config UML_NOMMU_SAS
 	bool "NOMMU Single Address Space (SAS) support"
+	depends on !MMU && X86_64
 	default n
 	help
 	  Turning this off allows a nommu build, say Y.

@@ -11,7 +11,7 @@
 #error need to stash these variables somewhere else
 #endif
 
-#define UM_GLOBAL_VAR(x) .data; .align 8; .globl x; x:; .long 0
+#define UM_GLOBAL_VAR(x) .data; .align 8; .globl x; x:; .quad 0
 
 UM_GLOBAL_VAR(current_top_of_stack)
 UM_GLOBAL_VAR(current_ptregs)
@@ -70,6 +70,7 @@ ENTRY(__kernel_vsyscall)
 	 */
 	movq	current_top_of_stack, %rsp
 
+	cld
 	call	do_syscall_64
 
 	jmp	userspace

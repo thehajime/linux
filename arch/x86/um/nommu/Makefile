@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0
 ifeq ($(CONFIG_X86_32),y)
 	BITS := 32
+	@echo "only 64bit platform supported"
+	exit 1
 else
 	BITS := 64
 endif

@@ -75,7 +75,7 @@ end
 define upregs
   set $regs = 0
   if $argc == 0
-    set $regs = (((struct pt_regs *)current_ptregs)->regs->gp)
+    set $regs = (((struct pt_regs *)current_ptregs)->regs.gp)
   else
     set $regs = ((struct uml_pt_regs *)$arg0)->gp
   end

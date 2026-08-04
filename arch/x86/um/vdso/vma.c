@@ -32,7 +32,8 @@ static int __init init_vdso(void)
 #else
 	/* this is fine with NOMMU as everything is accessible */
 	um_vdso_addr = (unsigned long)page_address(um_vdso);
-	os_protect_memory((void *)um_vdso_addr, vdso_end - vdso_start, 1, 0, 1);
+	if (os_protect_memory((void *)um_vdso_addr, vdso_end - vdso_start, 1, 0, 1))
+		panic("Cannot protect vdso\n");
 #endif
 
 	return 0;

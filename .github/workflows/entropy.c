@@ -43,7 +43,7 @@ int main(int argc, char **argv)
         output->buf_size = BUF_SIZE;
         for (i=0; i< BUF_SIZE; i++)
             output->buf[i] = prng();
-        ret = ioctl(fd, RNDADDENTROPY, &output);
+        ret = ioctl(fd, RNDADDENTROPY, output);
         iters++;
     } while((ret >= 0) && (iters < max_iters));
 

@@ -22,9 +22,9 @@ __visible void do_syscall_64(struct pt_regs *regs)
 	asm volatile("fxsaveq %0" : "=m"(*(struct _xstate *)regs->regs.fp));
 
 	if (secure_computing() == -1)
-		return;
+		goto cleanup;
 
-	if (likely(syscall < NR_syscalls)) {
+	if (likely(syscall >= 0 && syscall < NR_syscalls)) {
 		unsigned long ret;
 
 		ret = (*sys_call_table[syscall])(UPT_SYSCALL_ARG1(&regs->regs),
@@ -41,6 +41,7 @@ __visible void do_syscall_64(struct pt_regs *regs)
 	/* handle tasks and signals at the end */
 	interrupt_end();
 
+cleanup:
 	/* restore fp registers */
 	asm volatile("fxrstorq %0" : : "m"((current->thread.regs.regs.fp)));
 

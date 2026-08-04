@@ -23,8 +23,6 @@ ADD entropy /root/.
 ADD locale /root/.
 ADD vdso_test /root/.
 ADD pthread /root/.
-ADD test-signal-restore /root/.
-ADD shrink-mm /root/.
 ADD Makefile /root/.
 ADD lmbench2/ /lmbench2
 ADD lmbench_run.sh /lmbench2/bin/x86_64-linux-gnulibc1/

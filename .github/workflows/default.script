@@ -82,7 +82,7 @@ routes() {
 	for iface in $NO_GATEWAY; do
 		[ "$iface" = "$interface" ] && return
 	done
-	while ip -4 route del default via dev $interface 2>/dev/null; do
+	while ip -4 route del default dev $interface 2>/dev/null; do
 		:
 	done
 	local num=0

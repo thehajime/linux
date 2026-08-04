@@ -33,10 +33,10 @@ int os_x86_arch_prctl(int pid, int option, unsigned long *arg2)
 
 	switch (option) {
 	case ARCH_SET_FS:
-		wrfsbase(*arg2);
+		wrfsbase((unsigned long)arg2);
 		break;
 	case ARCH_SET_GS:
-		wrgsbase(*arg2);
+		wrgsbase((unsigned long)arg2);
 		break;
 	case ARCH_GET_FS:
 		*arg2 = rdfsbase();
@@ -46,7 +46,7 @@ int os_x86_arch_prctl(int pid, int option, unsigned long *arg2)
 		break;
 	default:
 		pr_warn("%s: unsupported option: 0x%x", __func__, option);
-		break;
+		return -EINVAL;
 	}
 
 	return 0;

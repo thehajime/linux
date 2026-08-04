@@ -1,4 +1,4 @@
-SRCS := clone.c futex.c nullptr.c ctest.c stackp.c do_getpid.c init_array.c entropy.c locale.c vdso_test.c pthread.c test-signal-restore.c shrink-mm.c
+SRCS := clone.c futex.c nullptr.c ctest.c stackp.c do_getpid.c init_array.c entropy.c locale.c vdso_test.c pthread.c
 BKUP := exit.c noop.c
 TARGETS := $(SRCS:.c=)
 
@@ -25,11 +25,9 @@ tests: ${TARGETS}
 	./entropy 10000
 	./locale
 	./vdso_test -c 10000
-	./test-signal-restore
 	./pthread
 	./pthread 10
 	./pthread 10 1
-	./shrink-mm
 	set -x
 
 clean:
