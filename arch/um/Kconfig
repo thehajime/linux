@@ -303,6 +303,12 @@ config KASAN_SHADOW_OFFSET
 	  set to a large value. On low-memory systems, try 0x7fff8000, as it fits
 	  into the immediate of most instructions, improving performance.
 
+config UML_NOMMU_SAS
+	bool "NOMMU Single Address Space (SAS) support"
+	default n
+	help
+	  Turning this off allows a nommu build, say Y.
+
 endmenu
 
 source "arch/um/drivers/Kconfig"

@@ -543,6 +543,7 @@ out_close:
 static int unscheduled_userspace_iterations;
 extern unsigned long tt_extra_sched_jiffies;
 
+#ifndef CONFIG_UML_NOMMU_SAS
 void userspace(struct uml_pt_regs *regs)
 {
 	int err, status, op;
@@ -789,6 +790,7 @@ void userspace(struct uml_pt_regs *regs)
 		}
 	}
 }
+#endif /* CONFIG_UML_NOMMU_SAS */
 
 void new_thread(void *stack, jmp_buf *buf, void (*handler)(void))
 {
