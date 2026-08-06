@@ -179,12 +179,25 @@ void relay_signal(int sig, struct siginfo *si, struct uml_pt_regs *regs,
 		  void *mc)
 {
 	int code, err;
+
+	if (IS_ENABLED(CONFIG_UML_NOMMU_SAS)) {
+		/* !MMU specific part; detection of userspace */
+		/* mark is_user=1 when the IP is from userspace code. */
+		if (UPT_IP(regs) > uml_reserved && UPT_IP(regs) < high_physmem)
+			regs->is_user = 1;
+	}
+
 	if (!UPT_IS_USER(regs)) {
 		if (sig == SIGBUS)
 			printk(KERN_ERR "Bus error - the host /dev/shm or /tmp "
 			       "mount likely just ran out of space\n");
 		panic("Kernel mode signal %d", sig);
 	}
+
+	/* if is_user==1, set return to userspace sig handler to relay signal */
+#ifdef CONFIG_UML_NOMMU_SAS
+	nommu_relay_signal(mc);
+#endif
 
 	arch_examine_signal(sig, regs);
 
