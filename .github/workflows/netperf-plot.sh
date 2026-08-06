@@ -81,18 +81,22 @@ EndGNUPLOT
 
 echo ""
 echo -e "### netperf bench (TCP_STREAM) (Mbps)\n"
-echo -e "| psize | native | um |um-mmu(s) | um-nommu(s) | um-nommu(z)|\n|--|--|--|--|--|--|"
+echo -e "| psize | native | um |um-mmu(s) | um-nommu | um-nommu(s) | um-nommu(sas-s) | um-nommu(sas-z)|\n|--|--|--|--|--|--|--|--|"
 join  $OUTPUT/out/native-netperf-fwd-out.dat  $OUTPUT/out/um-mmu-netperf-fwd-out.dat \
     | join -  $OUTPUT/out/um-mmu-seccomp-netperf-fwd-out.dat \
     | join - $OUTPUT/out/um-nommu-netperf-fwd-out.dat \
     | join - $OUTPUT/out/um-nommu-seccomp-netperf-fwd-out.dat \
+    | join - $OUTPUT/out/um-nommu-sas-seccomp-netperf-fwd-out.dat \
+    | join - $OUTPUT/out/um-nommu-sas-zpoline-netperf-fwd-out.dat \
     | sed "s/ /\|/g" |  sed "s/^/\|/" | sed "s/$/\|/"
 
 echo ""
 echo -e "### netperf bench (TCP_MAERTS) (Mbps)"
-echo -e "| psize | native | um |um-mmu(s) | um-nommu(s) | um-nommu(z)|\n|--|--|--|--|--|--|"
+echo -e "| psize | native | um |um-mmu(s) | um-nommu | um-nommu(s) | um-nommu(sas-s) | um-nommu(sas-z)|\n|--|--|--|--|--|--|--|--|"
 join  $OUTPUT/out/native-netperf-rev-out.dat  $OUTPUT/out/um-mmu-netperf-rev-out.dat \
     | join -  $OUTPUT/out/um-mmu-seccomp-netperf-rev-out.dat \
     | join - $OUTPUT/out/um-nommu-netperf-rev-out.dat \
     | join - $OUTPUT/out/um-nommu-seccomp-netperf-rev-out.dat \
+    | join - $OUTPUT/out/um-nommu-sas-seccomp-netperf-rev-out.dat \
+    | join - $OUTPUT/out/um-nommu-sas-zpoline-netperf-rev-out.dat \
     | sed "s/ /\|/g" |  sed "s/^/\|/" | sed "s/$/\|/"

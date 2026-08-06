@@ -49,6 +49,16 @@ jobs:
             testname: um-nommu
             mode: um-nommu
             kselftest_opt: "NOMMU=1"
+          - displayTargetName: ubuntu-22.04 (nommu-sas)
+            os: unix
+            runs_on: ubuntu-22.04
+            shell: bash
+            defconfig: x86_64_defconfig
+            add_configs: CONFIG_UML_NET_VECTOR=y CFLAGS+="-DCONFIG_UML_NET_VECTOR"
+            kunit_opts: --kconfig_add CONFIG_MMU=n --kconfig_add CONFIG_KUNIT_UML_PCI=n --kconfig_add CONFIG_UML_NOMMU_SAS=y
+            testname: um-nommu-sas
+            mode: um-nommu
+            kselftest_opt: "NOMMU=1"
     name: "UML: build (${{ matrix.testname }})"
     timeout-minutes: 100
     env:
@@ -75,8 +85,8 @@ jobs:
       - uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ${{ runner.os }}-${{ matrix.testname }}-ccache-build-${{ github.sha }}
-          restore-keys: ${{ runner.os }}-${{ matrix.testname }}-ccache-build-
+          key: ${{ runner.os }}-${{ matrix.testname }}-ccache-build #-${{ github.sha }}
+          restore-keys: ${{ runner.os }}-${{ matrix.testname }}-ccache-build #-
       - name: Install packages
         run: |
           sudo apt update -y
@@ -136,6 +146,11 @@ jobs:
         if: matrix.testname == 'um-nommu'
         run: |
           echo "# CONFIG_MMU is not set" >> arch/um/configs/x86_64_defconfig
+      - name: (FIXME) defconfig rewrite for nommu-sas
+        if: matrix.testname == 'um-nommu-sas'
+        run: |
+          echo "# CONFIG_MMU is not set" >> arch/um/configs/x86_64_defconfig
+          echo "CONFIG_UML_NOMMU_SAS=y" >> arch/um/configs/x86_64_defconfig
       - name: build-0 (static)
         run: |
           curl -L -O https://raw.githubusercontent.com/thehajime/ltp/refs/heads/fix-nommu/tools/buildroot/ltp-add.config
@@ -163,6 +178,7 @@ jobs:
            cp -rpf lmbench2 .github/workflows/
            cp netperf/src/netperf .github/workflows/
            cp -rpf build-kselftest/kselftest/kselftest_install .github/workflows/
+           cp -rpf tools/testing/kunit .github/workflows/
            ls .github/workflows/
            ls .github/workflows/lib/modules
       - name: Build and push Docker image (no push)
@@ -172,7 +188,7 @@ jobs:
           DOCKER_BUILD_SUMMARY: false
         with:
           context: .github/workflows
-          build-args: "MODE=${{ matrix.testname }}"
+          build-args: "MODE=${{ matrix.mode }}"
           push: false
           tags: |
             ghcr.io/thehajime/alpine:3.20.3-${{ matrix.testname }}
@@ -316,6 +332,16 @@ jobs:
             testname: um-nommu-seccomp
             vmlinux_opt: "seccomp=on"
             runs_on: ubuntu-22.04
+          - displayTargetName: um-nommu-sas-s
+            image_name: um-nommu-sas
+            testname: um-nommu-sas-seccomp
+            vmlinux_opt: ""
+            runs_on: ubuntu-22.04
+          - displayTargetName: um-nommu-sas-z
+            image_name: um-nommu-sas
+            testname: um-nommu-sas-zpoline
+            vmlinux_opt: "zpoline=1"
+            runs_on: ubuntu-22.04
     name: "UML: bench (${{ matrix.testname }}) "
     timeout-minutes: 100
     steps:
@@ -443,24 +469,28 @@ jobs:
             vmlinux_opt: ""
             test_cmdline: "sh -x .github/workflows/ltp-entrypoint.sh LTP_SINGLE_FS_TYPE=ext4 "
             name: um-mmu
+            kselftest_opt: ""
           - displayTargetName: um-mmu-s
             image_name: ghcr.io/thehajime/alpine:3.20.3-um-mmu
             testname: um-mmu-seccomp
             vmlinux_opt: "seccomp=on"
             test_cmdline: "sh -x .github/workflows/ltp-entrypoint.sh LTP_SINGLE_FS_TYPE=ext4 "
             name: um-mmu
+            kselftest_opt: ""
           - displayTargetName: um-nommu
             image_name: ghcr.io/thehajime/alpine:3.20.3-um-nommu
             testname: um-nommu
             vmlinux_opt: ""
             test_cmdline: "sh -x .github/workflows/ltp-entrypoint.sh LTP_SINGLE_FS_TYPE=ext4 "
             name: um-nommu
+            kselftest_opt: "NOMMU=1"
           - displayTargetName: um-nommu-s
             image_name: ghcr.io/thehajime/alpine:3.20.3-um-nommu
             testname: um-nommu-seccomp
             vmlinux_opt: "seccomp=on"
             test_cmdline: "sh -x .github/workflows/ltp-entrypoint.sh LTP_SINGLE_FS_TYPE=ext4 "
             name: um-nommu
+            kselftest_opt: "NOMMU=1"
           - displayTargetName: qemu-riscv-nommu
             image_name: ghcr.io/thehajime/buildroot-riscv64-nommu:0.1
             testname: riscv-nommu
@@ -469,6 +499,7 @@ jobs:
             qemu:image=/work-buildroot/buildroot/output/images/rootfs.ext2:kernel=/work-buildroot/buildroot/output/images/Image:system=riscv64:user=root \
             -f syscalls --run-pattern '' --skip-file /ltp-skip -o /result.json"
             name: riscv-nommu
+            kselftest_opt: "NOMMU=1"
           - displayTargetName: native
             image_name: alpine:3.20.3
             testname: native
@@ -477,6 +508,21 @@ jobs:
             -f syscalls --run-pattern '' --skip-file /ltp-skip -o /result.json"
             name: um-mmu
             docker_opt: "-v /lib/modules:/lib/modules"
+            kselftest_opt: ""
+          - displayTargetName: um-nommu-sas-s
+            image_name: ghcr.io/thehajime/alpine:3.20.3-um-nommu-sas
+            testname: um-nommu-sas-seccomp
+            vmlinux_opt: ""
+            test_cmdline: "sh -x .github/workflows/ltp-entrypoint.sh LTP_SINGLE_FS_TYPE=ext4 "
+            name: um-nommu
+            kselftest_opt: "NOMMU=1"
+          - displayTargetName: um-nommu-sas-z
+            image_name: ghcr.io/thehajime/alpine:3.20.3-um-nommu-sas
+            testname: um-nommu-sas-zpoline
+            vmlinux_opt: "zpoline=1"
+            test_cmdline: "sh -x .github/workflows/ltp-entrypoint.sh LTP_SINGLE_FS_TYPE=ext4 "
+            name: um-nommu
+            kselftest_opt: "NOMMU=1"
     name: "LTP: test-${{ matrix.testname }}"
     container:
       image: ${{ matrix.image_name }}
@@ -528,8 +574,11 @@ jobs:
           cat .github/workflows/ltp-entrypoint.sh | sed "s/cmd_option/${{ matrix.vmlinux_opt }}/" > /tmp/a
           mv /tmp/a .github/workflows/ltp-entrypoint.sh
       - name: kselftest (mm)
+        if: ${{ matrix.testname != 'riscv-nommu' && matrix.testname != 'native' }}
         run: |
-          faketty ./build/vmlinux vec0:transport=tap,ifname=tap100,depth=128,gro=1 ubd0=./alpine.ext4 rw mem=2048m loglevel=8 init=/root/kselftest.sh ${{ matrix.kselftest_opt }}
+          faketty /root/vmlinux vec0:transport=raw,ifname=eth0,depth=128,gro=1 \
+                root=/dev/root rootflags=/  rootfstype=hostfs rw \
+                mem=4G loglevel=8 ${{ matrix.vmlinux_opt }} console=tty init=/root/kselftest.sh ${{ matrix.kselftest_opt }}
       - name: LTP tests
         env:
           LTP_TIMEOUT_MUL: 10
@@ -617,6 +666,12 @@ jobs:
           cat output/result-um-nommu-seccomp.json | jq  \
             '.stats |.  + {"name": "nommu-s"} | [.name, .passed, .failed, .broken, .skipped, .warnings] | join(" | ") ' \
             | sed "s/\"/\|/g"  >> ltp-result.log
+          cat output/result-um-nommu-sas-seccomp.json | jq  \
+            '.stats |.  + {"name": "nommu-sas-seccomp"} | [.name, .passed, .failed, .broken, .skipped, .warnings] | join(" | ") ' \
+            | sed "s/\"/\|/g"  >> ltp-result.log
+          cat output/result-um-nommu-sas-zpoline.json | jq  \
+            '.stats |.  + {"name": "nommu-sas-zpoline"} | [.name, .passed, .failed, .broken, .skipped, .warnings] | join(" | ") ' \
+            | sed "s/\"/\|/g"  >> ltp-result.log
           cat output/result-riscv-nommu.json | jq  \
             '.stats |.  + {"name": "riscv-nommu"} | [.name, .passed, .failed, .broken, .skipped, .warnings] | join(" | ") ' \
             | sed "s/\"/\|/g"  >> ltp-result.log
@@ -627,6 +682,8 @@ jobs:
           cat output/um-mmu-seccomp-url.txt >> ltp-result.log
           cat output/um-nommu-url.txt >> ltp-result.log
           cat output/um-nommu-seccomp-url.txt >> ltp-result.log
+          cat output/um-nommu-sas-seccomp-url.txt >> ltp-result.log
+          cat output/um-nommu-sas-zpoline-url.txt >> ltp-result.log
           cat output/riscv-nommu-url.txt >> ltp-result.log
           export LTP_OUTPUT=$(cat ltp-result.log)
           echo "LTP_OUTPUT<<EOF" >> $GITHUB_ENV

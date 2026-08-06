@@ -62,7 +62,7 @@ EndGNUPLOT
 echo -e "### lmbench (usec)\n"
 echo -e "|select-10\n|select-100\n|select-1000\n|syscall\n|read\n|write\n|stat\n|open/close\n|fork+sh\n|fork+execve" > /tmp/a
 
-echo -e "||native|um|um-mmu(s)|um-nommu|um-nommu(s)|\n|--|--|--|--|--|--|"; paste -d "|" `ls ${OUTPUT}/out/*-lmbench-out.dat` | sed "s/\(.*\)/\|\1\|/" | paste /tmp/a - | column -t
+echo -e "||native|um|um-mmu(s)|um-nommu|um-nommu(sas-s)|um-nommu(sas-z)|um-nommu(s)|\n|--|--|--|--|--|--|--|--|"; paste -d "|" `ls ${OUTPUT}/out/*-lmbench-out.dat` | sed "s/\(.*\)/\|\1\|/" | paste /tmp/a - | column -t
 
 rm -f /tmp/a
 
@@ -72,8 +72,8 @@ for f in `ls $OUTPUT/*.dat |grep -v iperf3`
 do
  export $(basename $f .dat|sed "s/-/_/g")=`grep -a aver $f | grep -v time | awk '{print $2}'`
 done
-echo -e "||native|um|um-mmu(s)|um-nommu|um-nommu(s)|\n|--|--|--|--|--|--|"
-echo "|getpid | ${native} | ${um_mmu} | ${um_mmu_seccomp} | ${um_nommu}| ${um_nommu_seccomp}|"
+echo -e "||native|um|um-mmu(s)|um-nommu|um-nommu(s)|um-nommu(sas-s)|um-nommu(sas-z)|\n|--|--|--|--|--|--|--|--|"
+echo "|getpid | ${native} | ${um_mmu} | ${um_mmu_seccomp} | ${um_nommu}| ${um_nommu_seccomp}| ${um_nommu_sas_seccomp}|${um_nommu_sas_zpoline}|"
 
 
 # iperf result
@@ -121,6 +121,6 @@ do
 
 
 done
-echo -e "||native|um|um-mmu(s)|um-nommu|um-nommu(s)|\n|--|--|--|--|--|--|"
-echo "|iperf3(f) | ${native_f} | ${um_mmu_f} | ${um_mmu_seccomp_f} | ${um_nommu_f}| ${um_nommu_seccomp_f}|"
-echo "|iperf3(r) | ${native_r} | ${um_mmu_r} | ${um_mmu_seccomp_r} | ${um_nommu_r}| ${um_nommu_seccomp_r}|"
+echo -e "||native|um|um-mmu(s)|um-nommu|um-nommu(s)|um-nommu(sas-s)|um-nommu(sas-z)|\n|--|--|--|--|--|--|--|--|"
+echo "|iperf3(f) | ${native_f} | ${um_mmu_f} | ${um_mmu_seccomp_f} | ${um_nommu_f}| ${um_nommu_seccomp_f}|${um_nommu_sas_seccomp_f}|${um_nommu_sas_zpoline_f}|"
+echo "|iperf3(r) | ${native_r} | ${um_mmu_r} | ${um_mmu_seccomp_r} | ${um_nommu_r}| ${um_nommu_seccomp_r}|${um_nommu_sas_seccomp_r}|${um_nommu_sas_zpoline_r}|"

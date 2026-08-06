@@ -30,9 +30,11 @@ ADD netperf /root/.
 ADD lib/ /lib
 ADD kselftest_install/ /root/kselftest_install
 ADD kselftest.sh /root/
+RUN mkdir -p /root/tools/testing/
+ADD kunit/  /root/tools/testing/kunit
 
 
-RUN apk update && apk add utmps-libs libtirpc curl make iperf3 coreutils
+RUN apk update && apk add utmps-libs libtirpc curl make iperf3 coreutils python3
 
 RUN if [[ ${MODE} == "um-nommu" ]]; then mkdir -p setup && cd setup && curl -L -o output.zip \
     'https://gitlab.alpinelinux.org/thehajime/aports/-/jobs/2427445/artifacts/download?file_type=archive' \
