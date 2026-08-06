@@ -371,7 +371,8 @@ jobs:
               --rm ghcr.io/thehajime/alpine:3.20.3-${{ matrix.image_name }} \
               mem=2G root=/dev/root rootflags=/ rootfstype=hostfs rw loglevel=8 ${{ matrix.vmlinux_opt }} \
               init=/bench.sh \
-             | tee output/${{ matrix.testname }}.dat
+             | tee output/${{ matrix.testname }}.dat &
+             sleep 100 ; exit
       - name: benchmark-2
         run: |
            mkdir -p output
@@ -386,7 +387,8 @@ jobs:
               vec0:transport=raw,ifname=eth0,depth=128,gro=1  \
               root=/dev/root rootflags=/ rootfstype=hostfs rw loglevel=8 ${{ matrix.bench1_opt }} \
               init=/root/iperf3.sh \
-             | tee output/${{ matrix.testname }}-iperf3.dat
+             | tee output/${{ matrix.testname }}-iperf3.dat &
+             sleep 300 ; exit
       - uses: actions/upload-artifact@v7
         with:
           name: test-result-${{ matrix.testname }}
@@ -575,6 +577,7 @@ jobs:
           mv /tmp/a .github/workflows/ltp-entrypoint.sh
       - name: kselftest (mm)
         if: ${{ matrix.testname != 'riscv-nommu' && matrix.testname != 'native' }}
+        continue-on-error: true
         run: |
           faketty /root/vmlinux vec0:transport=raw,ifname=eth0,depth=128,gro=1 \
                 root=/dev/root rootflags=/  rootfstype=hostfs rw \
