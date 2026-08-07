@@ -36,7 +36,7 @@ static int nr_hugetlbsizes;
 static unsigned long hugetlbsizes[10];
 static int gup_fd;
 
-static __fsword_t get_fs_type(int fd)
+static unsigned int get_fs_type(int fd)
 {
 	struct statfs fs;
 	int ret;
@@ -48,7 +48,7 @@ static __fsword_t get_fs_type(int fd)
 	return ret ? 0 : fs.f_type;
 }
 
-static bool fs_is_unknown(__fsword_t fs_type)
+static bool fs_is_unknown(unsigned int fs_type)
 {
 	/*
 	 * We only support some filesystems in our tests when dealing with
@@ -67,7 +67,7 @@ static bool fs_is_unknown(__fsword_t fs_type)
 	}
 }
 
-static bool fs_supports_writable_longterm_pinning(__fsword_t fs_type)
+static bool fs_supports_writable_longterm_pinning(unsigned int fs_type)
 {
 	assert(!fs_is_unknown(fs_type));
 	switch (fs_type) {
@@ -91,7 +91,7 @@ enum test_type {
 
 static void do_test(int fd, size_t size, enum test_type type, bool shared)
 {
-	__fsword_t fs_type = get_fs_type(fd);
+	unsigned int fs_type = get_fs_type(fd);
 	bool should_work;
 	char *mem;
 	int result = KSFT_PASS;
