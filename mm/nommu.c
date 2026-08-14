@@ -844,18 +844,16 @@ static int validate_mmap_request(struct file *file,
 
 static int is_file_anonymous(struct file *file)
 {
+	struct inode *inode;
+
 	if (!file)
 		return 1;
 
-	if (file->f_path.dentry && file->f_path.dentry->d_inode) {
-		struct inode *inode = file->f_path.dentry->d_inode;
-		/* if the device is /dev/zero */
-		if (S_ISCHR(inode->i_mode) &&
-		    imajor(inode) == MEM_MAJOR && iminor(inode) == 5)
-			return 1;
-	}
-
-	return 0;
+	inode = file_inode(file);
+	/* if the device is /dev/zero */
+	return S_ISCHR(inode->i_mode) &&
+		imajor(inode) == MEM_MAJOR &&
+		iminor(inode) == 5;
 }
 
 /*
@@ -944,8 +942,10 @@ static ssize_t nommu_read_iter(struct file *file, void *buf,
 
 		iov_iter_kvec(&iter, ITER_DEST, &iov, 1, iov.iov_len);
 		ret = vfs_iter_read(file, &iter, pos, 0);
-		if (ret <= 0)
-			return done ? done : ret;
+		if (ret < 0)
+			return ret;
+		else if (ret == 0)
+			return done;
 		done += ret;
 	}
 
