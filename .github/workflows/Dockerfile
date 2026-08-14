@@ -37,7 +37,7 @@ ADD kunit/  /root/tools/testing/kunit
 RUN apk update && apk add utmps-libs libtirpc curl make iperf3 coreutils python3
 
 RUN if [[ ${MODE} == "um-nommu" ]]; then mkdir -p setup && cd setup && curl -L -o output.zip \
-    'https://gitlab.alpinelinux.org/thehajime/aports/-/jobs/2427445/artifacts/download?file_type=archive' \
+    'https://gitlab.alpinelinux.org/thehajime/aports/-/jobs/2475393/artifacts/download?file_type=archive' \
     && unzip output.zip ; fi
 RUN if [[ ${MODE} == "um-nommu" ]]; then apk add --allow-untrusted \
    setup/packages/main/x86_64/busybox-nommu-1.36.1-r29.apk \
