@@ -1306,7 +1306,7 @@ error_mmap_prepare:
 		fput(vma->vm_file);
 	vm_area_free(vma);
 
-	pr_warn("mmap_prepare failed for %lu byte allocation from process %d\n",
+	pr_warn_ratelimited("mmap_prepare failed for %lu byte allocation from process %d\n",
 			len, current->pid);
 	return ret;
 
