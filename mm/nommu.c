@@ -1669,7 +1669,8 @@ static unsigned long do_mremap(unsigned long addr,
 	if (is_nommu_shared_mapping(vma->vm_flags))
 		return (unsigned long) -EPERM;
 
-	if (new_len > vma->vm_region->vm_end - vma->vm_region->vm_start)
+	/* vm_region->vm_top != vm_region->vm_end when sysctl_nr_trim_pages is 0 (default: 1) */
+	if (new_len > vma->vm_region->vm_top - vma->vm_region->vm_start)
 		return (unsigned long) -ENOMEM;
 
 	/* all checks complete - do it */
