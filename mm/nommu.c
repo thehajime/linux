@@ -559,36 +559,90 @@ static void put_nommu_region(struct vm_region *region)
 	__put_nommu_region(region);
 }
 
+static struct address_space *lock_vma_mapping(struct vm_area_struct *vma)
+{
+	struct address_space *mapping;
+
+	if (!vma->vm_file)
+		return NULL;
+
+	mapping = vma->vm_file->f_mapping;
+	i_mmap_lock_write(mapping);
+	return mapping;
+}
+
+static void unlock_vma_mapping(struct address_space *mapping)
+{
+	if (mapping)
+		i_mmap_unlock_write(mapping);
+}
+
+static void add_vma_to_mapping_locked(struct address_space *mapping,
+				      struct vm_area_struct *vma)
+{
+	if (!mapping)
+		return;
+
+	flush_dcache_mmap_lock(mapping);
+	mapping_rmap_tree_insert(vma, mapping);
+	flush_dcache_mmap_unlock(mapping);
+}
+
+static void remove_vma_from_mapping_locked(struct address_space *mapping,
+					   struct vm_area_struct *vma)
+{
+	if (!mapping)
+		return;
+
+	flush_dcache_mmap_lock(mapping);
+	mapping_rmap_tree_remove(vma, mapping);
+	flush_dcache_mmap_unlock(mapping);
+}
+
+static void add_vma_to_mapping(struct vm_area_struct *vma)
+{
+	struct address_space *mapping = lock_vma_mapping(vma);
+
+	if (!mapping)
+		return;
+
+	add_vma_to_mapping_locked(mapping, vma);
+	unlock_vma_mapping(mapping);
+}
+
+static void remove_vma_from_mapping(struct vm_area_struct *vma)
+{
+	struct address_space *mapping = lock_vma_mapping(vma);
+
+	if (!mapping)
+		return;
+
+	remove_vma_from_mapping_locked(mapping, vma);
+	unlock_vma_mapping(mapping);
+}
+
+static void setup_vma_to_mm_locked(struct vm_area_struct *vma,
+				   struct mm_struct *mm,
+				   struct address_space *mapping)
+{
+	vma->vm_mm = mm;
+	add_vma_to_mapping_locked(mapping, vma);
+}
+
 static void setup_vma_to_mm(struct vm_area_struct *vma, struct mm_struct *mm)
 {
 	vma->vm_mm = mm;
 
 	/* add the VMA to the mapping */
-	if (vma->vm_file) {
-		struct address_space *mapping = vma->vm_file->f_mapping;
-
-		i_mmap_lock_write(mapping);
-		flush_dcache_mmap_lock(mapping);
-		mapping_rmap_tree_insert(vma, mapping);
-		flush_dcache_mmap_unlock(mapping);
-		i_mmap_unlock_write(mapping);
-	}
+	add_vma_to_mapping(vma);
 }
 
 static void cleanup_vma_from_mm(struct vm_area_struct *vma)
 {
 	vma->vm_mm->map_count--;
 	/* remove the VMA from the mapping */
-	if (vma->vm_file) {
-		struct address_space *mapping;
-		mapping = vma->vm_file->f_mapping;
-
-		i_mmap_lock_write(mapping);
-		flush_dcache_mmap_lock(mapping);
-		mapping_rmap_tree_remove(vma, mapping);
-		flush_dcache_mmap_unlock(mapping);
-		i_mmap_unlock_write(mapping);
-	}
+	if (vma->vm_file)
+		remove_vma_from_mapping(vma);
 }
 
 /*
@@ -1334,6 +1388,7 @@ static int split_vma(struct vma_iterator *vmi, struct vm_area_struct *vma,
 	struct vm_region *region;
 	unsigned long npages;
 	struct mm_struct *mm;
+	struct address_space *mapping;
 
 	/* we're only permitted to split anonymous regions (these should have
 	 * only a single usage on the region) */
@@ -1376,6 +1431,9 @@ static int split_vma(struct vma_iterator *vmi, struct vm_area_struct *vma,
 	if (new->vm_ops && new->vm_ops->open)
 		new->vm_ops->open(new);
 
+	mapping = lock_vma_mapping(vma);
+	remove_vma_from_mapping_locked(mapping, vma);
+
 	down_write(&nommu_region_sem);
 	delete_nommu_region(vma->vm_region);
 	if (new_below) {
@@ -1390,8 +1448,10 @@ static int split_vma(struct vma_iterator *vmi, struct vm_area_struct *vma,
 	add_nommu_region(new->vm_region);
 	up_write(&nommu_region_sem);
 
-	setup_vma_to_mm(vma, mm);
-	setup_vma_to_mm(new, mm);
+	setup_vma_to_mm_locked(vma, mm, mapping);
+	setup_vma_to_mm_locked(new, mm, mapping);
+	unlock_vma_mapping(mapping);
+
 	vma_iter_store_new(vmi, new);
 
 	/* vmi should point lower address */
@@ -1416,16 +1476,20 @@ static int vmi_shrink_vma(struct vma_iterator *vmi,
 		      unsigned long from, unsigned long to)
 {
 	struct vm_region *region;
+	struct address_space *mapping;
+
+	mapping = lock_vma_mapping(vma);
+	remove_vma_from_mapping_locked(mapping, vma);
 
 	/* adjust the VMA's pointers, which may reposition it in the MM's tree
 	 * and list */
 	if (from > vma->vm_start) {
 		if (vma_iter_clear_gfp(vmi, from, vma->vm_end, GFP_KERNEL))
-			return -ENOMEM;
+			goto restore_mapping;
 		vma->vm_end = from;
 	} else {
 		if (vma_iter_clear_gfp(vmi, vma->vm_start, to, GFP_KERNEL))
-			return -ENOMEM;
+			goto restore_mapping;
 		vma->vm_start = to;
 	}
 
@@ -1445,7 +1509,15 @@ static int vmi_shrink_vma(struct vma_iterator *vmi,
 	up_write(&nommu_region_sem);
 
 	free_page_series(from, to);
+	add_vma_to_mapping_locked(mapping, vma);
+	unlock_vma_mapping(mapping);
+
 	return 0;
+
+restore_mapping:
+	add_vma_to_mapping_locked(mapping, vma);
+	unlock_vma_mapping(mapping);
+	return -ENOMEM;
 }
 
 /*
