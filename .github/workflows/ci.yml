@@ -48,7 +48,7 @@ jobs:
             kunit_opts: --kconfig_add CONFIG_MMU=n --kconfig_add CONFIG_KUNIT_UML_PCI=n
             testname: um-nommu
             mode: um-nommu
-            kselftest_opt: "NOMMU=1"
+            kselftest_opt: "NOMMU=1 TARGETS=mm/nommu"
           - displayTargetName: ubuntu-22.04 (nommu-sas)
             os: unix
             runs_on: ubuntu-22.04
@@ -58,7 +58,7 @@ jobs:
             kunit_opts: --kconfig_add CONFIG_MMU=n --kconfig_add CONFIG_KUNIT_UML_PCI=n --kconfig_add CONFIG_UML_NOMMU_SAS=y
             testname: um-nommu-sas
             mode: um-nommu
-            kselftest_opt: "NOMMU=1"
+            kselftest_opt: "NOMMU=1 TARGETS=mm/nommu"
     name: "UML: build (${{ matrix.testname }})"
     timeout-minutes: 100
     env:
@@ -168,7 +168,7 @@ jobs:
       - name: kselftest run_tessts
         if: matrix.testname != 'um-mmu-tt'
         run: |
-          make ARCH=um O=build-kselftest ${{ matrix.kselftest_opt }} kselftest-run_tests SKIP_TARGETS+=connector SKIP_TARGETS+=drivers/net/bonding
+          make ARCH=um O=build-kselftest ${{ matrix.kselftest_opt }} kselftest-run_tests
         shell: alpine.sh {0}
       - name: prep for docker build
         if: matrix.testname != 'um-mmu-tt'
@@ -246,7 +246,7 @@ jobs:
       - name: kselftest run_tessts (in-tree, without $(top_srcdir)/Makefile)
         if: matrix.testname != 'um-mmu-tt'
         run: |
-          make ARCH=um ${{ matrix.kselftest_opt }} -C tools/testing/selftests/mm run_tests
+          make ARCH=um ${{ matrix.kselftest_opt }} -C tools/testing/selftests/mm/nommu run_tests
       - name: Set up Docker Buildx
         if: matrix.testname != 'um-mmu-tt'
         uses: docker/setup-buildx-action@v4
@@ -490,7 +490,7 @@ jobs:
             vmlinux_opt: "seccomp=on"
             test_cmdline: "sh -x .github/workflows/ltp-entrypoint.sh LTP_SINGLE_FS_TYPE=ext4 "
             name: um-nommu
-            kselftest_opt: "NOMMU=1"
+            kselftest_opt: "NOMMU=1 TARGETS=mm/nommu"
           - displayTargetName: qemu-riscv-nommu
             image_name: ghcr.io/thehajime/buildroot-riscv64-nommu:0.1
             testname: riscv-nommu
@@ -499,7 +499,7 @@ jobs:
             qemu:image=/work-buildroot/buildroot/output/images/rootfs.ext2:kernel=/work-buildroot/buildroot/output/images/Image:system=riscv64:user=root \
             -f syscalls --run-pattern '' --skip-file /ltp-skip -o /result.json"
             name: riscv-nommu
-            kselftest_opt: "NOMMU=1"
+            kselftest_opt: "NOMMU=1 TARGETS=mm/nommu"
           - displayTargetName: native
             image_name: alpine:3.20.3
             testname: native
@@ -515,14 +515,14 @@ jobs:
             vmlinux_opt: ""
             test_cmdline: "sh -x .github/workflows/ltp-entrypoint.sh LTP_SINGLE_FS_TYPE=ext4 "
             name: um-nommu
-            kselftest_opt: "NOMMU=1"
+            kselftest_opt: "NOMMU=1 TARGETS=mm/nommu"
           - displayTargetName: um-nommu-sas-z
             image_name: ghcr.io/thehajime/alpine:3.20.3-um-nommu-sas
             testname: um-nommu-sas-zpoline
             vmlinux_opt: "zpoline=1"
             test_cmdline: "sh -x .github/workflows/ltp-entrypoint.sh LTP_SINGLE_FS_TYPE=ext4 "
             name: um-nommu
-            kselftest_opt: "NOMMU=1"
+            kselftest_opt: "NOMMU=1 TARGETS=mm/nommu"
     name: "LTP: test-${{ matrix.testname }}"
     container:
       image: ${{ matrix.image_name }}
