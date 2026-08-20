@@ -1,0 +1,5 @@
+#!/bin/sh
+
+script -q -e -c "$(printf "'%s' " "$@")"
+
+#/bin/sh -c "$(printf "'%s' " "$@")"

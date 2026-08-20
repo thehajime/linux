@@ -18,6 +18,7 @@
 #include <linux/uaccess.h>
 #include <linux/fs_parser.h>
 #include <linux/rculist.h>
+#include <linux/export.h>
 
 /*
  * Read-mostly filesystem drivers list.
@@ -72,6 +73,7 @@ void put_filesystem(struct file_system_type *fs)
 {
 	module_put(fs->owner);
 }
+EXPORT_SYMBOL_FOR_MODULES(put_filesystem, "kunit-uapi");
 
 static struct file_system_type *find_filesystem(const char *name, unsigned len)
 {

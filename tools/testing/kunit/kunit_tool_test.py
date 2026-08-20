@@ -173,7 +173,7 @@ class KUnitParserTest(unittest.TestCase):
 		with open(nested_log) as file:
 			result = kunit_parser.parse_run_tests(file.readlines(), stdout)
 		self.assertEqual(kunit_parser.TestStatus.FAILURE, result.status)
-		self.assertEqual(result.counts.failed, 2)
+		self.assertEqual(result.counts.failed, 3)
 		self.assertEqual(kunit_parser.TestStatus.FAILURE, result.subtests[0].status)
 		self.assertEqual(kunit_parser.TestStatus.SUCCESS, result.subtests[0].subtests[0].status)
 		self.assertEqual(kunit_parser.TestStatus.FAILURE, result.subtests[1].status)

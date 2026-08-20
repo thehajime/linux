@@ -1,3 +1,5 @@
+include $(srctree)/init/Makefile.nolibc
+
 obj-$(CONFIG_KUNIT) +=			kunit.o
 
 kunit-objs +=				test.o \
@@ -13,6 +15,14 @@ kunit-objs +=				test.o \
 					platform.o \
 					bug.o
 
+userprogs +=				uapi-preinit
+uapi-preinit-userccflags +=		$(NOLIBC_USERCFLAGS) \
+					-include include/generated/autoconf.h \
+					-include $(srctree)/tools/include/linux/kconfig.h
+obj-$(CONFIG_KUNIT_UAPI) +=		kunit-uapi.o
+
+$(obj)/kunit-uapi.o: $(obj)/uapi-preinit
+
 ifeq ($(CONFIG_KUNIT_DEBUGFS),y)
 kunit-objs +=				debugfs.o
 endif
@@ -21,6 +31,14 @@ endif
 obj-$(if $(CONFIG_KUNIT),y) +=		hooks.o
 
 obj-$(CONFIG_KUNIT_TEST) +=		kunit-test.o
+
+userprogs +=				kunit-test-uapi
+kunit-test-uapi-userccflags :=		$(NOLIBC_USERCFLAGS)
+
+ifdef CONFIG_KUNIT_UAPI
+$(obj)/kunit-test.o: $(obj)/kunit-test-uapi
+endif
+
 obj-$(CONFIG_KUNIT_TEST) +=		platform-test.o
 obj-$(CONFIG_KUNIT_TEST) +=		backtrace-suppression-test.o
 
@@ -31,3 +49,10 @@ obj-$(CONFIG_KUNIT_TEST) +=		assert_test.o
 endif
 
 obj-$(CONFIG_KUNIT_EXAMPLE_TEST) +=	kunit-example-test.o
+
+userprogs +=				kunit-example-uapi
+kunit-example-uapi-userccflags :=	$(NOLIBC_USERCFLAGS)
+
+ifdef CONFIG_KUNIT_UAPI
+$(obj)/kunit-example-test.o: $(obj)/kunit-example-uapi
+endif

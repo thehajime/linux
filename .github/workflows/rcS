@@ -1,0 +1,22 @@
+#!/bin/sh
+
+NIC=vec0
+mount proc /proc -t proc
+
+mkdir -p /dev/shm
+mount -t tmpfs -o rw,nosuid,nodev tmpfs /dev/shm
+mkdir -p /dev/pts
+mount -t devpts devpts /dev/pts
+
+echo "nameserver 8.8.8.8" > /etc/resolv.conf
+/sbin/ifconfig lo 127.0.0.1 up
+/sbin/ifconfig $NIC 172.18.0.2 up
+/sbin/ip route add default via 172.18.0.1 dev $NIC
+
+export PATH=/home:/sbin:/usr/sbin:/bin:/usr/bin
+export TERM=linux
+
+# hanging
+#export PS1="\[$(tput bold)\]\[$(tput setaf 4)\][\[$(tput setaf 5)\]\u\[$(tput setaf 4)\]@\[$(tput setaf 5)\]\h \[$(tput setaf 2)\]\W\[$(tput setaf 4)\]]\\$ \[$(tput sgr0)\]"
+
+exec "$@"

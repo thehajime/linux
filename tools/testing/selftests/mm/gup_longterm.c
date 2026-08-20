@@ -21,7 +21,7 @@
 #include <linux/magic.h>
 #include <linux/memfd.h>
 
-#include "local_config.h"
+#include "local_config.h_gen"
 #ifdef LOCAL_CONFIG_HAVE_LIBURING
 #include <liburing.h>
 #endif /* LOCAL_CONFIG_HAVE_LIBURING */
@@ -36,7 +36,7 @@ static int nr_hugetlbsizes;
 static unsigned long hugetlbsizes[10];
 static int gup_fd;
 
-static __fsword_t get_fs_type(int fd)
+static unsigned int get_fs_type(int fd)
 {
 	struct statfs fs;
 	int ret;
@@ -48,7 +48,7 @@ static __fsword_t get_fs_type(int fd)
 	return ret ? 0 : fs.f_type;
 }
 
-static bool fs_is_unknown(__fsword_t fs_type)
+static bool fs_is_unknown(unsigned int fs_type)
 {
 	/*
 	 * We only support some filesystems in our tests when dealing with
@@ -67,7 +67,7 @@ static bool fs_is_unknown(__fsword_t fs_type)
 	}
 }
 
-static bool fs_supports_writable_longterm_pinning(__fsword_t fs_type)
+static bool fs_supports_writable_longterm_pinning(unsigned int fs_type)
 {
 	assert(!fs_is_unknown(fs_type));
 	switch (fs_type) {
@@ -91,7 +91,7 @@ enum test_type {
 
 static void do_test(int fd, size_t size, enum test_type type, bool shared)
 {
-	__fsword_t fs_type = get_fs_type(fd);
+	unsigned int fs_type = get_fs_type(fd);
 	bool should_work;
 	char *mem;
 	int result = KSFT_PASS;
@@ -196,7 +196,7 @@ static void do_test(int fd, size_t size, enum test_type type, bool shared)
 		args.flags |= rw ? PIN_LONGTERM_TEST_FLAG_USE_WRITE : 0;
 		ret = ioctl(gup_fd, PIN_LONGTERM_TEST_START, &args);
 		if (ret && errno == EINVAL) {
-			ksft_print_msg("PIN_LONGTERM_TEST_START failed (EINVAL)n");
+			ksft_print_msg("PIN_LONGTERM_TEST_START failed (EINVAL)\n");
 			result = KSFT_SKIP;
 			break;
 		} else if (ret && errno == EFAULT) {

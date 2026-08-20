@@ -92,6 +92,9 @@
 #ifndef _NOLIBC_H
 #define _NOLIBC_H
 
+/* So that we do not get compatibility types/defines */
+#define __KERNEL__
+
 #include "std.h"
 #include "arch.h"
 #include "types.h"

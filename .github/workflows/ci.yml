@@ -1,0 +1,740 @@
+on:
+  push:
+    branches:
+      - '**'
+  #pull_request:
+  #  branches:
+  #    - master
+  workflow_dispatch:
+    inputs:
+      debug_enabled:
+        description: 'Run the build with tmate debugging enabled (https://github.com/marketplace/actions/debugging-with-tmate)'
+        required: false
+        default: true
+
+jobs:
+  build_uml:
+    runs-on: ${{ matrix.runs_on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - displayTargetName: ubuntu-22.04
+            os: unix
+            runs_on: ubuntu-22.04
+            shell: bash
+            defconfig: x86_64_defconfig
+            add_configs: CONFIG_UML_NET_VECTOR=y CFLAGS+="-DCONFIG_UML_NET_VECTOR"
+            kunit_opts: --kconfig_add CONFIG_KUNIT_UML_PCI=n ### XXX
+            testname: um-mmu
+            mode: um-mmu
+            kselftest_opt: ""
+          - displayTargetName: ubuntu-22.04 (time-travel)
+            os: unix
+            runs_on: ubuntu-22.04
+            shell: bash
+            defconfig: x86_64_defconfig
+            add_configs: CONFIG_UML_NET_VECTOR=y CFLAGS+="-DCONFIG_UML_NET_VECTOR" CFLAGS+="-DCONFIG_UML_TIME_TRAVEL_SUPPORT" CFLAGS+="-DCONFIG_UML_MAX_USERSPACE_ITERATIONS=100000"
+            kunit_opts: --kconfig_add CONFIG_KUNIT_UML_PCI=n ### XXX
+            testname: um-mmu-tt
+            mode: um-mmu
+            kselftest_opt: ""
+          - displayTargetName: ubuntu-22.04 (nommu)
+            os: unix
+            runs_on: ubuntu-22.04
+            shell: bash
+            defconfig: x86_64_defconfig
+            add_configs: CONFIG_UML_NET_VECTOR=y CFLAGS+="-DCONFIG_UML_NET_VECTOR"
+            kunit_opts: --kconfig_add CONFIG_MMU=n --kconfig_add CONFIG_KUNIT_UML_PCI=n
+            testname: um-nommu
+            mode: um-nommu
+            kselftest_opt: "NOMMU=1 TARGETS=mm/nommu"
+          - displayTargetName: ubuntu-22.04 (nommu-sas)
+            os: unix
+            runs_on: ubuntu-22.04
+            shell: bash
+            defconfig: x86_64_defconfig
+            add_configs: CONFIG_UML_NET_VECTOR=y CFLAGS+="-DCONFIG_UML_NET_VECTOR"
+            kunit_opts: --kconfig_add CONFIG_MMU=n --kconfig_add CONFIG_KUNIT_UML_PCI=n --kconfig_add CONFIG_UML_NOMMU_SAS=y
+            testname: um-nommu-sas
+            mode: um-nommu
+            kselftest_opt: "NOMMU=1 TARGETS=mm/nommu"
+    name: "UML: build (${{ matrix.testname }})"
+    timeout-minutes: 100
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      USE_CCACHE: 1
+
+    defaults:
+       run:
+         shell: ${{ matrix.shell }}
+
+    steps:
+#      - name: Setup tmate session
+#        uses: mxschmitt/action-tmate@v3
+#        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.debug_enabled }}
+#        with:
+#          detached: true
+      - name: Set env
+        shell: bash
+        run: |
+          echo "/usr/lib/ccache/bin:/usr/lib/ccache:${{ github.workspace }}/bin" >> $GITHUB_PATH
+          echo "export PATH=/usr/lib/ccache/bin:/usr/lib/ccache:${{ github.workspace }}/bin:$PATH" >> $HOME/.bashrc
+      - name: Checkout
+        uses: actions/checkout@v6
+      - uses: actions/cache@v5
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ runner.os }}-${{ matrix.testname }}-ccache-build #-${{ github.sha }}
+          restore-keys: ${{ runner.os }}-${{ matrix.testname }}-ccache-build #-
+      - name: Install packages
+        run: |
+          sudo apt update -y
+          sudo apt install -y ccache iperf3 netperf gdb valgrind libcap-dev libcap-ng-dev libmnl-dev libmbedtls-dev liburing-dev libnuma-dev
+      - name: Setup latest Alpine Linux
+        uses: jirutka/setup-alpine@v1
+        with:
+           branch: v3.20
+           packages: >
+             alpine-sdk
+             doas
+             libtirpc-dev
+             linux-headers
+             autoconf
+             automake
+             bash
+             bison
+             flex
+             bc
+             numactl-dev
+             libcap-dev
+             rsync
+             coreutils
+             ccache
+             liburing-dev
+             git
+             libcap-ng-dev
+             iproute2
+      - name: build bench tools
+        if: matrix.testname != 'um-mmu-tt'
+        run: |
+          git clone https://github.com/ricarkol/lmbench2.git
+          git clone https://github.com/HewlettPackard/netperf
+          cd lmbench2
+          touch src/Makefile
+          touch Makefile
+          make
+          cd ..
+          cd netperf
+          sh autogen.sh
+          ./configure; make CFLAGS="-fcommon" || true
+          cd ..
+          make -C .github/workflows/ MASTER_CC=gcc
+        shell: alpine.sh {0}
+      # --root {0}
+      - name: Setup faketty
+        uses: Yuri6037/Action-FakeTTY@v1.1
+      - name: setup tap interface
+        run: |
+           set -x
+           sudo ip tuntap add dev tap100 mode tap user ${USER}
+           sudo ip add add 192.168.122.1/24 dev tap100
+           sudo ip link set up dev tap100
+           cp .github/workflows/gdbinit ~/.gdbinit
+           iperf3 -s &
+      - name: (FIXME) defconfig rewrite for nommu
+        if: matrix.testname == 'um-nommu'
+        run: |
+          echo "# CONFIG_MMU is not set" >> arch/um/configs/x86_64_defconfig
+      - name: (FIXME) defconfig rewrite for nommu-sas
+        if: matrix.testname == 'um-nommu-sas'
+        run: |
+          echo "# CONFIG_MMU is not set" >> arch/um/configs/x86_64_defconfig
+          echo "CONFIG_UML_NOMMU_SAS=y" >> arch/um/configs/x86_64_defconfig
+      - name: build-0 (static)
+        run: |
+          curl -L -O https://raw.githubusercontent.com/thehajime/ltp/refs/heads/fix-nommu/tools/buildroot/ltp-add.config
+          cat ltp-add.config >> arch/um/configs/${{ matrix.defconfig }}
+          make ARCH=um ${{ matrix.defconfig }} O=build
+          cat build/.config | sed "s/.*CONFIG_STATIC_LINK.*/CONFIG_STATIC_LINK=y/" > /tmp/a; mv /tmp/a build/.config
+          make -j8 ARCH=um O=build ${{ matrix.add_configs }}
+      - name: kselftest build
+        if: matrix.testname != 'um-mmu-tt'
+        run: |
+          make ARCH=um ${{ matrix.defconfig }} O=build-kselftest
+          make ARCH=um O=build-kselftest ${{ matrix.kselftest_opt }} -j8 kselftest-all || true
+          make ARCH=um O=build-kselftest ${{ matrix.kselftest_opt }} -j8 kselftest-install  || true
+        shell: alpine.sh {0}
+      - name: kselftest run_tessts
+        if: matrix.testname != 'um-mmu-tt'
+        run: |
+          make ARCH=um O=build-kselftest ${{ matrix.kselftest_opt }} kselftest-run_tests
+        shell: alpine.sh {0}
+      - name: prep for docker build
+        if: matrix.testname != 'um-mmu-tt'
+        run: |
+           make -j8 ARCH=um O=build modules_install INSTALL_MOD_PATH=`pwd`/.github/workflows
+           cp build/vmlinux .github/workflows/
+           cp -rpf lmbench2 .github/workflows/
+           cp netperf/src/netperf .github/workflows/
+           cp -rpf build-kselftest/kselftest/kselftest_install .github/workflows/
+           cp -rpf tools/testing/kunit .github/workflows/
+           ls .github/workflows/
+           ls .github/workflows/lib/modules
+      - name: Build and push Docker image (no push)
+        if: matrix.testname != 'um-mmu-tt'
+        uses: docker/build-push-action@v7
+        env:
+          DOCKER_BUILD_SUMMARY: false
+        with:
+          context: .github/workflows
+          build-args: "MODE=${{ matrix.mode }}"
+          push: false
+          tags: |
+            ghcr.io/thehajime/alpine:3.20.3-${{ matrix.testname }}
+      - name: image for test
+        if: matrix.testname != 'um-mmu-tt'
+        run: |
+          docker create --name alpine-nommu ghcr.io/thehajime/alpine:3.20.3-${{ matrix.testname }}
+          docker start alpine-nommu
+          docker wait alpine-nommu
+          docker logs alpine-nommu
+          docker export alpine-nommu > alpine.tar
+          docker rm alpine-nommu
+          mnt=$(mktemp -d)
+          dd if=/dev/zero of=alpine.ext4 bs=1 count=0 seek=1G
+          sudo chmod og+wr "alpine.ext4"
+          yes 2>/dev/null | mkfs.ext4 "alpine.ext4" || true
+          sudo mount "alpine.ext4" $mnt
+          sudo tar -xf alpine.tar -C $mnt
+          sudo umount $mnt
+          mkdir -p rootfs
+          sudo tar -xf alpine.tar -C rootfs
+          sudo chown -R ${USER} rootfs
+      - name: test-0 (static)
+        if: matrix.testname != 'um-mmu-tt'
+        run: |
+          sudo sh -c "echo 0 > /proc/sys/vm/mmap_min_addr"
+          faketty ./build/vmlinux vec0:transport=tap,ifname=tap100,depth=128,gro=1 ubd0=./alpine.ext4 rw mem=2048m loglevel=8 console=tty init=/sbin/init 2>&1 | tee /tmp/log.txt &
+          sleep 10 && pkill vmlinux
+          echo "========="
+          cat /tmp/log.txt
+      - name: kselftest
+        if: matrix.testname != 'um-mmu-tt'
+        run: |
+          faketty ./build/vmlinux vec0:transport=tap,ifname=tap100,depth=128,gro=1 ubd0=./alpine.ext4 rw mem=2048m loglevel=8 init=/root/kselftest.sh ${{ matrix.kselftest_opt }}
+      - name: kunit test
+        if: matrix.testname != 'um-mmu-tt'
+        run: |
+          for config in `find ./ -name .kunitconfig | grep -v -E "kfence|sunrpc|handshake|kcsan|gpu|damon|rust|android|sound|hid|firewire|iommu|nvme|mac80211|irqchip" `; do \
+            echo "==" $config "==" ; \
+            ./tools/testing/kunit/kunit.py run --kunitconfig=$config ${{ matrix.kunit_opts }}
+          done
+      - name: build-1
+        run: |
+          curl -L -O https://raw.githubusercontent.com/thehajime/ltp/refs/heads/fix-nommu/tools/buildroot/ltp-add.config
+          cat ltp-add.config >> arch/um/configs/${{ matrix.defconfig }}
+          make ARCH=um ${{ matrix.defconfig }}
+          make -j8 ARCH=um ${{ matrix.add_configs }}
+      - name: test-1
+        if: matrix.testname != 'um-mmu-tt'
+        run: |
+          faketty ./vmlinux vec0:transport=tap,ifname=tap100,depth=128,gro=1 ubd0=./alpine.ext4 rw mem=2048m loglevel=8 init=/sbin/init 2>&1 | tee /tmp/log.txt &
+          sleep 10 && pkill vmlinux
+          echo "========="
+          cat /tmp/log.txt
+      - name: kselftest run_tessts (in-tree, without $(top_srcdir)/Makefile)
+        if: matrix.testname != 'um-mmu-tt'
+        run: |
+          make ARCH=um ${{ matrix.kselftest_opt }} -C tools/testing/selftests/mm/nommu run_tests
+      - name: Set up Docker Buildx
+        if: matrix.testname != 'um-mmu-tt'
+        uses: docker/setup-buildx-action@v4
+        with:
+          driver-opts: network=host
+      - name: Log in to the ghcr.io
+        if: matrix.testname != 'um-mmu-tt'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push Docker image
+        if: matrix.testname != 'um-mmu-tt'
+        uses: docker/build-push-action@v7
+        env:
+          DOCKER_BUILD_SUMMARY: false
+        with:
+          context: .github/workflows
+          build-args: "MODE=${{ matrix.mode }}"
+          push: true
+          tags: |
+            ghcr.io/thehajime/alpine:3.20.3-${{ matrix.testname }}
+
+  buildroot_riscv:
+    runs-on: ubuntu-22.04
+    name: "buildroot: build riscv64-nommu"
+    timeout-minutes: 100
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      USE_CCACHE: 1
+
+    steps:
+      - name: LTP checkout
+        run: |
+          git clone -b fix-nommu https://github.com/thehajime/ltp
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+        with:
+          driver-opts: network=host
+      - name: Log in to the ghcr.io
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v7
+        env:
+          DOCKER_BUILD_SUMMARY: false
+        with:
+          context: ltp/tools/buildroot/
+          push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          tags: |
+            ghcr.io/thehajime/buildroot-riscv64-nommu:0.1
+
+  benchmark:
+    runs-on: ${{ matrix.runs_on }}
+    needs: [build_uml]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - displayTargetName: um-mmu
+            image_name: um-mmu
+            testname: um-mmu
+            vmlinux_opt: ""
+            runs_on: ubuntu-22.04
+          - displayTargetName: um-mmu-s
+            image_name: um-mmu
+            testname: um-mmu-seccomp
+            vmlinux_opt: "seccomp=on"
+            runs_on: ubuntu-22.04
+          - displayTargetName: um-nommu
+            image_name: um-nommu
+            testname: um-nommu
+            vmlinux_opt: ""
+            runs_on: ubuntu-22.04
+          - displayTargetName: um-nommu-s
+            image_name: um-nommu
+            testname: um-nommu-seccomp
+            vmlinux_opt: "seccomp=on"
+            runs_on: ubuntu-22.04
+          - displayTargetName: um-nommu-sas-s
+            image_name: um-nommu-sas
+            testname: um-nommu-sas-seccomp
+            vmlinux_opt: ""
+            runs_on: ubuntu-22.04
+          - displayTargetName: um-nommu-sas-z
+            image_name: um-nommu-sas
+            testname: um-nommu-sas-zpoline
+            vmlinux_opt: "zpoline=1"
+            runs_on: ubuntu-22.04
+    name: "UML: bench (${{ matrix.testname }}) "
+    timeout-minutes: 100
+    steps:
+      - name: Setup tmate session
+        uses: mxschmitt/action-tmate@v3
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.debug_enabled }}
+        with:
+          detached: true
+      - name: Setup faketty
+        uses: Yuri6037/Action-FakeTTY@v1.1
+      - name: setup iperf3/netperf server
+        run: |
+           set -x
+           sudo apt update -y
+           sudo apt install -y iperf3 netperf
+           iperf3 -s &
+           ip ad
+           ps aux |grep netserver
+           ps aux |grep iperf3
+           cat /proc/sys/kernel/exec-shield || true
+           echo 0 > /proc/sys/kernel/exec-shield || true
+      - name: benchmark-1
+        run: |
+           mkdir -p output
+           sudo sh -c "echo 0 > /proc/sys/vm/mmap_min_addr"
+           faketty docker run -it -v /dev/shm:/dev/shm --entrypoint /root/vmlinux \
+              --rm ghcr.io/thehajime/alpine:3.20.3-${{ matrix.image_name }} \
+              mem=2G root=/dev/root rootflags=/ rootfstype=hostfs rw loglevel=8 ${{ matrix.vmlinux_opt }} \
+              init=/bench.sh \
+             | tee output/${{ matrix.testname }}.dat &
+             sleep 100 ; exit
+      - name: benchmark-2
+        run: |
+           mkdir -p output
+           ## dynamic build failed at iperf -R
+           echo "===========================non-static build may fail...==========================="
+           #faketty ./vmlinux vec0:transport=raw,ifname=eth0,depth=128,gro=1 mem=2048m \
+           #  root=/dev/root rootflags=`pwd`/rootfs rootfstype=hostfs rw \
+           #  loglevel=8 console=tty init=/root/iperf3.sh \
+           #  | tee output/${{ matrix.testname }}-seccomp-iperf3.dat
+           faketty docker run -it -v /dev/shm:/dev/shm --entrypoint /root/vmlinux \
+              --rm ghcr.io/thehajime/alpine:3.20.3-${{ matrix.image_name }} mem=2G \
+              vec0:transport=raw,ifname=eth0,depth=128,gro=1  \
+              root=/dev/root rootflags=/ rootfstype=hostfs rw loglevel=8 ${{ matrix.bench1_opt }} \
+              init=/root/iperf3.sh \
+             | tee output/${{ matrix.testname }}-iperf3.dat &
+             sleep 300 ; exit
+      - uses: actions/upload-artifact@v7
+        with:
+          name: test-result-${{ matrix.testname }}
+          path: output/${{ matrix.testname }}*
+
+  checkpatch:
+    runs-on: ubuntu-22.04
+    name: checkpatch and co
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      USE_CCACHE: 1
+    steps:
+      - name: Set env
+        shell: bash
+        run: |
+          echo "/usr/lib/ccache/bin:/usr/lib/ccache:${{ github.workspace }}/bin" >> $GITHUB_PATH
+          echo "export PATH=/usr/lib/ccache/bin:/usr/lib/ccache:${{ github.workspace }}/bin:$PATH" >> $HOME/.bashrc
+      - name: Checkout
+        with:
+          fetch-depth: 0
+        uses: actions/checkout@v6
+      - uses: actions/cache@v5
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ runner.os }}-checkpatch-ccache-build-${{ github.sha }}
+          restore-keys: ${{ runner.os }}-checkpatch-ccache-build-
+      - name: Install packages
+        run: |
+           sudo pip install ply GitPython mypy
+           sudo apt update -y
+           sudo apt install -y aspell ccache sparse
+           git clone https://github.com/daxtens/smart-sparse-diff
+      #- name: Setup tmate session
+      #  uses: mxschmitt/action-tmate@v3
+      #  with:
+      #    detached: true
+      - name: checkout trees
+        run: |
+           #git remote add linus git://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git
+           #git fetch linus
+           #git format-patch -o p1 linus/master..HEAD~1
+           git remote add uml git://git.kernel.org/pub/scm/linux/kernel/git/uml/linux.git
+           git fetch uml
+           git checkout uml/next
+           git checkout zpoline-nommu-v6.10
+      #- name: build (sparse)
+      #  run: |
+      #     make ARCH=um W=1 C=2 CF='-fdiagnostic-prefix -D__CHECK_ENDIAN__ -fmax-errors=unlimited -fmax-warnings=unlimited' defconfig O=build-sparse
+      #     make ARCH=um W=1 C=2 CF='-fdiagnostic-prefix -D__CHECK_ENDIAN__ -fmax-errors=unlimited -fmax-warnings=unlimited' O=build-sparse clean
+      #     make ARCH=um W=1 C=2 CF='-fdiagnostic-prefix -D__CHECK_ENDIAN__ -fmax-errors=unlimited -fmax-warnings=unlimited' O=build-sparse -j8 2> old-sparse.log 1> /dev/null
+      #     git checkout zpoline-nommu-v6.10
+      #     git checkout HEAD~1
+      #     make ARCH=um W=1 C=2 CF='-fdiagnostic-prefix -D__CHECK_ENDIAN__ -fmax-errors=unlimited -fmax-warnings=unlimited' O=build-sparse -j8 2> new-sparse.log 1> /dev/null
+      #     ./smart-sparse-diff/smart-sparse-diff.py old-sparse.log new-sparse.log
+      - name: check coding style
+        continue-on-error: true
+        run: |
+           git format-patch -o p1 uml/next..HEAD~40
+           ./scripts/checkpatch.pl --summary-file --ignore FILE_PATH_CHANGES \
+             --ignore AVOID_EXTERNS p1/*.patch
+      - name: check spells on commit message
+        run: |
+           git log uml/next..HEAD~40 |grep -v -E "^commit" > /tmp/a
+           aspell list /tmp/a
+
+  build_ltp:
+    uses: ./.github/workflows/ci-docker-build.yml
+    needs: [buildroot_riscv]
+    name: "LTP: build"
+  test_ltp:
+    runs-on: ubuntu-latest
+    needs: [build_uml, build_ltp]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - displayTargetName: um-mmu
+            image_name: ghcr.io/thehajime/alpine:3.20.3-um-mmu
+            testname: um-mmu
+            vmlinux_opt: ""
+            test_cmdline: "sh -x .github/workflows/ltp-entrypoint.sh LTP_SINGLE_FS_TYPE=ext4 "
+            name: um-mmu
+            kselftest_opt: ""
+          - displayTargetName: um-mmu-s
+            image_name: ghcr.io/thehajime/alpine:3.20.3-um-mmu
+            testname: um-mmu-seccomp
+            vmlinux_opt: "seccomp=on"
+            test_cmdline: "sh -x .github/workflows/ltp-entrypoint.sh LTP_SINGLE_FS_TYPE=ext4 "
+            name: um-mmu
+            kselftest_opt: ""
+          - displayTargetName: um-nommu
+            image_name: ghcr.io/thehajime/alpine:3.20.3-um-nommu
+            testname: um-nommu
+            vmlinux_opt: ""
+            test_cmdline: "sh -x .github/workflows/ltp-entrypoint.sh LTP_SINGLE_FS_TYPE=ext4 "
+            name: um-nommu
+            kselftest_opt: "NOMMU=1"
+          - displayTargetName: um-nommu-s
+            image_name: ghcr.io/thehajime/alpine:3.20.3-um-nommu
+            testname: um-nommu-seccomp
+            vmlinux_opt: "seccomp=on"
+            test_cmdline: "sh -x .github/workflows/ltp-entrypoint.sh LTP_SINGLE_FS_TYPE=ext4 "
+            name: um-nommu
+            kselftest_opt: "NOMMU=1 TARGETS=mm/nommu"
+          - displayTargetName: qemu-riscv-nommu
+            image_name: ghcr.io/thehajime/buildroot-riscv64-nommu:0.1
+            testname: riscv-nommu
+            vmlinux_opt: ""
+            test_cmdline: "env LTP_SINGLE_FS_TYPE=ext4 /opt/ltp/kirk --sut default:com=qemu --com \
+            qemu:image=/work-buildroot/buildroot/output/images/rootfs.ext2:kernel=/work-buildroot/buildroot/output/images/Image:system=riscv64:user=root \
+            -f syscalls --run-pattern '' --skip-file /ltp-skip -o /result.json"
+            name: riscv-nommu
+            kselftest_opt: "NOMMU=1 TARGETS=mm/nommu"
+          - displayTargetName: native
+            image_name: alpine:3.20.3
+            testname: native
+            vmlinux_opt: ""
+            test_cmdline: "env LTP_SINGLE_FS_TYPE=ext4 /opt/ltp/kirk \
+            -f syscalls --run-pattern '' --skip-file /ltp-skip -o /result.json"
+            name: um-mmu
+            docker_opt: "-v /lib/modules:/lib/modules"
+            kselftest_opt: ""
+          - displayTargetName: um-nommu-sas-s
+            image_name: ghcr.io/thehajime/alpine:3.20.3-um-nommu-sas
+            testname: um-nommu-sas-seccomp
+            vmlinux_opt: ""
+            test_cmdline: "sh -x .github/workflows/ltp-entrypoint.sh LTP_SINGLE_FS_TYPE=ext4 "
+            name: um-nommu
+            kselftest_opt: "NOMMU=1 TARGETS=mm/nommu"
+          - displayTargetName: um-nommu-sas-z
+            image_name: ghcr.io/thehajime/alpine:3.20.3-um-nommu-sas
+            testname: um-nommu-sas-zpoline
+            vmlinux_opt: "zpoline=1"
+            test_cmdline: "sh -x .github/workflows/ltp-entrypoint.sh LTP_SINGLE_FS_TYPE=ext4 "
+            name: um-nommu
+            kselftest_opt: "NOMMU=1 TARGETS=mm/nommu"
+    name: "LTP: test-${{ matrix.testname }}"
+    container:
+      image: ${{ matrix.image_name }}
+      options: --privileged -v/boot:/boot -v/home:/home -v /dev:/dev -t --entrypoint /bin/sh ${{ matrix.docker_opt }}
+    steps:
+      - name: Setup tmate session
+        uses: mxschmitt/action-tmate@v3
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.debug_enabled }}
+        with:
+          detached: true
+      - name: Set env
+        shell: bash
+        if: matrix.testname == 'riscv-nommu'
+        run: |
+          echo "/work-buildroot/buildroot/output/host/bin" >> $GITHUB_PATH
+          echo "export PATH=/work-buildroot/buildroot/output/host/bin/:$PATH" >> $HOME/.bashrc
+          echo "export PATH=/work-buildroot/buildroot/output/host/bin/:$PATH" >> $HOME/.profile
+
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+            path: /
+            pattern: ltp-alpine-${{ matrix.name }}.tar.gz
+      - name: extract artifact
+        run: |
+            tar xfz /ltp-alpine-${{ matrix.name }}.tar.gz -C /
+      - name: tests preparation (riscv)
+        if: matrix.testname == 'riscv-nommu'
+        run: |
+            qemu-img create -f raw /ltp-image.img 2G
+            mkfs.ext2 -d /opt/ /ltp-image.img
+            apt install -y python3 git util-linux e2fsprogs parted
+      - name: tests preparation (common)
+        run: |
+          mkdir -p output/ltp
+          cp .github/workflows/ltp-skip /
+          apk add git util-linux || true
+          git clone -b fix-nommu https://github.com/thehajime/ltp
+          cd ltp; git submodule update --init --recursive; cd ..
+          cp .github/workflows/faketty /bin
+          chmod +x /bin/faketty
+      - name: tests preparation (um)
+        if: matrix.testname != 'riscv-nommu'
+        run: |
+          sh -x ltp/ci/alpine-runtime.sh
+          apk del btrfs-progs
+          cp .github/workflows/ltp-exec.sh /
+
+          cat .github/workflows/ltp-entrypoint.sh | sed "s/cmd_option/${{ matrix.vmlinux_opt }}/" > /tmp/a
+          mv /tmp/a .github/workflows/ltp-entrypoint.sh
+      - name: kselftest (mm)
+        if: ${{ matrix.testname != 'riscv-nommu' && matrix.testname != 'native' }}
+        continue-on-error: true
+        run: |
+          faketty /root/vmlinux vec0:transport=raw,ifname=eth0,depth=128,gro=1 \
+                root=/dev/root rootflags=/  rootfstype=hostfs rw \
+                mem=4G loglevel=8 ${{ matrix.vmlinux_opt }} console=tty init=/root/kselftest.sh ${{ matrix.kselftest_opt }}
+      - name: LTP tests
+        env:
+          LTP_TIMEOUT_MUL: 10
+        run: |
+          faketty ${{ matrix.test_cmdline }} \
+               | tee output/ltp/${{ matrix.testname }}-ltp.dat
+          ./ltp/tools/kirk/kirk-src/utils/json2html.py -r /result.json \
+               > output/ltp/ltp-result-${{ matrix.testname }}.html
+          cp /result.json output/ltp/result-${{ matrix.testname }}.json || true
+          cp -rpf /github/home/kirk.root/ output/ltp/ || true
+          cp -rpf /tmp/kirk.root/ output/ltp/ || true
+
+      - uses: actions/upload-artifact@v7
+        id: upload_html
+        with:
+          name: ltp-result-${{ matrix.testname }}.html
+          path: output/ltp/ltp-result-${{ matrix.testname }}.html
+          archive: false
+      - name: retrieve artifact URL
+        run: |
+          echo "${{ matrix.testname }} report: ${{ steps.upload_html.outputs.artifact-url }}" > \
+             output/ltp/${{ matrix.testname }}-url.txt
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: test-result-ltp-${{ matrix.testname }}
+          path: output/ltp/*
+
+  bench-result:
+    runs-on: ubuntu-22.04
+    name: bench-result
+    needs: [benchmark,test_ltp]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+            path: output
+            pattern: test-result-*
+            merge-multiple: true
+      - name: Display structure of downloaded files
+        run: ls -R output
+      - name: Install packages
+        run: |
+          sudo apt update -y
+          sudo apt install -y gnuplot lmbench iperf3 netperf jq
+      - name: benchmark-host
+        run: |
+           mkdir -p output
+           sudo ln -s /usr/include/x86_64-linux-gnu/sys /usr/include/sys
+           sudo mkdir -p /var/tmp/lmbench/
+           sudo chown ${USER} /var/tmp/lmbench/
+           sh .github/workflows/lmbench_run.sh |& tee output/native.dat
+           gcc -o do_getpid .github/workflows/do_getpid.c
+           ./do_getpid -c 100 | tee -a output/native.dat
+           iperf3 -s &
+           iperf3 -c localhost -fm | tee output/native-iperf3.dat
+           iperf3 -c localhost -fm -R | tee -a output/native-iperf3.dat
+           bash .github/workflows/netperf-bench.sh localhost netperf | tee -a output/native-iperf3.dat
+      - name: bench data parse/out
+        run: |
+          bash .github/workflows/um-nommu-plot.sh output |& tee um-nommu.log
+          bash .github/workflows/netperf-plot.sh output |& tee -a um-nommu.log
+          export TMP_OUTPUT=$(cat um-nommu.log)
+          echo "TMP_OUTPUT<<EOF" >> $GITHUB_ENV
+          echo "$TMP_OUTPUT" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+          echo ${{env.TMP_OUTPUT}}
+      - name: ltp data parse/out
+        run: |
+          echo '### LTP results' > ltp-result.log
+          echo '| | passed | failed | broken | skipped | warnings| ' >> ltp-result.log
+          echo '|--|--|--|--|--|--|' >> ltp-result.log
+          cat output/result-native.json | jq  \
+            '.stats |.  + {"name": "native"} | [.name, .passed, .failed, .broken, .skipped, .warnings] | join(" | ") ' \
+            | sed "s/\"/\|/g"  >> ltp-result.log
+          cat output/result-um-mmu.json | jq  \
+            '.stats |.  + {"name": "mmu"} | [.name, .passed, .failed, .broken, .skipped, .warnings] | join(" | ") ' \
+            | sed "s/\"/\|/g"  >> ltp-result.log
+          cat output/result-um-mmu-seccomp.json | jq  \
+            '.stats |.  + {"name": "mmu-s"} | [.name, .passed, .failed, .broken, .skipped, .warnings] | join(" | ") ' \
+            | sed "s/\"/\|/g"  >> ltp-result.log
+          cat output/result-um-nommu.json | jq  \
+            '.stats |.  + {"name": "nommu"} | [.name, .passed, .failed, .broken, .skipped, .warnings] | join(" | ") ' \
+            | sed "s/\"/\|/g"  >> ltp-result.log
+          cat output/result-um-nommu-seccomp.json | jq  \
+            '.stats |.  + {"name": "nommu-s"} | [.name, .passed, .failed, .broken, .skipped, .warnings] | join(" | ") ' \
+            | sed "s/\"/\|/g"  >> ltp-result.log
+          cat output/result-um-nommu-sas-seccomp.json | jq  \
+            '.stats |.  + {"name": "nommu-sas-seccomp"} | [.name, .passed, .failed, .broken, .skipped, .warnings] | join(" | ") ' \
+            | sed "s/\"/\|/g"  >> ltp-result.log
+          cat output/result-um-nommu-sas-zpoline.json | jq  \
+            '.stats |.  + {"name": "nommu-sas-zpoline"} | [.name, .passed, .failed, .broken, .skipped, .warnings] | join(" | ") ' \
+            | sed "s/\"/\|/g"  >> ltp-result.log
+          cat output/result-riscv-nommu.json | jq  \
+            '.stats |.  + {"name": "riscv-nommu"} | [.name, .passed, .failed, .broken, .skipped, .warnings] | join(" | ") ' \
+            | sed "s/\"/\|/g"  >> ltp-result.log
+          echo "" >> ltp-result.log
+          echo "" >> ltp-result.log
+          cat output/native-url.txt >> ltp-result.log
+          cat output/um-mmu-url.txt >> ltp-result.log
+          cat output/um-mmu-seccomp-url.txt >> ltp-result.log
+          cat output/um-nommu-url.txt >> ltp-result.log
+          cat output/um-nommu-seccomp-url.txt >> ltp-result.log
+          cat output/um-nommu-sas-seccomp-url.txt >> ltp-result.log
+          cat output/um-nommu-sas-zpoline-url.txt >> ltp-result.log
+          cat output/riscv-nommu-url.txt >> ltp-result.log
+          export LTP_OUTPUT=$(cat ltp-result.log)
+          echo "LTP_OUTPUT<<EOF" >> $GITHUB_ENV
+          echo "$LTP_OUTPUT" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+          echo ${{env.LTP_OUTPUT}}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: test-result-all
+          path: output/out/*
+      - name: publish to imgur
+        uses: devicons/public-upload-to-imgur@v2.2.2
+        id: lmbench-imgur
+        with:
+          path: "output/out/lmbench.png"
+          client_id: ${{secrets.IMGUR_CLIENT_ID}}
+      - name: publish to imgur-iperf
+        uses: devicons/public-upload-to-imgur@v2.2.2
+        id: iperf3-imgur
+        with:
+          path: "output/out/iperf3.png"
+          client_id: ${{secrets.IMGUR_CLIENT_ID}}
+      - name: publish to imgur-netperf
+        uses: devicons/public-upload-to-imgur@v2.2.2
+        id: netperf-imgur
+        with:
+          path: "output/out/tcp-stream.png"
+          client_id: ${{secrets.IMGUR_CLIENT_ID}}
+      - name: prepare action post
+        run: |
+          export SCRIPT_OUTPUT="${{ join(fromJSON(steps.lmbench-imgur.outputs.markdown_urls)) }} ${{ join(fromJSON(steps.iperf3-imgur.outputs.markdown_urls)) }} ${{ join(fromJSON(steps.netperf-imgur.outputs.markdown_urls)) }}"
+          echo "SCRIPT_OUTPUT<<EOF" >> $GITHUB_ENV
+          echo "$TMP_OUTPUT" >> $GITHUB_ENV
+          echo "" >> $GITHUB_ENV
+          echo "$SCRIPT_OUTPUT" >> $GITHUB_ENV
+          echo "" >> $GITHUB_ENV
+          echo "$LTP_OUTPUT" >> $GITHUB_ENV
+          echo "" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+          echo ${{env.SCRIPT_OUTPUT}}
+      - uses: actions/github-script@v9
+        env:
+          COMMENT_BODY: ${{env.SCRIPT_OUTPUT}}
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: 1,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: process.env.COMMENT_BODY
+            })

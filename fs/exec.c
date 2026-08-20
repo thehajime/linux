@@ -69,6 +69,7 @@
 #include <linux/user_events.h>
 #include <linux/rseq.h>
 #include <linux/ksm.h>
+#include <linux/export.h>
 
 #include <linux/uaccess.h>
 #include <asm/mmu_context.h>
@@ -740,7 +741,7 @@ int transfer_args_to_stack(struct linux_binprm *bprm,
 	stop = bprm->p >> PAGE_SHIFT;
 	sp = *sp_location;
 
-	for (index = MAX_ARG_PAGES - 1; index >= stop; index--) {
+	for (index = MAX_ARG_PAGES; index-- > stop; ) {
 		unsigned int offset = index == stop ? bprm->p & ~PAGE_MASK : 0;
 		char *src = kmap_local_page(bprm->page[index]) + offset;
 		sp -= PAGE_SIZE - offset;
@@ -1921,6 +1922,7 @@ int kernel_execve(const char *kernel_filename,
 
 	return bprm_execve(bprm);
 }
+EXPORT_SYMBOL_FOR_MODULES(kernel_execve, "kunit-uapi");
 
 void set_binfmt(struct linux_binfmt *new)
 {

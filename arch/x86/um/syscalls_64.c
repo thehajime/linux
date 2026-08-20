@@ -45,7 +45,7 @@ SYSCALL_DEFINE2(arch_prctl, int, option, unsigned long, arg2)
 	return arch_prctl(current, option, (unsigned long __user *) arg2);
 }
 
-void arch_switch_to(struct task_struct *to)
+__weak void arch_switch_to(struct task_struct *to)
 {
 	/*
 	 * Nothing needs to be done on x86_64.
