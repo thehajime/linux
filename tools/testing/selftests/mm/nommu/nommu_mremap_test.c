@@ -27,6 +27,51 @@ static long get_fs_type(const char *path)
 	return 0;
 }
 
+/* return original value if succeed */
+static int set_nr_trim_pages(const char *value)
+{
+	int fd, orig_value;
+	ssize_t len, written, read_len;
+	char orig_buf[32];
+	int err = 0;
+
+	fd = open("/proc/sys/vm/nr_trim_pages", O_RDWR);
+	if (fd < 0)
+		return -errno;
+
+	read_len = read(fd, orig_buf, sizeof(orig_buf) - 1);
+	if (read_len < 0) {
+		err = -errno;
+		close(fd);
+		return err;
+	}
+	if (read_len == 0) {
+		close(fd);
+		return -EIO;
+	}
+
+	orig_buf[read_len] = '\0';
+	orig_value = atoi(orig_buf);
+
+	if (lseek(fd, 0, SEEK_SET) < 0) {
+		err = -errno;
+		close(fd);
+		return err;
+	}
+
+	len = strlen(value);
+	written = write(fd, value, len);
+	if (written != len)
+		err = written < 0 ? -errno : -EIO;
+
+	close(fd);
+
+	if (err)
+		return err;
+
+	return orig_value >= 0 ? orig_value : -EINVAL;
+}
+
 static void munmap_shrink_test(void)
 {
 	void *addr;
@@ -133,6 +178,21 @@ static int get_shared_writable_file_expected_error(const char *path)
 	return 0;
 }
 
+static int pre_conf_trim_page(void)
+{
+	return set_nr_trim_pages("0\n");
+}
+
+static int post_conf_trim_page(int value)
+{
+	char buf[32];
+
+	if (snprintf(buf, sizeof(buf), "%d\n", value) < 0)
+		return -EIO;
+
+	return set_nr_trim_pages(buf);
+}
+
 struct mremap_case_t {
 	const char *name;
 	const char *pathname;
@@ -143,6 +203,9 @@ struct mremap_case_t {
 	int (*resolve_exp_err)(const char *path);
 	unsigned int old_pages;
 	unsigned int new_pages;
+	int verify_growth_contents;
+	int (*pre_hook)(void);
+	int (*post_hook)(int value);
 };
 
 static struct mremap_case_t mremap_cases[] = {
@@ -210,6 +273,22 @@ static struct mremap_case_t mremap_cases[] = {
 		.new_pages = 8,
 	},
 	{
+		.name = "private file growth with reserved capacity (rw-)",
+		.pathname = "/tmp/ksft.nommu-remap-XXXXXX",
+		.open_flags = O_CREAT | O_RDWR | O_EXCL,
+		.mmap_prot = PROT_READ | PROT_WRITE,
+		.mmap_flags = MAP_PRIVATE,
+		.exp_err = 0,
+		.resolve_exp_err = 0,
+		.old_pages = 3,
+		.new_pages = 4,
+		.verify_growth_contents = 1,
+#ifdef CONFIG_NOMMU
+		.pre_hook = pre_conf_trim_page,
+		.post_hook = post_conf_trim_page,
+#endif
+	},
+	{
 		.name = "private file growth (rw-)",
 		.pathname = "/tmp/ksft.nommu-remap-XXXXXX",
 		.open_flags = O_CREAT | O_RDWR | O_EXCL,
@@ -263,6 +342,16 @@ static int run_mremap_test(struct mremap_case_t *tcase)
 			unlink(pb);
 			return KSFT_SKIP;
 		}
+
+		if (tcase->verify_growth_contents) {
+			unsigned char value = 0xa5;
+
+			if (pwrite(fd, &value, 1, (off_t)ps * old_pages) != 1) {
+				ksft_print_msg("Failed to initialize growth contents\n");
+				rc = KSFT_FAIL;
+				goto out;
+			}
+		}
 	} else if (tcase->pathname) {
 		fd = open(tcase->pathname, tcase->open_flags, 0600);
 		if (fd < 0) {
@@ -276,6 +365,16 @@ static int run_mremap_test(struct mremap_case_t *tcase)
 					      tcase->pathname);
 			close(fd);
 			return KSFT_SKIP;
+		}
+	}
+
+	if (tcase->pre_hook) {
+		orig_nr_trim_pages = tcase->pre_hook();
+		if (orig_nr_trim_pages < 0) {
+			ksft_print_msg("pre-hook failed %s(%d)\n",
+				strerror(-orig_nr_trim_pages), -orig_nr_trim_pages);
+			rc = KSFT_FAIL;
+			goto out;
 		}
 	}
 
@@ -311,6 +410,12 @@ static int run_mremap_test(struct mremap_case_t *tcase)
 		ksft_print_msg("%s/%s step successful\n", __func__, tcase->name);
 	}
 
+	if (tcase->verify_growth_contents && addr2 != MAP_FAILED &&
+		((unsigned char *)addr2)[(size_t)ps * old_pages] != 0xa5) {
+		ksft_print_msg("mremap growth did not preserve file contents\n");
+		rc = KSFT_FAIL;
+	}
+
 	/* clean up */
 	if (munmap(addr2 == MAP_FAILED ? addr : addr2,
 		   addr2 == MAP_FAILED ? ps * old_pages : ps * new_pages)) {
@@ -323,6 +428,21 @@ out:
 		close(fd);
 		if (tcase->pathname && strstr(tcase->pathname, "XXXXXX"))
 			unlink(pb);
+	}
+
+	/*
+	 * restore the sysctl value only when all of above went well.
+	 * please restore to the default value (1) if this test crashes during
+	 * the execution (via `sysctl -w vm.nr_trim_pages=1`).
+	 */
+	if (tcase->post_hook && orig_nr_trim_pages >= 0) {
+		int ret = tcase->post_hook(orig_nr_trim_pages);
+
+		if (ret < 0) {
+			ksft_print_msg("post-hook failed %s(%d)\n",
+				strerror(-ret), -ret);
+			rc = KSFT_FAIL;
+		}
 	}
 
 	ksft_test_result_report(rc, "%s:%s\n", __func__, tcase->name);
