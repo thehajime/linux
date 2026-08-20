@@ -1521,6 +1521,77 @@ restore_mapping:
 }
 
 /*
+ * expand a VMA until vm_top (allocated page end),
+ * from old_end to old_end + grow_len.
+ */
+static int vmi_expand_vma(struct vma_iterator *vmi,
+			  struct vm_area_struct *vma,
+			  unsigned long old_end, unsigned long grow_len)
+{
+	struct address_space *mapping;
+	int ret = 0;
+
+	/* update the VMA bookkeeping. */
+	mapping = lock_vma_mapping(vma);
+	remove_vma_from_mapping_locked(mapping, vma);
+
+	/* vm_top remains unchanged; only the logical end grows. */
+	vma->vm_end = old_end + grow_len;
+	ret = vma_iter_store_gfp(vmi, vma, GFP_KERNEL);
+	if (ret) {
+		vma->vm_end = old_end;
+		goto end;
+	}
+
+	/*
+	 * zero-filled if the vma is anonymous,
+	 * read contents of extended map from file otherwise.
+	 */
+	/*
+	 * growth path after mremap(): grow up to vm_top should be handled here.
+	 *
+	 * nommu private mappings can retain vm_file even when their backing
+	 * storage is copied into a private region:
+	 *
+	 *  - ordinary private file mappings retain vma_dummy_vm_ops and are
+	 *    not anonymous; their extension must be read from the file;
+	 *  - anonymous mappings have no vm_file and must be zero-filled;
+	 *  - private /dev/zero mappings retain vm_file but .mmap_prepare()
+	 *    explicitly clears vm_ops, so vma_is_anonymous() identifies them
+	 *    as anonymous and their extension must also be zero-filled.
+	 *
+	 * Use vma_is_anonymous() here rather than testing vm_file: private
+	 * /dev/zero is semantically anonymous despite retaining vm_file.
+	 */
+	if (vma_is_anonymous(vma)) {
+		memset((void *)old_end, 0, grow_len);
+	} else {
+		loff_t fpos;
+
+		fpos = (loff_t)vma->vm_pgoff << PAGE_SHIFT;
+		fpos += old_end - vma->vm_start;
+
+		ret = kernel_read(vma->vm_file, (void *)old_end,
+				  grow_len, &fpos);
+		if (ret < 0)
+			goto end;
+
+		if (ret < grow_len)
+			memset((char *)old_end + ret, 0, grow_len - ret);
+	}
+
+	down_write(&nommu_region_sem);
+	vma->vm_region->vm_end = old_end + grow_len;
+	up_write(&nommu_region_sem);
+
+end:
+	add_vma_to_mapping_locked(mapping, vma);
+	unlock_vma_mapping(mapping);
+
+	return ret;
+}
+
+/*
  * release a mapping
  * - under NOMMU conditions the chunk to be unmapped must be backed by a single
  *   VMA, though it need not cover the whole VMA
@@ -1646,6 +1717,9 @@ static unsigned long do_mremap(unsigned long addr,
 			unsigned long flags, unsigned long new_addr)
 {
 	struct vm_area_struct *vma;
+	int ret;
+
+	VMA_ITERATOR(vmi, current->mm, addr);
 
 	/* insanity checks first */
 	old_len = PAGE_ALIGN(old_len);
@@ -1674,7 +1748,33 @@ static unsigned long do_mremap(unsigned long addr,
 		return (unsigned long) -ENOMEM;
 
 	/* all checks complete - do it */
-	vma->vm_end = vma->vm_start + new_len;
+	if (new_len == old_len)
+		return vma->vm_start;
+
+	if (new_len < old_len) {
+		/*
+		 * like do_munmap(), we're allowed to shrink an anonymous VMA but not
+		 * a file-backed one
+		 */
+		if (vma->vm_file)
+			return (unsigned long) -EINVAL;
+
+		/*
+		 * vmi_shrink_vma() needs from/to pointers to be removed,
+		 * (mainly used in munmap) so, specify them.
+		 */
+		ret = vmi_shrink_vma(&vmi, vma, addr + new_len, addr + old_len);
+		if (ret < 0)
+			return (unsigned long) ret;
+	} else {
+		/* growth path */
+		unsigned long old_end = vma->vm_end;
+		unsigned long grow_len = (vma->vm_start + new_len) - old_end;
+
+		ret = vmi_expand_vma(&vmi, vma, old_end, grow_len);
+		if (ret < 0)
+			return (unsigned long) ret;
+	}
 	return vma->vm_start;
 }
 
