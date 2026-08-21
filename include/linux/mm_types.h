@@ -1172,6 +1172,7 @@ typedef struct {
 
 struct kioctx_table;
 struct iommu_mm_data;
+struct nommu_swmmu_space;
 struct mm_struct {
 	struct {
 		/*
@@ -1421,6 +1422,10 @@ struct mm_struct {
 #endif /* CONFIG_MM_ID */
 	} __randomize_layout;
 
+
+#ifdef CONFIG_NOMMU_SWMMU
+	struct nommu_swmmu_space *swmmu_space;
+#endif
 	/*
 	 * The mm_cpumask needs to be at the end of mm_struct, because it
 	 * is dynamically sized based on nr_cpu_ids.
