@@ -113,6 +113,7 @@
 #include <linux/export.h>
 #include <linux/pgalloc.h>
 #include <linux/uaccess.h>
+#include <linux/nommu_swmmu.h>
 
 #include <asm/mmu_context.h>
 #include <asm/cacheflush.h>
@@ -740,6 +741,10 @@ void __mmdrop(struct mm_struct *mm)
 	mm_destroy_cid(mm);
 	percpu_counter_destroy_many(mm->rss_stat, NR_MM_COUNTERS);
 
+#ifdef CONFIG_NOMMU_SWMMU
+	nommu_swmmu_space_destroy(mm->swmmu_space);
+#endif
+
 	free_mm(mm);
 }
 EXPORT_SYMBOL_GPL(__mmdrop);
@@ -1144,6 +1149,14 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p)
 		goto fail_pcpu;
 
 	lru_gen_init_mm(mm);
+
+#ifdef CONFIG_NOMMU_SWMMU
+	mm->swmmu_space = nommu_swmmu_space_create();
+	if (!mm->swmmu_space)
+		goto fail_pcpu;
+
+	nommu_swmmu_space_attach(mm, mm->swmmu_space);
+#endif
 	return mm;
 
 fail_pcpu:
@@ -1551,6 +1564,16 @@ static struct mm_struct *dup_mm(struct task_struct *tsk,
 
 	if (mm->binfmt && !try_module_get(mm->binfmt->module))
 		goto free_pt;
+
+#ifdef CONFIG_NOMMU_SWMMU
+	struct nommu_swmmu_space *new_space;
+
+	err = swmmu_clone_space(oldmm->swmmu_space, &new_space);
+	if (err)
+		goto free_pt;
+
+	nommu_swmmu_space_attach(mm, new_space);
+#endif
 
 	return mm;
 

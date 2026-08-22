@@ -17,10 +17,8 @@ struct swmmu_mapping {
 struct nommu_swmmu_space {
 	struct maple_tree mappings;
 	unsigned long next_address;
+	struct mm_struct *mm;
 	refcount_t users;
-
-	const struct swmmu_backend_ops *backend;
-	void *backend_context;
 };
 
 static size_t page_align(size_t size)
@@ -99,8 +97,7 @@ find_mapping(struct nommu_swmmu_space *space,
 	return mapping;
 }
 
-struct nommu_swmmu_space *nommu_swmmu_space_create(
-	const struct swmmu_backend_ops *ops, void *context)
+struct nommu_swmmu_space *nommu_swmmu_space_create(void)
 {
 	struct nommu_swmmu_space *space;
 
@@ -108,15 +105,20 @@ struct nommu_swmmu_space *nommu_swmmu_space_create(
 	if (!space)
 		return NULL;
 
-	/* not used ? */
-	space->backend = ops;
-	space->backend_context = context;
 	refcount_set(&space->users, 1);
 
 	mt_init(&space->mappings);
 	space->next_address = SWMMU_VA_BASE;
+	space->mm = NULL;
 
 	return space;
+}
+
+void nommu_swmmu_space_attach(struct mm_struct *mm,
+			       struct nommu_swmmu_space *space)
+{
+	space->mm = mm;
+	mm->swmmu_space = space;
 }
 
 void nommu_swmmu_space_destroy(struct nommu_swmmu_space *space)
@@ -148,12 +150,19 @@ void nommu_swmmu_space_destroy(struct nommu_swmmu_space *space)
 	kfree(space);
 }
 
+#if IS_ENABLED(CONFIG_NOMMU_SWMMU_KUNIT_TEST)
 static struct nommu_swmmu_space *kunit_test_space;
+#endif
 
 struct nommu_swmmu_space *nommu_swmmu_current(void)
 {
-#ifdef CONFIG_KUNIT
-	if (kunit_test_space)
+#if IS_ENABLED(CONFIG_NOMMU_SWMMU_KUNIT_TEST)
+	/*
+	 * KUnit tests may run from a kernel thread without an mm_struct.
+	 * This override exists only to exercise compiler-generated calls
+	 * against an explicitly selected test space.
+	 */
+	if (unlikely(kunit_test_space))
 		return kunit_test_space;
 #endif
 
@@ -163,9 +172,7 @@ struct nommu_swmmu_space *nommu_swmmu_current(void)
 	return current->mm->swmmu_space;
 }
 
-#ifdef CONFIG_KUNIT
-static struct nommu_swmmu_space *kunit_test_space;
-
+#if IS_ENABLED(CONFIG_NOMMU_SWMMU_KUNIT_TEST)
 void nommu_swmmu_kunit_set_space(struct nommu_swmmu_space *space)
 {
 	kunit_test_space = space;
@@ -438,7 +445,7 @@ int swmmu_clone_space(struct nommu_swmmu_space *parent,
 	if (!parent || !child_out)
 		return -EINVAL;
 
-	child = nommu_swmmu_space_create(parent->backend, parent->backend_context);
+	child = nommu_swmmu_space_create();
 	if (!child)
 		return -ENOMEM;
 

@@ -31,7 +31,7 @@ nommu_swmmu_increment_test(struct kunit *test)
 	struct swmmu_test_object *object;
 	u64 value;
 
-	space = nommu_swmmu_space_create(NULL, NULL);
+	space = nommu_swmmu_space_create();
 	KUNIT_ASSERT_NOT_NULL(test, space);
 
 	nommu_swmmu_kunit_set_space(space);
@@ -61,7 +61,7 @@ nommu_swmmu_clone_test(struct kunit *test)
 	uintptr_t virtual_address;
 	u64 value;
 
-	parent = nommu_swmmu_space_create(NULL, NULL);
+	parent = nommu_swmmu_space_create();
 	KUNIT_ASSERT_NOT_NULL(test, parent);
 
 	nommu_swmmu_kunit_set_space(parent);
@@ -83,9 +83,13 @@ nommu_swmmu_clone_test(struct kunit *test)
 
 	child_object = (struct swmmu_test_object *)virtual_address;
 
+	kunit_log(KERN_INFO, test, "# %s: parent=%p, child=%p", __func__,
+		parent_object, child_object);
+
 	value = test_swmmu_increment(child_object);
 
 	KUNIT_EXPECT_EQ(test, value, 42ULL);
+	kunit_log(KERN_INFO, test, "# %s: child=%llu", __func__, value);
 
 	nommu_swmmu_kunit_set_space(parent);
 
@@ -93,15 +97,37 @@ nommu_swmmu_clone_test(struct kunit *test)
 				     sizeof(parent_object->value));
 
 	KUNIT_EXPECT_EQ(test, value, 41ULL);
+	kunit_log(KERN_INFO, test, "# %s: parent=%llu", __func__, value);
 
 	nommu_swmmu_kunit_clear_space();
 	nommu_swmmu_space_destroy(child);
 	nommu_swmmu_space_destroy(parent);
 }
 
+static void nommu_swmmu_attach_test(struct kunit *test)
+{
+	struct nommu_swmmu_space *space;
+	struct mm_struct *test_mm;
+
+	space = nommu_swmmu_space_create();
+	KUNIT_ASSERT_NOT_NULL(test, space);
+
+	test_mm = mm_alloc();
+	KUNIT_ASSERT_NOT_NULL(test, test_mm);
+
+	/*
+	 * Test the attach helper directly. Do not rely on
+	 * nommu_swmmu_space_create() implicitly using current->mm.
+	 */
+	nommu_swmmu_space_attach(test_mm, space);
+
+	KUNIT_EXPECT_PTR_EQ(test, test_mm->swmmu_space, space);
+}
+
 static struct kunit_case nommu_swmmu_test_cases[] = {
 	KUNIT_CASE(nommu_swmmu_increment_test),
 	KUNIT_CASE(nommu_swmmu_clone_test),
+	KUNIT_CASE(nommu_swmmu_attach_test),
 	{}
 };
 

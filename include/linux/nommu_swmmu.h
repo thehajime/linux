@@ -29,8 +29,9 @@ struct swmmu_backend_ops {
 			 const struct swmmu_page *source);
 };
 
-struct nommu_swmmu_space *nommu_swmmu_space_create(const struct swmmu_backend_ops *ops,
-		   void *backend_context);
+struct nommu_swmmu_space *nommu_swmmu_space_create(void);
+void nommu_swmmu_space_attach(struct mm_struct *mm,
+			struct nommu_swmmu_space *space);
 void nommu_swmmu_space_destroy(struct nommu_swmmu_space *space);
 struct nommu_swmmu_space *swmmu_host_space_create(void);
 
