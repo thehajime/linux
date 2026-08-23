@@ -1566,13 +1566,15 @@ static struct mm_struct *dup_mm(struct task_struct *tsk,
 		goto free_pt;
 
 #ifdef CONFIG_NOMMU_SWMMU
-	struct nommu_swmmu_space *new_space;
+	{
+		struct nommu_swmmu_space *new_space;
 
-	err = swmmu_clone_space(oldmm->swmmu_space, &new_space);
-	if (err)
-		goto free_pt;
+		err = swmmu_clone_space(oldmm->swmmu_space, &new_space);
+		if (err)
+			goto free_pt;
 
-	nommu_swmmu_space_attach(mm, new_space);
+		nommu_swmmu_space_attach(mm, new_space);
+	}
 #endif
 
 	return mm;
@@ -2852,7 +2854,7 @@ EXPORT_SYMBOL_FOR_MODULES(user_mode_thread, "kunit-uapi");
 #ifdef __ARCH_WANT_SYS_FORK
 SYSCALL_DEFINE0(fork)
 {
-#ifdef CONFIG_MMU
+#if defined(CONFIG_MMU) || IS_ENABLED(CONFIG_NOMMU_SWMMU)
 	struct kernel_clone_args args = {
 		.exit_signal = SIGCHLD,
 	};

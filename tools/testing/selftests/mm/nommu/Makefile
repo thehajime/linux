@@ -3,5 +3,12 @@
 
 TEST_GEN_PROGS += nommu_mmap_test
 TEST_GEN_PROGS += nommu_mremap_test
+TEST_GEN_PROGS += nommu_swmmu_test
+
+SWMMU_PLUGIN ?=
+
+ifneq ($(strip $(SWMMU_PLUGIN)),)
+$(OUTPUT)/nommu_swmmu_test: CFLAGS += -fplugin=$(SWMMU_PLUGIN)
+endif
 
 include ../../lib.mk

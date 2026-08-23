@@ -2,6 +2,7 @@
 #include <linux/slab.h>
 #include <linux/mm.h>
 #include <linux/highmem.h>
+#include <linux/syscalls.h>
 
 #define SWMMU_VA_BASE ((uintptr_t)0x1000000000ULL)
 
@@ -186,20 +187,22 @@ void nommu_swmmu_kunit_clear_space(void)
 
 void *swmmu_alloc(size_t size)
 {
+	struct nommu_swmmu_space *space;
 	struct swmmu_mapping *mapping;
 	size_t length;
 	size_t i;
 	uintptr_t base;
 	int ret;
 
-	if (!nommu_swmmu_current() || size == 0)
+	space = nommu_swmmu_current();
+	if (!space || size == 0)
 		return NULL;
 
 	length = page_align(size);
 	if (length < size)
 		return NULL;
 
-	base = page_align(nommu_swmmu_current()->next_address);
+	base = page_align(space->next_address);
 
 	if (base > UINTPTR_MAX - length)
 		return NULL;
@@ -226,17 +229,17 @@ void *swmmu_alloc(size_t size)
 			goto error;
 	}
 
-	ret = mtree_store_range(&nommu_swmmu_current()->mappings,
+	ret = mtree_store_range(&space->mappings,
 				base,
 				base + length - 1,
 				mapping,
 				GFP_KERNEL);
 	if (ret) {
 		pr_warn("mtree_store_range failure: %d", ret);
-		return NULL;
+		goto error;
 	}
 
-	nommu_swmmu_current()->next_address = base + length;
+	space->next_address = base + length;
 
 	return (void *)base;
 error:
@@ -474,11 +477,14 @@ uint64_t nommu_swmmu_load_u64(const void *address, size_t size)
 {
 	uint64_t value = 0;
 	int ret;
+	struct nommu_swmmu_space *space;
+
+	space = nommu_swmmu_current();
 
 	if (size != 1 && size != 2 && size != 4 && size != 8)
 		BUG();
 
-	if (!nommu_swmmu_current())
+	if (!space)
 		BUG();
 
 	ret = swmmu_copy_from_space(nommu_swmmu_current(),
@@ -507,4 +513,40 @@ void nommu_swmmu_store_u64(void *address, size_t size, uint64_t value)
 				  size);
 	if (ret)
 		BUG();
+}
+
+SYSCALL_DEFINE1(nommu_swmmu_alloc, size_t, size)
+{
+	void *address;
+
+	address = swmmu_alloc(size);
+	if (!address)
+		return -ENOMEM;
+
+	return (unsigned long)address;
+}
+
+SYSCALL_DEFINE1(nommu_swmmu_free, void __user *, address)
+{
+	return swmmu_free(address);
+}
+
+SYSCALL_DEFINE3(nommu_swmmu_load,
+		void __user *, address,
+		size_t, size,
+		u64 __user *, result)
+{
+	u64 value;
+
+	value = nommu_swmmu_load_u64(address, size);
+
+	if (copy_to_user(result, &value, sizeof(value)))
+		return -EFAULT;
+	return (long)value;
+}
+
+SYSCALL_DEFINE3(nommu_swmmu_store, void __user *, address, size_t, size, uint64_t, value)
+{
+	nommu_swmmu_store_u64(address, size, value);
+	return 0;
 }

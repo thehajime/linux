@@ -863,8 +863,17 @@ __SYSCALL(__NR_listns, sys_listns)
 #define __NR_rseq_slice_yield 471
 __SYSCALL(__NR_rseq_slice_yield, sys_rseq_slice_yield)
 
+#define __NR_nommu_swmmu_alloc 472
+__SYSCALL(__NR_nommu_swmmu_alloc, sys_nommu_swmmu_alloc)
+#define __NR_nommu_swmmu_free 473
+__SYSCALL(__NR_nommu_swmmu_free, sys_nommu_swmmu_free)
+#define __NR_nommu_swmmu_load 474
+__SYSCALL(__NR_nommu_swmmu_load, sys_nommu_swmmu_load)
+#define __NR_nommu_swmmu_store 475
+__SYSCALL(__NR_nommu_swmmu_store, sys_nommu_swmmu_store)
+
 #undef __NR_syscalls
-#define __NR_syscalls 472
+#define __NR_syscalls 476
 
 /*
  * 32 bit systems traditionally used different
