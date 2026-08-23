@@ -41,7 +41,7 @@ nommu_swmmu_increment_test(struct kunit *test)
 
 	nommu_swmmu_kunit_set_space(space);
 
-	object = swmmu_alloc(sizeof(*object));
+	object = (void *)swmmu_alloc(sizeof(*object));
 	KUNIT_ASSERT_NOT_NULL(test, object);
 
 	nommu_swmmu_store_u64(&object->value,
@@ -91,10 +91,10 @@ nommu_swmmu_clone_test(struct kunit *test)
 
 	nommu_swmmu_kunit_set_space(parent);
 
-	parent_object1 = swmmu_alloc(sizeof(*parent_object1));
+	parent_object1 = (void *)swmmu_alloc(sizeof(*parent_object1));
 	KUNIT_ASSERT_NOT_NULL(test, parent_object1);
 
-	parent_object2 = swmmu_alloc(SWMMU_PAGE_SIZE * 2);
+	parent_object2 = (void *)swmmu_alloc(SWMMU_PAGE_SIZE * 2);
 	KUNIT_ASSERT_NOT_NULL(test, parent_object2);
 
 	nommu_swmmu_store_u64(&parent_object1->value,
@@ -185,12 +185,11 @@ static void nommu_swmmu_attach_test(struct kunit *test)
 
 static void nommu_swmmu_cross_page_test(struct kunit *test)
 {
-	struct nommu_swmmu_test_ctx *ctx = test->priv;
 	void *base;
 	void *address;
 	u64 value;
 
-	base = swmmu_alloc(SWMMU_PAGE_SIZE * 2);
+	base = (void *)swmmu_alloc(SWMMU_PAGE_SIZE * 2);
 	KUNIT_ASSERT_NOT_NULL(test, base);
 
 	address = (void *)((uintptr_t)base +
@@ -212,7 +211,7 @@ static void nommu_swmmu_translate_boundary_test(struct kunit *test)
 	void *base;
 	void *translated;
 
-	base = swmmu_alloc(SWMMU_PAGE_SIZE);
+	base = (void *)swmmu_alloc(SWMMU_PAGE_SIZE);
 	KUNIT_ASSERT_NOT_NULL(test, base);
 
 	translated = swmmu_translate(ctx->space,
@@ -246,8 +245,8 @@ static void nommu_swmmu_multiple_mapping_test(struct kunit *test)
 	void *second;
 	u64 value;
 
-	first = swmmu_alloc(SWMMU_PAGE_SIZE);
-	second = swmmu_alloc(SWMMU_PAGE_SIZE * 2);
+	first = (void *)swmmu_alloc(SWMMU_PAGE_SIZE);
+	second = (void *)swmmu_alloc(SWMMU_PAGE_SIZE * 2);
 
 	KUNIT_ASSERT_NOT_NULL(test, first);
 	KUNIT_ASSERT_NOT_NULL(test, second);
@@ -278,7 +277,7 @@ static void nommu_swmmu_free_test(struct kunit *test)
 	struct nommu_swmmu_test_ctx *ctx = test->priv;
 	void *base;
 
-	base = swmmu_alloc(SWMMU_PAGE_SIZE);
+	base = (void *)swmmu_alloc(SWMMU_PAGE_SIZE);
 	KUNIT_ASSERT_NOT_NULL(test, base);
 
 	KUNIT_EXPECT_EQ(test, swmmu_free(base), 0);
@@ -297,7 +296,7 @@ static void nommu_swmmu_free_interior_test(struct kunit *test)
 	void *base;
 	void *interior;
 
-	base = swmmu_alloc(SWMMU_PAGE_SIZE);
+	base = (void *)swmmu_alloc(SWMMU_PAGE_SIZE);
 	KUNIT_ASSERT_NOT_NULL(test, base);
 
 	interior = (void *)((uintptr_t)base + sizeof(u64));
@@ -313,7 +312,7 @@ static void nommu_swmmu_repeated_alloc_free_test(struct kunit *test)
 	for (i = 0; i < 128; i++) {
 		void *base;
 
-		base = swmmu_alloc((i % 4 + 1) * SWMMU_PAGE_SIZE);
+		base = (void *)swmmu_alloc((i % 4 + 1) * SWMMU_PAGE_SIZE);
 		KUNIT_ASSERT_NOT_NULL(test, base);
 
 		nommu_swmmu_store_u64(base, sizeof(u64), i);
@@ -336,7 +335,7 @@ static void nommu_swmmu_repeated_clone_test(struct kunit *test)
 		void *base;
 		u64 value;
 
-		base = swmmu_alloc(SWMMU_PAGE_SIZE * 2);
+		base = (void *)swmmu_alloc(SWMMU_PAGE_SIZE * 2);
 		KUNIT_ASSERT_NOT_NULL(test, base);
 
 		nommu_swmmu_store_u64(base, sizeof(u64), 100 + i);

@@ -6,39 +6,40 @@
 #include <linux/errno.h>
 #include <linux/maple_tree.h>
 #include <linux/refcount.h>
+#include <linux/gfp_types.h>
 #include <vdso/limits.h>
 
 #define SWMMU_PAGE_SIZE 4096UL
 
 struct nommu_swmmu_space;
-struct swmmu_page;
+struct page;
 
-struct swmmu_backend_ops {
-	void *(*zalloc)(void *context, size_t size);
-	void (*dealloc)(void *context, void *ptr);
+struct nommu_swmmu_mem_ops {
+	void *(*zalloc)(size_t size, gfp_t gfp);
+	void (*dealloc)(void *ptr);
 
-	struct swmmu_page *(*alloc_page)(void *context);
-	void (*free_page)(void *context,
-			  struct swmmu_page *page);
+	struct page *(*page_alloc)(gfp_t gfp);
+	void (*page_free)(struct page *page);
 
-	void *(*page_address)(void *context,
-			      struct swmmu_page *page);
-
-	int (*copy_page)(void *context,
-			 struct swmmu_page *destination,
-			 const struct swmmu_page *source);
+	int (*page_copy)(struct page *dst,
+			const struct page *src);
 };
 
 struct nommu_swmmu_space *nommu_swmmu_space_create(void);
 void nommu_swmmu_space_attach(struct mm_struct *mm,
 			struct nommu_swmmu_space *space);
 void nommu_swmmu_space_destroy(struct nommu_swmmu_space *space);
-struct nommu_swmmu_space *swmmu_host_space_create(void);
+const struct nommu_swmmu_mem_ops *nommu_swmmu_arch_mem_ops(void);
+#if IS_ENABLED(CONFIG_NOMMU_SWMMU_KUNIT_TEST)
+struct nommu_swmmu_space *
+nommu_swmmu_space_create_with_ops(
+	const struct nommu_swmmu_mem_ops *mem_ops);
+#endif
 
 struct nommu_swmmu_space *nommu_swmmu_current(void);
 
 /* Allocate a synthetic virtual-address range in the current space. */
-void *swmmu_alloc(size_t size);
+long swmmu_alloc(size_t size);
 int swmmu_free(void *address);
 
 /*

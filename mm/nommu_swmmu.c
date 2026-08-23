@@ -1,10 +1,46 @@
 #include <linux/nommu_swmmu.h>
 #include <linux/slab.h>
 #include <linux/mm.h>
+#include <linux/gfp.h>
 #include <linux/highmem.h>
 #include <linux/syscalls.h>
 
 #define SWMMU_VA_BASE ((uintptr_t)0x1000000000ULL)
+
+static inline void *default_kzalloc(size_t size, gfp_t gfp)
+{
+	return kzalloc(size, gfp);
+}
+
+static inline void default_kfree(void *ptr)
+{
+	kfree(ptr);
+}
+
+static inline struct page *default_alloc_page(gfp_t gfp)
+{
+	return alloc_page(gfp);
+}
+
+static inline void default_free_page(struct page *page)
+{
+	__free_page(page);
+}
+
+static inline int default_copy_page(struct page *dst,
+				const struct page *src)
+{
+	copy_highpage(dst, (struct page *)src);
+	return 0;
+}
+
+static const struct nommu_swmmu_mem_ops default_ops = {
+	.zalloc = default_kzalloc,
+	.dealloc = default_kfree,
+	.page_alloc = default_alloc_page,
+	.page_free = default_free_page,
+	.page_copy = default_copy_page,
+};
 
 struct swmmu_mapping {
 	uintptr_t base;
@@ -20,6 +56,8 @@ struct nommu_swmmu_space {
 	unsigned long next_address;
 	struct mm_struct *mm;
 	refcount_t users;
+
+	const struct nommu_swmmu_mem_ops *ops;
 };
 
 static size_t page_align(size_t size)
@@ -28,6 +66,7 @@ static size_t page_align(size_t size)
 	       ~(SWMMU_PAGE_SIZE - 1);
 }
 
+#ifdef CONFIG_NOMMU_SWMMU_DEBUG
 static void
 dump_mappings(struct nommu_swmmu_space *space)
 {
@@ -58,6 +97,7 @@ dump_mapping_range(struct nommu_swmmu_space *space,
 			 mas.index, mas.last, mapping);
 	}
 }
+#endif /* CONFIG_NOMMU_SWMMU_DEBUG */
 
 static struct swmmu_mapping *
 find_mapping(struct nommu_swmmu_space *space,
@@ -98,22 +138,57 @@ find_mapping(struct nommu_swmmu_space *space,
 	return mapping;
 }
 
-struct nommu_swmmu_space *nommu_swmmu_space_create(void)
+/*
+ * Create a space using @mem_ops.
+ * The operation table must remain alive for the lifetime of the space.
+ */
+static struct nommu_swmmu_space *
+__nommu_swmmu_space_create(
+	const struct nommu_swmmu_mem_ops *mem_ops)
 {
 	struct nommu_swmmu_space *space;
 
-	space = kzalloc(sizeof(*space), GFP_KERNEL);
+	if (!mem_ops)
+		return NULL;
+
+	space = mem_ops->zalloc(sizeof(*space), GFP_KERNEL);
 	if (!space)
 		return NULL;
 
+	space->ops = mem_ops;
 	refcount_set(&space->users, 1);
-
 	mt_init(&space->mappings);
 	space->next_address = SWMMU_VA_BASE;
 	space->mm = NULL;
 
 	return space;
 }
+
+/* for future extensions */
+const __weak struct nommu_swmmu_mem_ops *nommu_swmmu_arch_mem_ops(void)
+{
+	return NULL;
+}
+
+struct nommu_swmmu_space *nommu_swmmu_space_create(void)
+{
+	const struct nommu_swmmu_mem_ops *mem_ops;
+
+	mem_ops = nommu_swmmu_arch_mem_ops();
+	if (!mem_ops)
+		mem_ops = &default_ops;
+
+	return __nommu_swmmu_space_create(mem_ops);
+}
+
+#if IS_ENABLED(CONFIG_NOMMU_SWMMU_KUNIT_TEST)
+struct nommu_swmmu_space *
+nommu_swmmu_space_create_with_ops(
+	const struct nommu_swmmu_mem_ops *mem_ops)
+{
+	return __nommu_swmmu_space_create(mem_ops);
+}
+#endif
 
 void nommu_swmmu_space_attach(struct mm_struct *mm,
 			       struct nommu_swmmu_space *space)
@@ -124,11 +199,14 @@ void nommu_swmmu_space_attach(struct mm_struct *mm,
 
 void nommu_swmmu_space_destroy(struct nommu_swmmu_space *space)
 {
+	const struct nommu_swmmu_mem_ops *mem_ops;
 	struct swmmu_mapping *mapping;
 	int i;
 
 	if (!space)
 		return;
+
+	mem_ops = space->ops;
 
 	MA_STATE(mas, &space->mappings, 0, 0);
 	mas_for_each(&mas, mapping, ULONG_MAX) {
@@ -138,18 +216,18 @@ void nommu_swmmu_space_destroy(struct nommu_swmmu_space *space)
 		pr_debug("SWMMU destroying mapping: [%lx-%lx] %p\n",
 			 start, last, mapping);
 		for (i = 0; i < mapping->page_count; i++)
-			__free_page(mapping->pages[i]);
+			mem_ops->page_free(mapping->pages[i]);
 
-		kfree(mapping->pages);
-		kfree(mapping);
+		mem_ops->dealloc(mapping->pages);
+		mem_ops->dealloc(mapping);
 	}
 
 	if (space->mm && space->mm->swmmu_space == space)
 		space->mm->swmmu_space = NULL;
 	space->mm = NULL;
-
 	__mt_destroy(&space->mappings);
-	kfree(space);
+
+	mem_ops->dealloc(space);
 }
 
 #if IS_ENABLED(CONFIG_NOMMU_SWMMU_KUNIT_TEST)
@@ -186,7 +264,7 @@ void nommu_swmmu_kunit_clear_space(void)
 }
 #endif
 
-void *swmmu_alloc(size_t size)
+long swmmu_alloc(size_t size)
 {
 	struct nommu_swmmu_space *space;
 	struct swmmu_mapping *mapping;
@@ -197,37 +275,46 @@ void *swmmu_alloc(size_t size)
 
 	space = nommu_swmmu_current();
 	if (!space || size == 0)
-		return NULL;
+		return -EINVAL;
 
 	length = page_align(size);
 	if (length < size)
-		return NULL;
+		return -EINVAL;
 
 	base = page_align(space->next_address);
 
 	if (base > UINTPTR_MAX - length)
-		return NULL;
+		return -EINVAL;
 
-	mapping = kzalloc(sizeof(*mapping), GFP_KERNEL);
-	if (!mapping)
-		return NULL;
+	if (base > LONG_MAX)
+		return -EOVERFLOW;
+
+	mapping = space->ops->zalloc(sizeof(*mapping), GFP_KERNEL);
+	if (!mapping) {
+		pr_warn("%s: page metadata allocation failure", __func__);
+		return -ENOMEM;
+	}
 
 	mapping->base = base;
 	mapping->length = length;
 
 	mapping->page_count = length / SWMMU_PAGE_SIZE;
-	mapping->pages = kcalloc(mapping->page_count,
-				sizeof(*mapping->pages),
-				GFP_KERNEL);
+	mapping->pages = space->ops->zalloc(mapping->page_count *
+					sizeof(*mapping->pages),
+					GFP_KERNEL);
 	if (!mapping->pages) {
-		kfree(mapping);
-		return NULL;
+		space->ops->dealloc(mapping);
+		pr_warn("%s: page array allocation failure", __func__);
+		return -ENOMEM;
 	}
 
 	for (i = 0; i < mapping->page_count; i++) {
-		mapping->pages[i] = alloc_page(GFP_KERNEL);
-		if (!mapping->pages[i])
+		mapping->pages[i] = space->ops->page_alloc(GFP_KERNEL);
+		if (!mapping->pages[i]) {
+			ret = -ENOMEM;
+			pr_warn("%s: page allocation failure at [%lu]", __func__, i);
 			goto error;
+		}
 	}
 
 	ret = mtree_store_range(&space->mappings,
@@ -236,23 +323,23 @@ void *swmmu_alloc(size_t size)
 				mapping,
 				GFP_KERNEL);
 	if (ret) {
-		pr_warn("mtree_store_range failure: %d", ret);
+		pr_warn("%s: mtree_store_range failure: %d", __func__, ret);
 		goto error;
 	}
 
 	space->next_address = base + length;
 
-	return (void *)base;
+	return (long)base;
 error:
 	while (i > 0) {
 		i--;
-		__free_page(mapping->pages[i]);
+		space->ops->page_free(mapping->pages[i]);
 	}
 
-	kfree(mapping->pages);
-	kfree(mapping);
+	space->ops->dealloc(mapping->pages);
+	space->ops->dealloc(mapping);
 
-	return NULL;
+	return ret;
 }
 
 int swmmu_free(void *address)
@@ -273,15 +360,15 @@ int swmmu_free(void *address)
 
 	entry = mtree_erase(&space->mappings, mapping->base);
 	if (entry != mapping) {
-		pr_warn("maple tree inconsistency");
+		pr_warn("%s: maple tree inconsistency", __func__);
 		return -EINVAL;
 	}
 
 	for (i = 0; i < mapping->page_count; i++)
-		__free_page(mapping->pages[i]);
+		space->ops->page_free(mapping->pages[i]);
 
-	kfree(mapping->pages);
-	kfree(mapping);
+	space->ops->dealloc(mapping->pages);
+	space->ops->dealloc(mapping);
 
 	return 0;
 }
@@ -380,13 +467,13 @@ release_mapping(struct nommu_swmmu_space *space,
 		return;
 
 	for (i = 0; i < allocated_pages; i++) {
-		__free_page(mapping->pages[i]);
+		space->ops->page_free(mapping->pages[i]);
 	}
 
 	if (mapping->pages)
-		kfree(mapping->pages);
+		space->ops->dealloc(mapping->pages);
 
-	kfree(mapping);
+	space->ops->dealloc(mapping);
 }
 
 static int
@@ -397,28 +484,39 @@ clone_one_mapping(struct nommu_swmmu_space *child,
 	size_t i;
 	int ret;
 
-	copy = kzalloc(sizeof(*copy), GFP_KERNEL);
-	if (!copy)
+	copy = child->ops->zalloc(sizeof(*copy), GFP_KERNEL);
+	if (!copy) {
+		pr_warn("%s: page metadata allocation failure", __func__);
 		return -ENOMEM;
+	}
 
 	copy->base = source->base;
 	copy->length = source->length;
 	copy->page_count = source->page_count;
 
-	copy->pages = kzalloc(copy->page_count * sizeof(*copy->pages), GFP_KERNEL);
+	copy->pages = child->ops->zalloc(copy->page_count * sizeof(*copy->pages),
+				GFP_KERNEL);
 	if (!copy->pages) {
-		kfree(copy);
+		child->ops->dealloc(copy);
+		pr_warn("%s: page array allocation failure", __func__);
 		return -ENOMEM;
 	}
 
 	for (i = 0; i < copy->page_count; i++) {
-		copy->pages[i] = alloc_page(GFP_KERNEL);
+		copy->pages[i] = child->ops->page_alloc(GFP_KERNEL);
 		if (!copy->pages[i]) {
 			release_mapping(child, copy, i);
+			pr_warn("%s: page allocation failure at [%lu]", __func__, i);
 			return -ENOMEM;
 		}
 
-		copy_highpage(copy->pages[i], source->pages[i]);
+		ret = child->ops->page_copy(copy->pages[i],
+					source->pages[i]);
+		if (ret) {
+			release_mapping(child, copy, i + 1);
+			pr_warn("%s: page copy failure at [%lu]", __func__, i);
+			return ret;
+		}
 	}
 
 	ret = mtree_store_range(
@@ -429,6 +527,7 @@ clone_one_mapping(struct nommu_swmmu_space *child,
 		GFP_KERNEL);
 	if (ret) {
 		release_mapping(child, copy, copy->page_count);
+		pr_warn("%s: mtree_store_range failure: %d", __func__, ret);
 		return ret;
 	}
 
@@ -451,9 +550,11 @@ int swmmu_clone_space(struct nommu_swmmu_space *parent,
 	if (!parent || !child_out)
 		return -EINVAL;
 
-	child = nommu_swmmu_space_create();
-	if (!child)
+	child = __nommu_swmmu_space_create(parent->ops);
+	if (!child) {
+		pr_warn("%s: page metadata allocation failure", __func__);
 		return -ENOMEM;
+	}
 
 	/*
 	 * Preserve the allocator position so future allocations also
@@ -473,7 +574,7 @@ int swmmu_clone_space(struct nommu_swmmu_space *parent,
 
 error:
 	nommu_swmmu_space_destroy(child);
-	return -ENOMEM;
+	return ret;
 }
 
 uint64_t nommu_swmmu_load_u64(const void *address, size_t size)
@@ -520,11 +621,11 @@ void nommu_swmmu_store_u64(void *address, size_t size, uint64_t value)
 
 SYSCALL_DEFINE1(nommu_swmmu_alloc, size_t, size)
 {
-	void *address;
+	long address;
 
 	address = swmmu_alloc(size);
-	if (!address)
-		return -ENOMEM;
+	if (address < 0)
+		return address;
 
 	return (unsigned long)address;
 }
