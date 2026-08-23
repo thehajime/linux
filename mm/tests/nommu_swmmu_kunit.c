@@ -10,6 +10,11 @@ struct swmmu_test_object {
 	u64 value;
 };
 
+struct nommu_swmmu_test_ctx {
+	struct nommu_swmmu_space *space;
+};
+
+
 static u64 (* const __used swmmu_load_ref)
 	(const void *, size_t) = nommu_swmmu_load_u64;
 
@@ -52,56 +57,110 @@ nommu_swmmu_increment_test(struct kunit *test)
 }
 
 static void
+destroy_test_space(struct nommu_swmmu_space *space)
+{
+	nommu_swmmu_kunit_clear_space();
+	nommu_swmmu_space_destroy(space);
+}
+
+KUNIT_DEFINE_ACTION_WRAPPER(
+	destroy_test_space_action,
+	destroy_test_space,
+	struct nommu_swmmu_space *);
+
+static void
 nommu_swmmu_clone_test(struct kunit *test)
 {
 	struct nommu_swmmu_space *parent;
 	struct nommu_swmmu_space *child;
-	struct swmmu_test_object *parent_object;
-	struct swmmu_test_object *child_object;
-	uintptr_t virtual_address;
+	struct swmmu_test_object *parent_object1;
+	struct swmmu_test_object *parent_object2;
+	struct swmmu_test_object *parent_object3;
+	struct swmmu_test_object *child_object1;
+	struct swmmu_test_object *child_object2;
+	struct swmmu_test_object *child_object3;
+	uintptr_t vaddr1, vaddr2, vaddr3;
 	u64 value;
+	int ret;
 
 	parent = nommu_swmmu_space_create();
 	KUNIT_ASSERT_NOT_NULL(test, parent);
+	ret = kunit_add_action_or_reset(test,
+					destroy_test_space_action, parent);
+	KUNIT_ASSERT_EQ(test, ret, 0);
 
 	nommu_swmmu_kunit_set_space(parent);
 
-	parent_object = swmmu_alloc(sizeof(*parent_object));
-	KUNIT_ASSERT_NOT_NULL(test, parent_object);
+	parent_object1 = swmmu_alloc(sizeof(*parent_object1));
+	KUNIT_ASSERT_NOT_NULL(test, parent_object1);
 
-	nommu_swmmu_store_u64(&parent_object->value,
-			      sizeof(parent_object->value),
+	parent_object2 = swmmu_alloc(SWMMU_PAGE_SIZE * 2);
+	KUNIT_ASSERT_NOT_NULL(test, parent_object2);
+
+	nommu_swmmu_store_u64(&parent_object1->value,
+			      sizeof(parent_object1->value),
 			      41);
 
-	virtual_address = (uintptr_t)parent_object;
+	nommu_swmmu_store_u64(&parent_object2->value,
+			      sizeof(parent_object2->value),
+			      81);
+
+	parent_object3 = (void *)((uintptr_t)parent_object2 +
+				SWMMU_PAGE_SIZE);
+	nommu_swmmu_store_u64(&parent_object3->value,
+			      sizeof(parent_object3->value),
+			      91);
+
+	vaddr1 = (uintptr_t)parent_object1;
+	vaddr2 = (uintptr_t)parent_object2;
+	vaddr3 = (uintptr_t)parent_object3;
 
 	KUNIT_ASSERT_EQ(test,
 			swmmu_clone_space(parent, &child),
 			0);
 
 	nommu_swmmu_kunit_set_space(child);
+	ret = kunit_add_action_or_reset(test,
+					destroy_test_space_action, child);
+	KUNIT_ASSERT_EQ(test, ret, 0);
 
-	child_object = (struct swmmu_test_object *)virtual_address;
+	child_object1 = (struct swmmu_test_object *)vaddr1;
+	child_object2 = (struct swmmu_test_object *)vaddr2;
+	child_object3 = (struct swmmu_test_object *)vaddr3;
 
 	kunit_log(KERN_INFO, test, "# %s: parent=%p, child=%p", __func__,
-		parent_object, child_object);
+		parent_object1, child_object1);
+	kunit_log(KERN_INFO, test, "# %s: parent=%p, child=%p", __func__,
+		parent_object2, child_object2);
 
-	value = test_swmmu_increment(child_object);
-
+	value = test_swmmu_increment(child_object1);
 	KUNIT_EXPECT_EQ(test, value, 42ULL);
+	kunit_log(KERN_INFO, test, "# %s: child=%llu", __func__, value);
+
+	value = test_swmmu_increment(child_object2);
+	KUNIT_EXPECT_EQ(test, value, 82ULL);
+	kunit_log(KERN_INFO, test, "# %s: child=%llu", __func__, value);
+
+	value = test_swmmu_increment(child_object3);
+	KUNIT_EXPECT_EQ(test, value, 92ULL);
 	kunit_log(KERN_INFO, test, "# %s: child=%llu", __func__, value);
 
 	nommu_swmmu_kunit_set_space(parent);
 
-	value = nommu_swmmu_load_u64(&parent_object->value,
-				     sizeof(parent_object->value));
-
+	value = nommu_swmmu_load_u64(&parent_object1->value,
+				     sizeof(parent_object1->value));
 	KUNIT_EXPECT_EQ(test, value, 41ULL);
 	kunit_log(KERN_INFO, test, "# %s: parent=%llu", __func__, value);
 
-	nommu_swmmu_kunit_clear_space();
-	nommu_swmmu_space_destroy(child);
-	nommu_swmmu_space_destroy(parent);
+	value = nommu_swmmu_load_u64(&parent_object2->value,
+				     sizeof(parent_object2->value));
+	KUNIT_EXPECT_EQ(test, value, 81ULL);
+	kunit_log(KERN_INFO, test, "# %s: parent=%llu", __func__, value);
+
+	value = nommu_swmmu_load_u64(&parent_object3->value,
+				     sizeof(parent_object3->value));
+	KUNIT_EXPECT_EQ(test, value, 91ULL);
+	kunit_log(KERN_INFO, test, "# %s: parent=%llu", __func__, value);
 }
 
 static void nommu_swmmu_attach_test(struct kunit *test)
@@ -124,15 +183,137 @@ static void nommu_swmmu_attach_test(struct kunit *test)
 	KUNIT_EXPECT_PTR_EQ(test, test_mm->swmmu_space, space);
 }
 
+static void nommu_swmmu_cross_page_test(struct kunit *test)
+{
+	struct nommu_swmmu_test_ctx *ctx = test->priv;
+	void *base;
+	void *address;
+	u64 value;
+
+	base = swmmu_alloc(SWMMU_PAGE_SIZE * 2);
+	KUNIT_ASSERT_NOT_NULL(test, base);
+
+	address = (void *)((uintptr_t)base +
+			   SWMMU_PAGE_SIZE - sizeof(u32));
+
+	nommu_swmmu_store_u64(address, sizeof(u64),
+			      0x1122334455667788ULL);
+
+	value = nommu_swmmu_load_u64(address, sizeof(u64));
+
+	KUNIT_EXPECT_EQ(test, value, 0x1122334455667788ULL);
+
+	KUNIT_EXPECT_EQ(test, swmmu_free(base), 0);
+}
+
+static void nommu_swmmu_translate_boundary_test(struct kunit *test)
+{
+	struct nommu_swmmu_test_ctx *ctx = test->priv;
+	void *base;
+	void *translated;
+
+	base = swmmu_alloc(SWMMU_PAGE_SIZE);
+	KUNIT_ASSERT_NOT_NULL(test, base);
+
+	translated = swmmu_translate(ctx->space,
+				     (uintptr_t)base,
+				     sizeof(u64),
+				     0);
+	KUNIT_ASSERT_NOT_NULL(test, translated);
+
+	translated = swmmu_translate(ctx->space,
+				     (uintptr_t)base +
+				     SWMMU_PAGE_SIZE -
+				     sizeof(u32),
+				     sizeof(u64),
+				     0);
+	KUNIT_EXPECT_NULL(test, translated);
+
+	translated = swmmu_translate(ctx->space,
+				     (uintptr_t)base +
+				     SWMMU_PAGE_SIZE,
+				     sizeof(u64),
+				     0);
+	KUNIT_EXPECT_NULL(test, translated);
+
+	KUNIT_EXPECT_EQ(test, swmmu_free(base), 0);
+}
+
+static void nommu_swmmu_multiple_mapping_test(struct kunit *test)
+{
+	struct nommu_swmmu_test_ctx *ctx = test->priv;
+	void *first;
+	void *second;
+	u64 value;
+
+	first = swmmu_alloc(SWMMU_PAGE_SIZE);
+	second = swmmu_alloc(SWMMU_PAGE_SIZE * 2);
+
+	KUNIT_ASSERT_NOT_NULL(test, first);
+	KUNIT_ASSERT_NOT_NULL(test, second);
+
+	KUNIT_EXPECT_PTR_NE(test, first, second);
+
+	nommu_swmmu_store_u64(first, sizeof(u64), 11);
+	nommu_swmmu_store_u64(second, sizeof(u64), 22);
+
+	value = nommu_swmmu_load_u64(first, sizeof(u64));
+	KUNIT_EXPECT_EQ(test, value, 11ULL);
+
+	value = nommu_swmmu_load_u64(second, sizeof(u64));
+	KUNIT_EXPECT_EQ(test, value, 22ULL);
+
+	KUNIT_EXPECT_EQ(test, swmmu_free(first), 0);
+	KUNIT_EXPECT_EQ(test, swmmu_free(second), 0);
+
+	KUNIT_EXPECT_NULL(test,
+			  swmmu_translate(ctx->space,
+					  (uintptr_t)first,
+					  sizeof(u64),
+					  0));
+}
+
+static int nommu_swmmu_test_init(struct kunit *test)
+{
+	struct nommu_swmmu_test_ctx *ctx;
+
+	ctx = kunit_kzalloc(test, sizeof(*ctx), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, ctx);
+
+	ctx->space = nommu_swmmu_space_create();
+	KUNIT_ASSERT_NOT_NULL(test, ctx->space);
+
+	nommu_swmmu_kunit_set_space(ctx->space);
+	test->priv = ctx;
+
+	return 0;
+}
+
+static void nommu_swmmu_test_exit(struct kunit *test)
+{
+	struct nommu_swmmu_test_ctx *ctx = test->priv;
+
+	nommu_swmmu_kunit_clear_space();
+
+	if (ctx->space)
+		nommu_swmmu_space_destroy(ctx->space);
+}
+
+
 static struct kunit_case nommu_swmmu_test_cases[] = {
 	KUNIT_CASE(nommu_swmmu_increment_test),
 	KUNIT_CASE(nommu_swmmu_clone_test),
 	KUNIT_CASE(nommu_swmmu_attach_test),
+	KUNIT_CASE(nommu_swmmu_cross_page_test),
+	KUNIT_CASE(nommu_swmmu_translate_boundary_test),
+	KUNIT_CASE(nommu_swmmu_multiple_mapping_test),
 	{}
 };
 
 static struct kunit_suite nommu_swmmu_test_suite = {
 	.name = "nommu-swmmu",
+	.init = nommu_swmmu_test_init,
+	.exit = nommu_swmmu_test_exit,
 	.test_cases = nommu_swmmu_test_cases,
 };
 

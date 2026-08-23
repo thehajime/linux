@@ -144,8 +144,9 @@ void nommu_swmmu_space_destroy(struct nommu_swmmu_space *space)
 		kfree(mapping);
 	}
 
-	if (nommu_swmmu_current() == space)
-		current->mm->swmmu_space = NULL;
+	if (space->mm && space->mm->swmmu_space == space)
+		space->mm->swmmu_space = NULL;
+	space->mm = NULL;
 
 	__mt_destroy(&space->mappings);
 	kfree(space);
