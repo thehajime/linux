@@ -257,19 +257,21 @@ error:
 
 int swmmu_free(void *address)
 {
+	struct nommu_swmmu_space *space;
 	struct swmmu_mapping *mapping;
+	uintptr_t base = (uintptr_t)address;
 	size_t i;
-
-	if (!nommu_swmmu_current() || !address)
-		return -EINVAL;
-
-	mapping = find_mapping(nommu_swmmu_current(), (uintptr_t)address, 1);
-	if (!mapping)
-		return -EINVAL;
-
 	void *entry;
 
-	entry = mtree_erase(&nommu_swmmu_current()->mappings, mapping->base);
+	space = nommu_swmmu_current();
+	if (!space || !address)
+		return -EINVAL;
+
+	mapping = find_mapping(space, base, 1);
+	if (!mapping || mapping->base != base)
+		return -EINVAL;
+
+	entry = mtree_erase(&space->mappings, mapping->base);
 	if (entry != mapping) {
 		pr_warn("maple tree inconsistency");
 		return -EINVAL;

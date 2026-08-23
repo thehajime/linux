@@ -273,6 +273,92 @@ static void nommu_swmmu_multiple_mapping_test(struct kunit *test)
 					  0));
 }
 
+static void nommu_swmmu_free_test(struct kunit *test)
+{
+	struct nommu_swmmu_test_ctx *ctx = test->priv;
+	void *base;
+
+	base = swmmu_alloc(SWMMU_PAGE_SIZE);
+	KUNIT_ASSERT_NOT_NULL(test, base);
+
+	KUNIT_EXPECT_EQ(test, swmmu_free(base), 0);
+
+	KUNIT_EXPECT_EQ(test, swmmu_free(base), -EINVAL);
+
+	KUNIT_EXPECT_NULL(test,
+			  swmmu_translate(ctx->space,
+					  (uintptr_t)base,
+					  sizeof(u64),
+					  0));
+}
+
+static void nommu_swmmu_free_interior_test(struct kunit *test)
+{
+	void *base;
+	void *interior;
+
+	base = swmmu_alloc(SWMMU_PAGE_SIZE);
+	KUNIT_ASSERT_NOT_NULL(test, base);
+
+	interior = (void *)((uintptr_t)base + sizeof(u64));
+
+	KUNIT_EXPECT_EQ(test, swmmu_free(interior), -EINVAL);
+	KUNIT_EXPECT_EQ(test, swmmu_free(base), 0);
+}
+
+static void nommu_swmmu_repeated_alloc_free_test(struct kunit *test)
+{
+	int i;
+
+	for (i = 0; i < 128; i++) {
+		void *base;
+
+		base = swmmu_alloc((i % 4 + 1) * SWMMU_PAGE_SIZE);
+		KUNIT_ASSERT_NOT_NULL(test, base);
+
+		nommu_swmmu_store_u64(base, sizeof(u64), i);
+
+		KUNIT_EXPECT_EQ(test,
+				nommu_swmmu_load_u64(base, sizeof(u64)),
+				(u64)i);
+
+		KUNIT_ASSERT_EQ(test, swmmu_free(base), 0);
+	}
+}
+
+static void nommu_swmmu_repeated_clone_test(struct kunit *test)
+{
+	struct nommu_swmmu_test_ctx *ctx = test->priv;
+	int i;
+
+	for (i = 0; i < 32; i++) {
+		struct nommu_swmmu_space *child;
+		void *base;
+		u64 value;
+
+		base = swmmu_alloc(SWMMU_PAGE_SIZE * 2);
+		KUNIT_ASSERT_NOT_NULL(test, base);
+
+		nommu_swmmu_store_u64(base, sizeof(u64), 100 + i);
+
+		KUNIT_ASSERT_EQ(test,
+				swmmu_clone_space(ctx->space, &child),
+				0);
+
+		nommu_swmmu_kunit_set_space(child);
+
+		value = nommu_swmmu_load_u64(base, sizeof(u64));
+		KUNIT_EXPECT_EQ(test, value, (u64)(100 + i));
+
+		nommu_swmmu_kunit_clear_space();
+		nommu_swmmu_space_destroy(child);
+
+		nommu_swmmu_kunit_set_space(ctx->space);
+
+		KUNIT_ASSERT_EQ(test, swmmu_free(base), 0);
+	}
+}
+
 static int nommu_swmmu_test_init(struct kunit *test)
 {
 	struct nommu_swmmu_test_ctx *ctx;
@@ -307,6 +393,10 @@ static struct kunit_case nommu_swmmu_test_cases[] = {
 	KUNIT_CASE(nommu_swmmu_cross_page_test),
 	KUNIT_CASE(nommu_swmmu_translate_boundary_test),
 	KUNIT_CASE(nommu_swmmu_multiple_mapping_test),
+	KUNIT_CASE(nommu_swmmu_free_test),
+	KUNIT_CASE(nommu_swmmu_free_interior_test),
+	KUNIT_CASE(nommu_swmmu_repeated_alloc_free_test),
+	KUNIT_CASE(nommu_swmmu_repeated_clone_test),
 	{}
 };
 
