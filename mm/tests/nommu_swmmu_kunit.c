@@ -329,31 +329,33 @@ static void nommu_swmmu_translate_boundary_test(struct kunit *test)
 {
 	struct nommu_swmmu_test_ctx *ctx = test->priv;
 	void *base;
-	void *translated;
 
 	base = (void *)swmmu_alloc(SWMMU_PAGE_SIZE);
 	KUNIT_ASSERT_GT(test, (long)base, 0L);
 
-	translated = swmmu_translate(ctx->space,
-				     (uintptr_t)base,
-				     sizeof(u64),
-				     0);
-	KUNIT_ASSERT_NOT_NULL(test, translated);
+	KUNIT_EXPECT_EQ(test,
+			nommu_swmmu_check_access(ctx->space,
+						(uintptr_t)base,
+						sizeof(u64),
+						0),
+			0);
 
-	translated = swmmu_translate(ctx->space,
-				     (uintptr_t)base +
-				     SWMMU_PAGE_SIZE -
-				     sizeof(u32),
-				     sizeof(u64),
-				     0);
-	KUNIT_EXPECT_NULL(test, translated);
+	KUNIT_EXPECT_EQ(test,
+			nommu_swmmu_check_access(ctx->space,
+						(uintptr_t)base +
+						SWMMU_PAGE_SIZE -
+						sizeof(u32),
+						sizeof(u64),
+						0),
+			-EFAULT);
 
-	translated = swmmu_translate(ctx->space,
-				     (uintptr_t)base +
-				     SWMMU_PAGE_SIZE,
-				     sizeof(u64),
-				     0);
-	KUNIT_EXPECT_NULL(test, translated);
+	KUNIT_EXPECT_EQ(test,
+			nommu_swmmu_check_access(ctx->space,
+						(uintptr_t)base +
+						SWMMU_PAGE_SIZE,
+						sizeof(u64),
+						0),
+			-EFAULT);
 
 	KUNIT_EXPECT_EQ(test, swmmu_free(base), 0);
 }
@@ -385,11 +387,12 @@ static void nommu_swmmu_multiple_mapping_test(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, swmmu_free(first), 0);
 	KUNIT_EXPECT_EQ(test, swmmu_free(second), 0);
 
-	KUNIT_EXPECT_NULL(test,
-			  swmmu_translate(ctx->space,
-					  (uintptr_t)first,
-					  sizeof(u64),
-					  0));
+	KUNIT_EXPECT_EQ(test,
+			nommu_swmmu_check_access(ctx->space,
+						(uintptr_t)first,
+						sizeof(u64),
+						0),
+			-EFAULT);
 }
 
 static void nommu_swmmu_free_test(struct kunit *test)
@@ -404,11 +407,12 @@ static void nommu_swmmu_free_test(struct kunit *test)
 
 	KUNIT_EXPECT_EQ(test, swmmu_free(base), -EINVAL);
 
-	KUNIT_EXPECT_NULL(test,
-			  swmmu_translate(ctx->space,
-					  (uintptr_t)base,
-					  sizeof(u64),
-					  0));
+	KUNIT_EXPECT_EQ(test,
+			nommu_swmmu_check_access(ctx->space,
+						(uintptr_t)base,
+						sizeof(u64),
+						0),
+			-EFAULT);
 }
 
 static void nommu_swmmu_free_interior_test(struct kunit *test)

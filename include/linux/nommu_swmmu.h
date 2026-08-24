@@ -43,14 +43,12 @@ long swmmu_alloc(size_t size);
 int swmmu_free(void *address);
 
 /*
- * Translate one same-page range.
- *
- * The returned pointer is a host pointer to backing storage.
+ * verify that the address is accessible or not
  */
-void *swmmu_translate(struct nommu_swmmu_space *space,
-                      uintptr_t address,
-                      size_t size,
-                      int write);
+int nommu_swmmu_check_access(struct nommu_swmmu_space *space,
+			uintptr_t address,
+			size_t size,
+			int write);
 
 /* Eagerly clone all mappings and backing pages. */
 int swmmu_clone_space(struct nommu_swmmu_space *parent,
