@@ -219,17 +219,104 @@ test_eager_copy_fork(void)
 	return KSFT_PASS;
 }
 
+static int test_repeated_fork(void)
+{
+	struct swmmu_test_object *object;
+	pid_t child_pid;
+	pid_t waited_pid;
+	int status;
+	uint64_t parent_value;
+	int i;
+
+	for (i = 0; i < 128; i++) {
+		/* allocate and initialize parent mapping */
+		object = nommu_swmmu_alloc(sizeof(*object));
+		if (!object) {
+			ksft_test_result_skip("SWMMU allocation is unavailable\n");
+			return KSFT_SKIP;
+		}
+
+		nommu_swmmu_store_u64(&object->value,
+				sizeof(object->value),
+				41);
+
+		/* fork */
+		child_pid = fork();
+		if (child_pid < 0) {
+			ksft_test_result_fail("fork failed: %s\n",
+					strerror(errno));
+			nommu_swmmu_free(object);
+			return KSFT_FAIL;
+		}
+
+		/* child increments and exits */
+		if (child_pid == 0) {
+			uint64_t value;
+
+			value = test_swmmu_increment(object);
+			_exit(value == 42 ? 0 : 1);
+		}
+		/* parent waits and verifies */
+		status = -1;
+		waited_pid = waitpid(child_pid, &status, 0);
+
+		if (waited_pid < 0) {
+			ksft_test_result_fail("waitpid failed: %s\n",
+					strerror(errno));
+			nommu_swmmu_free(object);
+			return KSFT_FAIL;
+		}
+
+		if (waited_pid != child_pid) {
+			ksft_test_result_fail(
+				"waitpid returned %d, expected child pid %d\n",
+				waited_pid, child_pid);
+			nommu_swmmu_free(object);
+			return KSFT_FAIL;
+		}
+
+		if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+			ksft_test_result_fail(
+				"child exited abnormally: status=%#x\n",
+				status);
+			nommu_swmmu_free(object);
+			return KSFT_FAIL;
+		}
+
+		/* parent verifies its value remains unchanged */
+		parent_value = nommu_swmmu_load_u64(&object->value,
+						sizeof(object->value));
+		if (parent_value != 41) {
+			ksft_test_result_fail(
+				"parent value changed to %llu\n",
+				(unsigned long long)parent_value);
+			nommu_swmmu_free(object);
+			return KSFT_FAIL;
+		}
+
+		/* free mapping */
+		nommu_swmmu_free(object);
+	}
+
+	ksft_test_result_pass(
+		"repeated fork works\n");
+	return KSFT_PASS;
+}
+
 int main(void)
 {
 	int result = KSFT_PASS;
 
 	ksft_print_header();
-	ksft_set_plan(2);
+	ksft_set_plan(3);
 
 	if (test_scalar_access() == KSFT_FAIL)
 		result = KSFT_FAIL;
 
 	if (test_eager_copy_fork() == KSFT_FAIL)
+		result = KSFT_FAIL;
+
+	if (test_repeated_fork() == KSFT_FAIL)
 		result = KSFT_FAIL;
 
 	if (result == KSFT_PASS)
