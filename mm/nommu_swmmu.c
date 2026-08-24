@@ -181,8 +181,11 @@ __nommu_swmmu_space_create(
 
 	space->ops = mem_ops;
 	refcount_set(&space->users, 1);
-	mt_init(&space->mappings);
 	init_rwsem(&space->lock);
+	mt_init_flags(&space->mappings,
+		MT_FLAGS_LOCK_EXTERN);
+	mt_set_external_lock(&space->mappings,
+			&space->lock);
 	space->next_address = SWMMU_VA_BASE;
 	space->mm = NULL;
 
@@ -293,6 +296,39 @@ void nommu_swmmu_kunit_clear_space(void)
 }
 #endif
 
+static int
+swmmu_store_range_locked(struct nommu_swmmu_space *space,
+			 unsigned long first,
+			 unsigned long last,
+			 void *entry,
+			 gfp_t gfp)
+{
+	MA_STATE(mas, &space->mappings, first, last);
+	int ret;
+
+	lockdep_assert_held_write(&space->lock);
+
+	ret = mas_store_gfp(&mas, entry, gfp);
+	mas_destroy(&mas);
+
+	return ret;
+}
+
+static void *
+swmmu_erase_locked(struct nommu_swmmu_space *space,
+		   unsigned long index)
+{
+	MA_STATE(mas, &space->mappings, index, index);
+	void *entry;
+
+	lockdep_assert_held_write(&space->lock);
+
+	entry = mas_erase(&mas);
+	mas_destroy(&mas);
+
+	return entry;
+}
+
 long swmmu_alloc(size_t size)
 {
 	struct nommu_swmmu_space *space;
@@ -352,7 +388,7 @@ long swmmu_alloc(size_t size)
 		}
 	}
 
-	ret = mtree_store_range(&space->mappings,
+	ret = swmmu_store_range_locked(space,
 				base,
 				base + length - 1,
 				mapping,
@@ -397,7 +433,7 @@ int swmmu_free(void *address)
 		return -EINVAL;
 	}
 
-	entry = mtree_erase(&space->mappings, mapping->base);
+	entry = swmmu_erase_locked(space, mapping->base);
 	if (entry != mapping) {
 		pr_warn("%s: maple tree inconsistency", __func__);
 		up_write(&space->lock);
@@ -575,12 +611,11 @@ clone_one_mapping(struct nommu_swmmu_space *child,
 		}
 	}
 
-	ret = mtree_store_range(
-		&child->mappings,
-		copy->base,
-		copy->base + copy->length - 1,
-		copy,
-		GFP_KERNEL);
+	ret = swmmu_store_range_locked(child,
+				copy->base,
+				copy->base + copy->length - 1,
+				copy,
+				GFP_KERNEL);
 	if (ret) {
 		release_mapping(child, copy, copy->page_count);
 		pr_warn("%s: mtree_store_range failure: %d", __func__, ret);
@@ -615,6 +650,7 @@ int swmmu_clone_space(struct nommu_swmmu_space *parent,
 	}
 
 	down_read(&parent->lock);
+	down_write_nested(&child->lock, SINGLE_DEPTH_NESTING);
 
 	/*
 	 * Preserve the allocator position so future allocations also
@@ -629,12 +665,14 @@ int swmmu_clone_space(struct nommu_swmmu_space *parent,
 			goto error;
 	}
 
+	up_write(&child->lock);
 	up_read(&parent->lock);
 
 	*child_out = child;
 	return 0;
 
 error:
+	up_write(&child->lock);
 	up_read(&parent->lock);
 	nommu_swmmu_space_destroy(child);
 	*child_out = NULL;
