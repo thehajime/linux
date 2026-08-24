@@ -550,6 +550,8 @@ int swmmu_clone_space(struct nommu_swmmu_space *parent,
 	if (!parent || !child_out)
 		return -EINVAL;
 
+	*child_out = NULL;
+
 	child = __nommu_swmmu_space_create(parent->ops);
 	if (!child) {
 		pr_warn("%s: page metadata allocation failure", __func__);
@@ -574,6 +576,7 @@ int swmmu_clone_space(struct nommu_swmmu_space *parent,
 
 error:
 	nommu_swmmu_space_destroy(child);
+	*child_out = NULL;
 	return ret;
 }
 
@@ -591,7 +594,7 @@ uint64_t nommu_swmmu_load_u64(const void *address, size_t size)
 	if (!space)
 		BUG();
 
-	ret = swmmu_copy_from_space(nommu_swmmu_current(),
+	ret = swmmu_copy_from_space(space,
 				    (uintptr_t)address,
 				    &value,
 				    size);
@@ -604,14 +607,17 @@ uint64_t nommu_swmmu_load_u64(const void *address, size_t size)
 void nommu_swmmu_store_u64(void *address, size_t size, uint64_t value)
 {
 	int ret;
+	struct nommu_swmmu_space *space;
+
+	space = nommu_swmmu_current();
 
 	if (size != 1 && size != 2 && size != 4 && size != 8)
 		BUG();
 
-	if (!nommu_swmmu_current())
+	if (!space)
 		BUG();
 
-	ret = swmmu_copy_to_space(nommu_swmmu_current(),
+	ret = swmmu_copy_to_space(space,
 				  (uintptr_t)address,
 				  &value,
 				  size);
