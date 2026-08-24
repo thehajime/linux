@@ -26,9 +26,12 @@ struct nommu_swmmu_mem_ops {
 };
 
 struct nommu_swmmu_space *nommu_swmmu_space_create(void);
-void nommu_swmmu_space_attach(struct mm_struct *mm,
+int nommu_swmmu_space_attach(struct mm_struct *mm,
 			struct nommu_swmmu_space *space);
-void nommu_swmmu_space_destroy(struct nommu_swmmu_space *space);
+void nommu_swmmu_space_detach(struct mm_struct *mm);
+void nommu_swmmu_space_get(struct nommu_swmmu_space *space);
+void nommu_swmmu_space_put(struct nommu_swmmu_space *space);
+
 const struct nommu_swmmu_mem_ops *nommu_swmmu_arch_mem_ops(void);
 #if IS_ENABLED(CONFIG_NOMMU_SWMMU_KUNIT_TEST)
 struct nommu_swmmu_space *

@@ -742,7 +742,7 @@ void __mmdrop(struct mm_struct *mm)
 	percpu_counter_destroy_many(mm->rss_stat, NR_MM_COUNTERS);
 
 #ifdef CONFIG_NOMMU_SWMMU
-	nommu_swmmu_space_destroy(mm->swmmu_space);
+	nommu_swmmu_space_detach(mm);
 #endif
 
 	free_mm(mm);
@@ -1151,11 +1151,16 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p)
 	lru_gen_init_mm(mm);
 
 #ifdef CONFIG_NOMMU_SWMMU
-	mm->swmmu_space = nommu_swmmu_space_create();
-	if (!mm->swmmu_space)
+	struct nommu_swmmu_space *new_space;
+
+	new_space = nommu_swmmu_space_create();
+	if (!new_space)
 		goto fail_pcpu;
 
-	nommu_swmmu_space_attach(mm, mm->swmmu_space);
+	if (nommu_swmmu_space_attach(mm, new_space)) {
+		nommu_swmmu_space_put(new_space);
+		goto fail_pcpu;
+	}
 #endif
 	return mm;
 
@@ -1550,6 +1555,14 @@ static struct mm_struct *dup_mm(struct task_struct *tsk,
 
 	memcpy(mm, oldmm, sizeof(*mm));
 
+#ifdef CONFIG_NOMMU_SWMMU
+	/*
+	 * swmmu_space is per-mm state and must not be inherited
+	 * through the mm_struct memcpy.
+	 */
+	mm->swmmu_space = NULL;
+#endif
+
 	if (!mm_init(mm, tsk))
 		goto fail_nomem;
 
@@ -1569,11 +1582,17 @@ static struct mm_struct *dup_mm(struct task_struct *tsk,
 	{
 		struct nommu_swmmu_space *new_space;
 
+		nommu_swmmu_space_detach(mm);
+		/* clone oldmm's space */
 		err = swmmu_clone_space(oldmm->swmmu_space, &new_space);
 		if (err)
 			goto free_pt;
 
-		nommu_swmmu_space_attach(mm, new_space);
+		err = nommu_swmmu_space_attach(mm, new_space);
+		if (err) {
+			nommu_swmmu_space_put(new_space);
+			goto free_pt;
+		}
 	}
 #endif
 

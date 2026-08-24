@@ -218,14 +218,7 @@ nommu_swmmu_space_create_with_ops(
 }
 #endif
 
-void nommu_swmmu_space_attach(struct mm_struct *mm,
-			       struct nommu_swmmu_space *space)
-{
-	space->mm = mm;
-	mm->swmmu_space = space;
-}
-
-void nommu_swmmu_space_destroy(struct nommu_swmmu_space *space)
+static void swmmu_space_destroy_final(struct nommu_swmmu_space *space)
 {
 	const struct nommu_swmmu_mem_ops *mem_ops;
 	struct swmmu_mapping *mapping;
@@ -261,6 +254,63 @@ void nommu_swmmu_space_destroy(struct nommu_swmmu_space *space)
 
 	mem_ops->dealloc(space);
 }
+
+int nommu_swmmu_space_attach(struct mm_struct *mm,
+			struct nommu_swmmu_space *space)
+{
+	if (!mm || !space)
+		return -EINVAL;
+
+	if (mm->swmmu_space || space->mm)
+		return -EBUSY;
+
+	mm->swmmu_space = space;
+	space->mm = mm;
+
+	return 0;
+}
+
+/*
+ * Detach and release the mm_struct-owned reference to its SWMMU space.
+ */
+void nommu_swmmu_space_detach(struct mm_struct *mm)
+{
+	struct nommu_swmmu_space *space;
+
+	if (!mm)
+		return;
+
+	space = mm->swmmu_space;
+	if (!space)
+		return;
+
+	if (space->mm == mm)
+		space->mm = NULL;
+
+	mm->swmmu_space = NULL;
+
+	nommu_swmmu_space_put(space);
+}
+
+void nommu_swmmu_space_get(struct nommu_swmmu_space *space)
+{
+	if (!space)
+		BUG();
+
+	refcount_inc(&space->users);
+}
+
+void nommu_swmmu_space_put(struct nommu_swmmu_space *space)
+{
+	if (!space)
+		return;
+
+	if (!refcount_dec_and_test(&space->users))
+		return;
+
+	swmmu_space_destroy_final(space);
+}
+
 
 #if IS_ENABLED(CONFIG_NOMMU_SWMMU_KUNIT_TEST)
 static struct nommu_swmmu_space *kunit_test_space;
@@ -637,6 +687,8 @@ int swmmu_clone_space(struct nommu_swmmu_space *parent,
 	struct nommu_swmmu_space *child;
 	struct swmmu_mapping *source;
 	int ret;
+	bool parent_locked = false;
+	bool child_locked = false;
 
 	if (!parent || !child_out)
 		return -EINVAL;
@@ -650,7 +702,9 @@ int swmmu_clone_space(struct nommu_swmmu_space *parent,
 	}
 
 	down_read(&parent->lock);
+	parent_locked = true;
 	down_write_nested(&child->lock, SINGLE_DEPTH_NESTING);
+	child_locked = true;
 
 	/*
 	 * Preserve the allocator position so future allocations also
@@ -666,15 +720,19 @@ int swmmu_clone_space(struct nommu_swmmu_space *parent,
 	}
 
 	up_write(&child->lock);
+	child_locked = false;
 	up_read(&parent->lock);
+	parent_locked = false;
 
 	*child_out = child;
 	return 0;
 
 error:
-	up_write(&child->lock);
-	up_read(&parent->lock);
-	nommu_swmmu_space_destroy(child);
+	if (child_locked)
+		up_write(&child->lock);
+	if (parent_locked)
+		up_read(&parent->lock);
+	nommu_swmmu_space_put(child);
 	*child_out = NULL;
 	return ret;
 }

@@ -173,14 +173,14 @@ nommu_swmmu_increment_test(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, value, 42ULL);
 
 	nommu_swmmu_kunit_clear_space();
-	nommu_swmmu_space_destroy(space);
+	nommu_swmmu_space_put(space);
 }
 
 static void
 destroy_test_space(struct nommu_swmmu_space *space)
 {
 	nommu_swmmu_kunit_clear_space();
-	nommu_swmmu_space_destroy(space);
+	nommu_swmmu_space_put(space);
 }
 
 KUNIT_DEFINE_ACTION_WRAPPER(
@@ -240,6 +240,7 @@ nommu_swmmu_clone_test(struct kunit *test)
 			0);
 
 	nommu_swmmu_kunit_set_space(child);
+
 	ret = kunit_add_action_or_reset(test,
 					destroy_test_space_action, child);
 	KUNIT_ASSERT_EQ(test, ret, 0);
@@ -286,7 +287,9 @@ nommu_swmmu_clone_test(struct kunit *test)
 static void nommu_swmmu_attach_test(struct kunit *test)
 {
 	struct nommu_swmmu_space *space;
+	struct nommu_swmmu_space *old_space;
 	struct mm_struct *test_mm;
+	int ret;
 
 	space = nommu_swmmu_space_create_with_ops(&test_ops);
 	KUNIT_ASSERT_NOT_NULL(test, space);
@@ -294,13 +297,26 @@ static void nommu_swmmu_attach_test(struct kunit *test)
 	test_mm = mm_alloc();
 	KUNIT_ASSERT_NOT_NULL(test, test_mm);
 
+	old_space = test_mm->swmmu_space;
+	KUNIT_ASSERT_NOT_NULL(test, old_space);
+
+	/*
+	 * mm_alloc() creates and attaches an initial SWMMU space.
+	 * Remove that mm-owned reference before testing attach().
+	 */
+	nommu_swmmu_space_detach(test_mm);
+
 	/*
 	 * Test the attach helper directly. Do not rely on
 	 * nommu_swmmu_space_create_with_ops(&test_ops) implicitly using current->mm.
 	 */
-	nommu_swmmu_space_attach(test_mm, space);
+	ret = nommu_swmmu_space_attach(test_mm, space);
+	KUNIT_ASSERT_EQ(test, ret, 0);
 
 	KUNIT_EXPECT_PTR_EQ(test, test_mm->swmmu_space, space);
+
+	nommu_swmmu_space_detach(test_mm);
+	mmput(test_mm);
 }
 
 static void nommu_swmmu_cross_page_test(struct kunit *test)
@@ -474,7 +490,7 @@ static void nommu_swmmu_repeated_clone_test(struct kunit *test)
 		KUNIT_EXPECT_EQ(test, value, (u64)(100 + i));
 
 		nommu_swmmu_kunit_clear_space();
-		nommu_swmmu_space_destroy(child);
+		nommu_swmmu_space_put(child);
 
 		nommu_swmmu_kunit_set_space(ctx->space);
 
@@ -526,7 +542,7 @@ static void nommu_swmmu_alloc_failure_test(struct kunit *test)
 	}
 
 	nommu_swmmu_kunit_clear_space();
-	nommu_swmmu_space_destroy(space);
+	nommu_swmmu_space_put(space);
 }
 
 static void nommu_swmmu_alloc_page_failure_test(struct kunit *test)
@@ -563,7 +579,7 @@ static void nommu_swmmu_alloc_page_failure_test(struct kunit *test)
 	}
 
 	nommu_swmmu_kunit_clear_space();
-	nommu_swmmu_space_destroy(space);
+	nommu_swmmu_space_put(space);
 }
 
 static void nommu_swmmu_clone_failure_test(struct kunit *test)
@@ -603,12 +619,12 @@ static void nommu_swmmu_clone_failure_test(struct kunit *test)
 		ret = swmmu_clone_space(space, &child);
 		KUNIT_ASSERT_EQ(test, ret, 0L);
 
-		nommu_swmmu_space_destroy(child);
+		nommu_swmmu_space_put(child);
 		expect_allocations_balanced(test);
 	}
 
 	nommu_swmmu_kunit_clear_space();
-	nommu_swmmu_space_destroy(space);
+	nommu_swmmu_space_put(space);
 }
 
 static void nommu_swmmu_clone_page_failure_test(struct kunit *test)
@@ -665,12 +681,12 @@ static void nommu_swmmu_clone_page_failure_test(struct kunit *test)
 		ret = swmmu_clone_space(space, &child);
 		KUNIT_ASSERT_EQ(test, ret, 0L);
 
-		nommu_swmmu_space_destroy(child);
+		nommu_swmmu_space_put(child);
 		expect_allocations_balanced(test);
 	}
 
 	nommu_swmmu_kunit_clear_space();
-	nommu_swmmu_space_destroy(space);
+	nommu_swmmu_space_put(space);
 }
 
 static void nommu_swmmu_clone_copy_failure_test(struct kunit *test)
@@ -713,7 +729,7 @@ static void nommu_swmmu_clone_copy_failure_test(struct kunit *test)
 
 	test_alloc_reset();
 	nommu_swmmu_kunit_clear_space();
-	nommu_swmmu_space_destroy(space);
+	nommu_swmmu_space_put(space);
 }
 
 static int nommu_swmmu_test_init(struct kunit *test)
@@ -743,7 +759,7 @@ static void nommu_swmmu_test_exit(struct kunit *test)
 	nommu_swmmu_kunit_clear_space();
 
 	if (ctx && ctx->space)
-		nommu_swmmu_space_destroy(ctx->space);
+		nommu_swmmu_space_put(ctx->space);
 }
 
 
