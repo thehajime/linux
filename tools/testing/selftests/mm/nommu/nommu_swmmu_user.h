@@ -9,6 +9,7 @@
 #define SYS_nommu_swmmu_free 473
 #define SYS_nommu_swmmu_load 474
 #define SYS_nommu_swmmu_store 475
+#define SYS_nommu_swmmu_remap 476
 
 void *nommu_swmmu_alloc(size_t size);
 int nommu_swmmu_free(void *address);
@@ -19,4 +20,7 @@ void nommu_swmmu_store_u64(void *address,
 			   size_t size,
 			   uint64_t value);
 
+void *nommu_swmmu_remap(void *address,
+			size_t old_size,
+			size_t new_size);
 #endif

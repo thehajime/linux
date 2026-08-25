@@ -9,6 +9,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <string.h>
+#include <sys/mman.h>
 
 #include "kselftest.h"
 #include "nommu_swmmu_user.h"
@@ -88,6 +89,25 @@ int nommu_swmmu_free(void *address)
 		return (int)ret;
 
 	return 0;
+}
+
+void *nommu_swmmu_remap(void *address,
+			size_t old_size,
+			size_t new_size)
+{
+	long ret;
+
+	ret = syscall(SYS_nommu_swmmu_remap,
+		      (uintptr_t)address,
+		      old_size,
+		      new_size);
+
+	if (ret < 0) {
+		errno = -ret;
+		return MAP_FAILED;
+	}
+
+	return (void *)(uintptr_t)ret;
 }
 
 static int
@@ -303,12 +323,97 @@ static int test_repeated_fork(void)
 	return KSFT_PASS;
 }
 
+static int test_remap(void)
+{
+	void *base;
+	void *new_base;
+	uintptr_t second_page;
+	uint64_t value;
+	size_t ps;
+
+	ps = sysconf(_SC_PAGESIZE);
+
+	base = nommu_swmmu_alloc(ps);
+	if (!base) {
+		ksft_test_result_skip(
+			"SWMMU allocation is unavailable\n");
+		return KSFT_SKIP;
+	}
+
+	nommu_swmmu_store_u64(base, sizeof(uint64_t), 771);
+
+	new_base = nommu_swmmu_remap(base,
+				     ps,
+				     ps * 2);
+	if (new_base == MAP_FAILED) {
+		ksft_test_result_fail(
+			"SWMMU growth failed: %s\n",
+			strerror(errno));
+		nommu_swmmu_free(base);
+		return KSFT_FAIL;
+	}
+
+	if (new_base != base) {
+		ksft_test_result_fail(
+			"SWMMU remap moved address from %p to %p\n",
+			base, new_base);
+		nommu_swmmu_free(new_base);
+		return KSFT_FAIL;
+	}
+
+	value = nommu_swmmu_load_u64(base, sizeof(uint64_t));
+	if (value != 771) {
+		ksft_test_result_fail(
+			"remap did not preserve value: %llu\n",
+			(unsigned long long)value);
+		nommu_swmmu_free(base);
+		return KSFT_FAIL;
+	}
+
+	second_page = (uintptr_t)base + ps;
+
+	value = nommu_swmmu_load_u64((void *)second_page,
+				     sizeof(uint64_t));
+	if (value != 0) {
+		ksft_test_result_fail(
+			"grown page was not zero-filled: %llu\n",
+			(unsigned long long)value);
+		nommu_swmmu_free(base);
+		return KSFT_FAIL;
+	}
+
+	new_base = nommu_swmmu_remap(base,
+				     ps * 2,
+				     ps);
+	if (new_base == MAP_FAILED) {
+		ksft_test_result_fail(
+			"SWMMU shrink failed: %s\n",
+			strerror(errno));
+		nommu_swmmu_free(base);
+		return KSFT_FAIL;
+	}
+
+	if (new_base != base) {
+		ksft_test_result_fail(
+			"SWMMU shrink changed address\n");
+		nommu_swmmu_free(new_base);
+		return KSFT_FAIL;
+	}
+
+	nommu_swmmu_free(base);
+
+	ksft_test_result_pass(
+		"SWMMU remap growth and shrink work\n");
+
+	return KSFT_PASS;
+}
+
 int main(void)
 {
 	int result = KSFT_PASS;
 
 	ksft_print_header();
-	ksft_set_plan(3);
+	ksft_set_plan(4);
 
 	if (test_scalar_access() == KSFT_FAIL)
 		result = KSFT_FAIL;
@@ -317,6 +422,9 @@ int main(void)
 		result = KSFT_FAIL;
 
 	if (test_repeated_fork() == KSFT_FAIL)
+		result = KSFT_FAIL;
+
+	if (test_remap() == KSFT_FAIL)
 		result = KSFT_FAIL;
 
 	if (result == KSFT_PASS)

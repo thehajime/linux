@@ -871,9 +871,11 @@ __SYSCALL(__NR_nommu_swmmu_free, sys_nommu_swmmu_free)
 __SYSCALL(__NR_nommu_swmmu_load, sys_nommu_swmmu_load)
 #define __NR_nommu_swmmu_store 475
 __SYSCALL(__NR_nommu_swmmu_store, sys_nommu_swmmu_store)
+#define __NR_nommu_swmmu_remap 476
+__SYSCALL(__NR_nommu_swmmu_remap, sys_nommu_swmmu_remap)
 
 #undef __NR_syscalls
-#define __NR_syscalls 476
+#define __NR_syscalls 477
 
 /*
  * 32 bit systems traditionally used different

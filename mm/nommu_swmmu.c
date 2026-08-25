@@ -1054,3 +1054,20 @@ SYSCALL_DEFINE3(nommu_swmmu_store, void __user *, address, size_t, size, uint64_
 	nommu_swmmu_store_u64(address, size, value);
 	return 0;
 }
+
+SYSCALL_DEFINE3(nommu_swmmu_remap,
+		unsigned long, address,
+		size_t, old_size,
+		size_t, new_size)
+{
+	struct nommu_swmmu_space *space;
+
+	space = nommu_swmmu_current();
+	if (!space)
+		return -EINVAL;
+
+	return nommu_swmmu_remap(space,
+				  address,
+				  old_size,
+				  new_size);
+}
