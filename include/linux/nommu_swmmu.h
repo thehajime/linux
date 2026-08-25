@@ -64,8 +64,19 @@ void nommu_swmmu_store_u64(void *address,
                      size_t size,
                      uint64_t value);
 
-/* host backend (FIXME: somewhere else?) */
-extern const struct swmmu_backend_ops swmmu_host_backend;
+/* mapping API */
+long nommu_swmmu_map(struct nommu_swmmu_space *space,
+		     size_t size);
+
+int nommu_swmmu_unmap(struct nommu_swmmu_space *space,
+		      unsigned long address,
+		      size_t size);
+
+long nommu_swmmu_remap(struct nommu_swmmu_space *space,
+		       unsigned long address,
+		       size_t old_size,
+		       size_t new_size);
+
 #ifdef CONFIG_KUNIT
 void nommu_swmmu_kunit_set_space(struct nommu_swmmu_space *space);
 void nommu_swmmu_kunit_clear_space(void);
