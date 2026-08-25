@@ -81,6 +81,11 @@ long nommu_swmmu_remap(struct nommu_swmmu_space *space,
 		       size_t old_size,
 		       size_t new_size);
 
+/* prctl API */
+long nommu_swmmu_get_mode(struct mm_struct *mm);
+int nommu_swmmu_set_mode(struct mm_struct *mm,
+			unsigned long mode);
+
 #ifdef CONFIG_KUNIT
 void nommu_swmmu_kunit_set_space(struct nommu_swmmu_space *space);
 void nommu_swmmu_kunit_clear_space(void);

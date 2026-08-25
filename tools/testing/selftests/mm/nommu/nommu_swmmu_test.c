@@ -11,8 +11,22 @@
 #include <string.h>
 #include <sys/mman.h>
 
+
+
 #include "kselftest.h"
 #include "nommu_swmmu_user.h"
+
+/*
+ * FIXME: #include <linux/prctl.h>
+ *
+ * musl-libc is not reflecting latest header definition, thus a workaround.
+ *
+ */
+
+#define PR_SET_SWMMU 82
+#define PR_GET_SWMMU 83
+#define PR_SWMMU_OFF 0
+#define PR_SWMMU_ON  1
 
 /*
  * Force the runtime declarations to remain visible to the GCC plugin's
@@ -190,6 +204,9 @@ test_eager_copy_fork(void)
 	if (child_pid == 0) {
 		uint64_t value;
 
+		if (prctl(PR_GET_SWMMU, 0, 0, 0, 0) != PR_SWMMU_ON)
+			_exit(2);
+
 		value = test_swmmu_increment(object);
 		_exit(value == 42 ? 0 : 1);
 	}
@@ -272,6 +289,9 @@ static int test_repeated_fork(void)
 		/* child increments and exits */
 		if (child_pid == 0) {
 			uint64_t value;
+
+			if (prctl(PR_GET_SWMMU, 0, 0, 0, 0) != PR_SWMMU_ON)
+				_exit(2);
 
 			value = test_swmmu_increment(object);
 			_exit(value == 42 ? 0 : 1);
@@ -411,6 +431,12 @@ static int test_remap(void)
 int main(void)
 {
 	int result = KSFT_PASS;
+
+	if (prctl(PR_SET_SWMMU, PR_SWMMU_ON, 0, 0, 0) < 0) {
+		ksft_test_result_skip("SWMMU prctl unavailable: %s\n",
+				strerror(errno));
+		return KSFT_SKIP;
+	}
 
 	ksft_print_header();
 	ksft_set_plan(4);

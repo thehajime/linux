@@ -1170,6 +1170,13 @@ typedef struct {
 	DECLARE_BITMAP(__mm_flags, NUM_MM_FLAG_BITS);
 } __private mm_flags_t;
 
+#ifdef CONFIG_NOMMU_SWMMU
+enum nommu_swmmu_mode {
+	NOMMU_SWMMU_OFF = 0,
+	NOMMU_SWMMU_ON,
+};
+#endif /* CONFIG_NOMMU_SWMMU */
+
 struct kioctx_table;
 struct iommu_mm_data;
 struct nommu_swmmu_space;
@@ -1424,6 +1431,7 @@ struct mm_struct {
 
 
 #ifdef CONFIG_NOMMU_SWMMU
+	enum nommu_swmmu_mode swmmu_mode;
 	struct nommu_swmmu_space *swmmu_space;
 #endif
 	/*

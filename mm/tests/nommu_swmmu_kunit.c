@@ -1166,6 +1166,84 @@ static void same_address_different_spaces_test(struct kunit *test)
 			0);
 }
 
+static void nommu_swmmu_mode_test(struct kunit *test)
+{
+	struct nommu_swmmu_space *space;
+	struct nommu_swmmu_space *old_space;
+	struct mm_struct *test_mm;
+	long ret;
+
+	space = nommu_swmmu_space_create_with_ops(&test_ops);
+	KUNIT_ASSERT_NOT_NULL(test, space);
+
+	test_mm = mm_alloc();
+	KUNIT_ASSERT_NOT_NULL(test, test_mm);
+
+	old_space = test_mm->swmmu_space;
+	KUNIT_ASSERT_NOT_NULL(test, old_space);
+
+	/*
+	 * mm_alloc() creates and attaches an initial SWMMU space.
+	 * Remove that mm-owned reference before testing attach().
+	 */
+	nommu_swmmu_space_detach(test_mm);
+
+	/*
+	 * Test the attach helper directly. Do not rely on
+	 * nommu_swmmu_space_create_with_ops(&test_ops) implicitly using current->mm.
+	 */
+	ret = nommu_swmmu_space_attach(test_mm, space);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	KUNIT_EXPECT_PTR_EQ(test, test_mm->swmmu_space, space);
+
+	/* default mode is OFF */
+	KUNIT_EXPECT_EQ(test, nommu_swmmu_get_mode(test_mm), NOMMU_SWMMU_OFF);
+
+	/* set ON succeeds */
+	KUNIT_EXPECT_EQ(test, nommu_swmmu_set_mode(test_mm, NOMMU_SWMMU_ON),
+			0);
+
+	/* GET returns ON */
+	KUNIT_EXPECT_EQ(test, nommu_swmmu_get_mode(test_mm), NOMMU_SWMMU_ON);
+
+	/* invalid mode returns -EINVAL */
+	KUNIT_EXPECT_EQ(test, nommu_swmmu_set_mode(test_mm, 100), -EINVAL);
+
+	/* set OFF succeeds when no mappings exist */
+	KUNIT_EXPECT_EQ(test, nommu_swmmu_set_mode(test_mm, NOMMU_SWMMU_OFF),
+			0);
+
+	/* set ON succeeds */
+	KUNIT_EXPECT_EQ(test, nommu_swmmu_set_mode(test_mm, NOMMU_SWMMU_ON),
+			0);
+
+	ret = nommu_swmmu_map_at(space, 0x1000000000ULL,
+				SWMMU_PAGE_SIZE, true);
+	KUNIT_ASSERT_EQ(test, ret, 0x1000000000ULL);
+
+	/* set OFF returns -EBUSY while a SWMMU mapping exists */
+	KUNIT_EXPECT_EQ(test, nommu_swmmu_set_mode(test_mm, NOMMU_SWMMU_OFF),
+			-EBUSY);
+
+	/* mode changes do not affect existing mappings */
+	KUNIT_EXPECT_EQ(test,
+			nommu_swmmu_check_access(space,
+						(uintptr_t)0x1000000000ULL,
+						SWMMU_PAGE_SIZE,
+						0),
+			0);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_unmap(space,
+					0x1000000000UL,
+					0),
+			0);
+
+	nommu_swmmu_space_detach(test_mm);
+	mmput(test_mm);
+}
+
 
 /* init/exit */
 static int nommu_swmmu_test_init(struct kunit *test)
@@ -1226,6 +1304,7 @@ static struct kunit_case nommu_swmmu_test_cases[] = {
 	KUNIT_CASE(map_at_alignment_test),
 	KUNIT_CASE(map_at_overflow_test),
 	KUNIT_CASE(same_address_different_spaces_test),
+	KUNIT_CASE(nommu_swmmu_mode_test),
 	{}
 };
 

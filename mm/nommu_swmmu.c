@@ -327,6 +327,19 @@ void nommu_swmmu_space_put(struct nommu_swmmu_space *space)
 	swmmu_space_destroy_final(space);
 }
 
+static bool
+nommu_swmmu_space_empty(struct nommu_swmmu_space *space)
+{
+	MA_STATE(mas, &space->mappings, 0, ULONG_MAX);
+	void *entry;
+
+	lockdep_assert_held(&space->lock);
+
+	entry = mas_find(&mas, ULONG_MAX);
+	mas_destroy(&mas);
+
+	return !entry;
+}
 
 #if IS_ENABLED(CONFIG_NOMMU_SWMMU_KUNIT_TEST)
 static struct nommu_swmmu_space *kunit_test_space;
@@ -344,7 +357,8 @@ struct nommu_swmmu_space *nommu_swmmu_current(void)
 		return kunit_test_space;
 #endif
 
-	if (!current->mm)
+	if (!current->mm ||
+		READ_ONCE(current->mm->swmmu_mode) != NOMMU_SWMMU_ON)
 		return NULL;
 
 	return current->mm->swmmu_space;
@@ -1061,6 +1075,55 @@ long nommu_swmmu_remap(struct nommu_swmmu_space *space,
 
 	up_write(&space->lock);
 	return ret;
+}
+
+/* prctl interface */
+int nommu_swmmu_set_mode(struct mm_struct *mm,
+			 unsigned long mode)
+{
+	struct nommu_swmmu_space *space;
+	bool empty;
+
+	if (!mm)
+		return -EINVAL;
+
+	if (mode != NOMMU_SWMMU_OFF &&
+	    mode != NOMMU_SWMMU_ON)
+		return -EINVAL;
+
+	mmap_write_lock(mm);
+
+	space = mm->swmmu_space;
+	if (!space) {
+		mmap_write_unlock(mm);
+		return -EINVAL;
+	}
+
+	down_read(&space->lock);
+	empty = nommu_swmmu_space_empty(space);
+	up_read(&space->lock);
+
+	/*
+	 * Do not disable while SWMMU mappings still exist.
+	 * Otherwise existing pointers would change meaning.
+	 */
+	if (mode == NOMMU_SWMMU_OFF && !empty) {
+		mmap_write_unlock(mm);
+		return -EBUSY;
+	}
+
+	WRITE_ONCE(mm->swmmu_mode, mode);
+
+	mmap_write_unlock(mm);
+	return 0;
+}
+
+long nommu_swmmu_get_mode(struct mm_struct *mm)
+{
+	if (!mm)
+		return -EINVAL;
+
+	return READ_ONCE(mm->swmmu_mode);
 }
 
 SYSCALL_DEFINE1(nommu_swmmu_alloc, size_t, size)
