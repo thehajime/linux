@@ -67,6 +67,10 @@ void nommu_swmmu_store_u64(void *address,
 /* mapping API */
 long nommu_swmmu_map(struct nommu_swmmu_space *space,
 		     size_t size);
+long nommu_swmmu_map_at(struct nommu_swmmu_space *space,
+			unsigned long address,
+			size_t size,
+			bool fixed);
 
 int nommu_swmmu_unmap(struct nommu_swmmu_space *space,
 		      unsigned long address,

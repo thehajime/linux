@@ -142,6 +142,22 @@ find_mapping(struct nommu_swmmu_space *space,
 	return mapping;
 }
 
+static bool
+swmmu_range_overlaps(struct nommu_swmmu_space *space,
+		unsigned long first,
+		unsigned long last)
+{
+	MA_STATE(mas, &space->mappings, first, last);
+	void *entry;
+
+	lockdep_assert_held_write(&space->lock);
+
+	entry = mas_find(&mas, last);
+	mas_destroy(&mas);
+
+	return entry != NULL;
+}
+
 static void
 release_mapping(struct nommu_swmmu_space *space,
 		struct swmmu_mapping *mapping,
@@ -690,8 +706,10 @@ void nommu_swmmu_store_u64(void *address, size_t size, uint64_t value)
 		BUG();
 }
 
-long nommu_swmmu_map(struct nommu_swmmu_space *space,
-		     size_t size)
+long nommu_swmmu_map_at(struct nommu_swmmu_space *space,
+			unsigned long address,
+			size_t size,
+			bool fixed)
 {
 	struct swmmu_mapping *mapping;
 	size_t length;
@@ -708,7 +726,25 @@ long nommu_swmmu_map(struct nommu_swmmu_space *space,
 
 	down_write(&space->lock);
 
-	base = page_align(space->next_address);
+
+	if (fixed) {
+		if (!address || !PAGE_ALIGNED(address)) {
+			ret = -EINVAL;
+			goto out_unlock;
+		}
+
+		base = address;
+	} else {
+		if (address) {
+		/* Address hints are not implemented yet. */
+		ret = -EINVAL;
+		goto out_unlock;
+		}
+
+		base = page_align(space->next_address);
+	}
+
+	/* range overflow ? */
 	if (base > UINTPTR_MAX - length) {
 		ret = -EINVAL;
 		goto out_unlock;
@@ -716,6 +752,12 @@ long nommu_swmmu_map(struct nommu_swmmu_space *space,
 
 	if (base > LONG_MAX) {
 		ret = -EOVERFLOW;
+		goto out_unlock;
+	}
+
+	/* overlap check */
+	if (swmmu_range_overlaps(space, base, base + length - 1)) {
+		ret = -EEXIST;
 		goto out_unlock;
 	}
 
@@ -774,6 +816,12 @@ free_mapping:
 out_unlock:
 	up_write(&space->lock);
 	return ret;
+}
+
+long nommu_swmmu_map(struct nommu_swmmu_space *space,
+		     size_t size)
+{
+	return nommu_swmmu_map_at(space, 0, size, false);
 }
 
 int nommu_swmmu_unmap(struct nommu_swmmu_space *space,
@@ -886,14 +934,10 @@ static long swmmu_remap_grow(struct nommu_swmmu_space *space,
 	grow_end = mapping->base + new_size - 1;
 
 	/* 0. check if new range overlapped or not */
-	MA_STATE(check, &space->mappings, grow_start, grow_end);
-
-	if (mas_walk(&check)) {
-		mas_destroy(&check);
+	if (swmmu_range_overlaps(space, grow_start, grow_end)) {
 		ret = -EEXIST;
 		goto out;
 	}
-	mas_destroy(&check);
 
 	/* 1. allocate the new page array and pages without modifying the current mapping */
 	struct page **old_pages = mapping->pages;

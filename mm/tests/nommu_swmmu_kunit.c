@@ -1071,6 +1071,103 @@ static void nommu_swmmu_remap_overlap_test(struct kunit *test)
 			0);
 }
 
+static void map_at_exact_address_test(struct kunit *test)
+{
+	struct nommu_swmmu_test_ctx *ctx = test->priv;
+	long ret;
+
+	/* MAP_FIXED allocation */
+	ret = nommu_swmmu_map_at(ctx->space, 0x1000000000ULL + 0x1000,
+				0x1000, true);
+	KUNIT_ASSERT_EQ(test, ret, 0x1000001000ULL);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_unmap(ctx->space,
+					(unsigned long)ret,
+					0),
+			0);
+}
+
+static void map_at_overlap_test(struct kunit *test)
+{
+	struct nommu_swmmu_test_ctx *ctx = test->priv;
+	long ret, mapped;
+
+	mapped = nommu_swmmu_map_at(ctx->space, 0x1000000000ULL + 0x1000,
+				0x1000, true);
+	KUNIT_ASSERT_EQ(test, mapped, 0x1000001000ULL);
+
+	/* map overlapping region should fail */
+	ret = nommu_swmmu_map_at(ctx->space, 0x1000000000ULL, 0x2000, true);
+	KUNIT_EXPECT_EQ(test, ret, -EEXIST);
+
+	KUNIT_EXPECT_EQ(test,
+			nommu_swmmu_unmap(ctx->space,
+					(unsigned long)mapped,
+					0),
+			0);
+}
+
+static void map_at_alignment_test(struct kunit *test)
+{
+	struct nommu_swmmu_test_ctx *ctx = test->priv;
+	long ret;
+
+	/* MAP_FIXED allocation, with unaligned address */
+	ret = nommu_swmmu_map_at(ctx->space, 0x1000000000ULL + 0x10,
+				0x1000, true);
+	KUNIT_EXPECT_EQ(test, ret, -EINVAL);
+}
+
+static void map_at_overflow_test(struct kunit *test)
+{
+	struct nommu_swmmu_test_ctx *ctx = test->priv;
+	long ret;
+
+	/* MAP_FIXED size is huge */
+	ret = nommu_swmmu_map_at(ctx->space, 0x0, ULONG_MAX, true);
+	KUNIT_EXPECT_EQ(test, ret, -EINVAL);
+
+	/* specified address is out of range */
+	ret = nommu_swmmu_map_at(ctx->space, (unsigned long)LONG_MAX + 1,
+				SWMMU_PAGE_SIZE, true);
+	KUNIT_EXPECT_EQ(test, ret, -EOVERFLOW);
+}
+
+static void same_address_different_spaces_test(struct kunit *test)
+{
+	struct nommu_swmmu_test_ctx *ctx = test->priv;
+	struct nommu_swmmu_space *child;
+	long ret;
+
+	ret = swmmu_clone_space(ctx->space, &child);
+	KUNIT_ASSERT_EQ(test, ret, 0L);
+	KUNIT_ASSERT_NOT_NULL(test, child);
+
+	ret = nommu_swmmu_map_at(ctx->space, 0x1000000000ULL,
+				SWMMU_PAGE_SIZE, true);
+	KUNIT_ASSERT_EQ(test, ret, 0x1000000000ULL);
+
+	/* child */
+	//	nommu_swmmu_kunit_set_space(child);
+	ret = nommu_swmmu_map_at(child, 0x1000000000ULL,
+				SWMMU_PAGE_SIZE, true);
+	KUNIT_ASSERT_EQ(test, ret, 0x1000000000ULL);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_unmap(ctx->space,
+					(unsigned long)ret,
+					0),
+			0);
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_unmap(child,
+					(unsigned long)ret,
+					0),
+			0);
+}
+
+
+/* init/exit */
 static int nommu_swmmu_test_init(struct kunit *test)
 {
 	struct nommu_swmmu_test_ctx *ctx;
@@ -1124,6 +1221,11 @@ static struct kunit_case nommu_swmmu_test_cases[] = {
 	KUNIT_CASE(nommu_swmmu_remap_grow_test),
 	KUNIT_CASE(nommu_swmmu_remap_rollback_test),
 	KUNIT_CASE(nommu_swmmu_remap_overlap_test),
+	KUNIT_CASE(map_at_exact_address_test),
+	KUNIT_CASE(map_at_overlap_test),
+	KUNIT_CASE(map_at_alignment_test),
+	KUNIT_CASE(map_at_overflow_test),
+	KUNIT_CASE(same_address_different_spaces_test),
 	{}
 };
 
