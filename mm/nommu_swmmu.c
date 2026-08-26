@@ -14,6 +14,7 @@ struct swmmu_mapping {
 	uintptr_t base;
 	size_t length;
 	size_t page_count;
+	unsigned int access;
 	struct page **pages;
 };
 
@@ -253,8 +254,6 @@ static void swmmu_space_destroy_final(struct nommu_swmmu_space *space)
 		unsigned long start = mas.index;
 		unsigned long last = mas.last;
 
-		pr_debug("SWMMU destroying mapping: [%lx-%lx] %p\n",
-			 start, last, mapping);
 		for (i = 0; i < mapping->page_count; i++)
 			mem_ops->page_free(mapping->pages[i]);
 
@@ -452,6 +451,14 @@ static void *__swmmu_translate(struct nommu_swmmu_space *space,
 	if (!mapping)
 		return NULL;
 
+	if (write) {
+		if (!(mapping->access & NOMMU_SWMMU_WRITE))
+			return NULL;
+	} else {
+		if (!(mapping->access & NOMMU_SWMMU_READ))
+			return NULL;
+	}
+
 	offset = address - mapping->base;
 	page_index = offset / SWMMU_PAGE_SIZE;
 	offset %= SWMMU_PAGE_SIZE;
@@ -571,6 +578,7 @@ clone_one_mapping(struct nommu_swmmu_space *child,
 		return -ENOMEM;
 	}
 
+	copy->access = source->access;
 	copy->base = source->base;
 	copy->length = source->length;
 	copy->page_count = source->page_count;
@@ -724,6 +732,7 @@ void nommu_swmmu_store_u64(void *address, size_t size, uint64_t value)
 long nommu_swmmu_map_at(struct nommu_swmmu_space *space,
 			unsigned long address,
 			size_t size,
+			unsigned int access,
 			bool fixed)
 {
 	struct swmmu_mapping *mapping;
@@ -739,9 +748,28 @@ long nommu_swmmu_map_at(struct nommu_swmmu_space *space,
 	if (length < size)
 		return -EINVAL;
 
+	if (access & ~(NOMMU_SWMMU_READ |
+			NOMMU_SWMMU_WRITE |
+			NOMMU_SWMMU_EXEC))
+		return -EINVAL;
+
 	down_write(&space->lock);
 
-
+	/*
+	 * currently partially implemented:
+	 *
+	 * address == 0, no fixed flag:
+	 *     allocate at next_address
+	 *
+	 * nonzero address, no fixed flag:
+	 *     reject with -EINVAL
+	 *
+	 * MAP_FIXED:
+	 *     exact address, but reject overlap for now
+	 *
+	 * MAP_FIXED_NOREPLACE:
+	 *     exact address, reject overlap
+	 */
 	if (fixed) {
 		if (!address || !PAGE_ALIGNED(address)) {
 			ret = -EINVAL;
@@ -783,6 +811,7 @@ long nommu_swmmu_map_at(struct nommu_swmmu_space *space,
 		goto out_unlock;
 	}
 
+	mapping->access = access;
 	mapping->base = base;
 	mapping->length = length;
 
@@ -836,7 +865,14 @@ out_unlock:
 long nommu_swmmu_map(struct nommu_swmmu_space *space,
 		     size_t size)
 {
-	return nommu_swmmu_map_at(space, 0, size, false);
+	/*
+	 *  EXEC permission is recorded for future instruction-fetch handling;
+	 * the current compiler/runtime ABI only validates data reads and writes.
+	 */
+	return nommu_swmmu_map_at(space, 0, size,
+				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE |
+				NOMMU_SWMMU_EXEC,
+				false);
 }
 
 int nommu_swmmu_unmap(struct nommu_swmmu_space *space,
@@ -858,7 +894,6 @@ int nommu_swmmu_unmap(struct nommu_swmmu_space *space,
 		goto out;
 	}
 
-	/* FIXME: initial impl. */
 	if (size && size != mapping->length) {
 		ret =  -EINVAL;
 		goto out;
@@ -1148,6 +1183,7 @@ static unsigned long do_mmap_swmmu(struct file *file,
 	struct vm_area_struct *vma;
 	unsigned long swmmu_addr;
 	int ret;
+	unsigned int access;
 	VMA_ITERATOR(vmi, mm, 0);
 
 	/* common validation/address selection */
@@ -1157,10 +1193,19 @@ static unsigned long do_mmap_swmmu(struct file *file,
 	if (current->mm->map_count >= get_sysctl_max_map_count())
 		return -ENOMEM;
 
+	access = 0;
+
+	if (prot & PROT_READ)
+		access |= NOMMU_SWMMU_READ;
+	if (prot & PROT_WRITE)
+		access |= NOMMU_SWMMU_WRITE;
+	if (prot & PROT_EXEC)
+		access |= NOMMU_SWMMU_EXEC;
+
 	swmmu_addr = nommu_swmmu_map_at(mm->swmmu_space,
-					addr,
-					len,
-					flags & MAP_FIXED);
+					addr, len, access,
+					(flags & MAP_FIXED) ||
+					(flags & MAP_FIXED_NOREPLACE));
 	if (IS_ERR_VALUE(swmmu_addr))
 		return swmmu_addr;
 
@@ -1196,6 +1241,33 @@ static unsigned long do_mmap_swmmu(struct file *file,
 	return swmmu_addr;
 }
 
+static int
+nommu_swmmu_validate_mmap_request(struct file *file,
+				  unsigned long addr,
+				  unsigned long len,
+				  unsigned long prot,
+				  unsigned long flags,
+				  vma_flags_t vma_flags,
+				  unsigned long pgoff,
+				  unsigned long *populate,
+				  struct list_head *uf)
+{
+	if (file ||
+	    !(flags & MAP_ANONYMOUS) ||
+	    !(flags & MAP_PRIVATE))
+		return -EOPNOTSUPP;
+
+	if (prot & ~(PROT_READ | PROT_WRITE | PROT_EXEC))
+		return -EINVAL;
+
+	if (prot == PROT_WRITE ||
+		prot == PROT_EXEC ||
+		prot == (PROT_WRITE | PROT_EXEC))
+		return -EOPNOTSUPP;
+
+	return 0;
+}
+
 unsigned long do_mmap(struct file *file,
 			unsigned long addr,
 			unsigned long len,
@@ -1207,16 +1279,25 @@ unsigned long do_mmap(struct file *file,
 			struct list_head *uf)
 {
 	struct mm_struct *mm = current->mm;
+	int ret;
 
-	if (nommu_swmmu_get_mode(mm) == NOMMU_SWMMU_ON &&
-		!file &&
-		(flags & MAP_ANONYMOUS) &&
-		(flags & MAP_PRIVATE))
-		return do_mmap_swmmu(file, addr, len, prot, flags,
-				vma_flags, pgoff, populate, uf);
+	if (nommu_swmmu_get_mode(mm) == NOMMU_SWMMU_ON) {
+		ret = nommu_swmmu_validate_mmap_request(
+			file, addr, len, prot, flags,
+			vma_flags, pgoff, populate, uf);
+
+		if (ret == 0)
+			return do_mmap_swmmu(file, addr, len, prot, flags,
+					     vma_flags, pgoff,
+					     populate, uf);
+
+		/* EOPNOTSUPP fall back to nommu backend */
+		if (ret != -EOPNOTSUPP)
+			return ret;
+	}
 
 	return do_mmap_nommu(file, addr, len, prot, flags,
-			vma_flags, pgoff, populate, uf);
+			     vma_flags, pgoff, populate, uf);
 }
 
 int do_munmap(struct mm_struct *mm,
@@ -1229,6 +1310,9 @@ int do_munmap(struct mm_struct *mm,
 
 	len = PAGE_ALIGN(len);
 	if (len == 0)
+		return -EINVAL;
+
+	if (len > ULONG_MAX - start)
 		return -EINVAL;
 
 	end = start + len;
@@ -1251,10 +1335,6 @@ int do_munmap(struct mm_struct *mm,
 					vma->vm_start,
 					vma->vm_end - vma->vm_start);
 		if (ret) {
-			pr_debug("SWMMU munmap: mm=%px space=%px vma=%px "
-				"vm_region=%px ret=%d range=[%lx-%lx)\n",
-				mm, mm->swmmu_space, vma, vma->vm_region,
-				ret, vma->vm_start, vma->vm_end);
 			vma_iter_free(&vmi);
 			return ret;
 		}
@@ -1333,6 +1413,9 @@ unsigned long do_mremap(unsigned long addr,
 
 	old_len = PAGE_ALIGN(old_len);
 	if (old_len == 0)
+		return -EINVAL;
+
+	if (old_len > ULONG_MAX - addr)
 		return -EINVAL;
 
 	end = addr + old_len;

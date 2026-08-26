@@ -1078,7 +1078,9 @@ static void map_at_exact_address_test(struct kunit *test)
 
 	/* MAP_FIXED allocation */
 	ret = nommu_swmmu_map_at(ctx->space, 0x1000000000ULL + 0x1000,
-				0x1000, true);
+				0x1000,
+				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
+				true);
 	KUNIT_ASSERT_EQ(test, ret, 0x1000001000ULL);
 
 	KUNIT_ASSERT_EQ(test,
@@ -1094,11 +1096,15 @@ static void map_at_overlap_test(struct kunit *test)
 	long ret, mapped;
 
 	mapped = nommu_swmmu_map_at(ctx->space, 0x1000000000ULL + 0x1000,
-				0x1000, true);
+				0x1000,
+				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
+				true);
 	KUNIT_ASSERT_EQ(test, mapped, 0x1000001000ULL);
 
 	/* map overlapping region should fail */
-	ret = nommu_swmmu_map_at(ctx->space, 0x1000000000ULL, 0x2000, true);
+	ret = nommu_swmmu_map_at(ctx->space, 0x1000000000ULL, 0x2000,
+				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
+				true);
 	KUNIT_EXPECT_EQ(test, ret, -EEXIST);
 
 	KUNIT_EXPECT_EQ(test,
@@ -1115,7 +1121,9 @@ static void map_at_alignment_test(struct kunit *test)
 
 	/* MAP_FIXED allocation, with unaligned address */
 	ret = nommu_swmmu_map_at(ctx->space, 0x1000000000ULL + 0x10,
-				0x1000, true);
+				0x1000,
+				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
+				true);
 	KUNIT_EXPECT_EQ(test, ret, -EINVAL);
 }
 
@@ -1125,12 +1133,16 @@ static void map_at_overflow_test(struct kunit *test)
 	long ret;
 
 	/* MAP_FIXED size is huge */
-	ret = nommu_swmmu_map_at(ctx->space, 0x0, ULONG_MAX, true);
+	ret = nommu_swmmu_map_at(ctx->space, 0x0, ULONG_MAX,
+				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
+				true);
 	KUNIT_EXPECT_EQ(test, ret, -EINVAL);
 
 	/* specified address is out of range */
 	ret = nommu_swmmu_map_at(ctx->space, (unsigned long)LONG_MAX + 1,
-				SWMMU_PAGE_SIZE, true);
+				SWMMU_PAGE_SIZE,
+				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
+				true);
 	KUNIT_EXPECT_EQ(test, ret, -EOVERFLOW);
 }
 
@@ -1145,13 +1157,17 @@ static void same_address_different_spaces_test(struct kunit *test)
 	KUNIT_ASSERT_NOT_NULL(test, child);
 
 	ret = nommu_swmmu_map_at(ctx->space, 0x1000000000ULL,
-				SWMMU_PAGE_SIZE, true);
+				SWMMU_PAGE_SIZE,
+				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
+				true);
 	KUNIT_ASSERT_EQ(test, ret, 0x1000000000ULL);
 
 	/* child */
 	//	nommu_swmmu_kunit_set_space(child);
 	ret = nommu_swmmu_map_at(child, 0x1000000000ULL,
-				SWMMU_PAGE_SIZE, true);
+				SWMMU_PAGE_SIZE,
+				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
+				true);
 	KUNIT_ASSERT_EQ(test, ret, 0x1000000000ULL);
 
 	KUNIT_ASSERT_EQ(test,
@@ -1219,7 +1235,9 @@ static void nommu_swmmu_mode_test(struct kunit *test)
 			0);
 
 	ret = nommu_swmmu_map_at(space, 0x1000000000ULL,
-				SWMMU_PAGE_SIZE, true);
+				SWMMU_PAGE_SIZE,
+				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
+				true);
 	KUNIT_ASSERT_EQ(test, ret, 0x1000000000ULL);
 
 	/* set OFF returns -EBUSY while a SWMMU mapping exists */
@@ -1242,6 +1260,95 @@ static void nommu_swmmu_mode_test(struct kunit *test)
 
 	nommu_swmmu_space_detach(test_mm);
 	mmput(test_mm);
+}
+
+static void nommu_swmmu_prot_test(struct kunit *test)
+{
+	struct nommu_swmmu_test_ctx *ctx = test->priv;
+	long ret;
+	long addr;
+
+	/* read-write mapping: read allowed, write allowed */
+	addr = nommu_swmmu_map_at(ctx->space, 0, SWMMU_PAGE_SIZE,
+				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
+				false);
+	KUNIT_ASSERT_GT(test, addr, 0L);
+	ret = nommu_swmmu_check_access(ctx->space,
+				addr, sizeof(long), 0);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+	ret = nommu_swmmu_check_access(ctx->space,
+				addr, SWMMU_PAGE_SIZE, 1);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+	ret = nommu_swmmu_unmap(ctx->space, addr, 0);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	/* read-only mapping: read allowed, write rejected */
+	addr = nommu_swmmu_map_at(ctx->space, 0, SWMMU_PAGE_SIZE,
+				NOMMU_SWMMU_READ,
+				false);
+	KUNIT_ASSERT_GT(test, addr, 0L);
+	ret = nommu_swmmu_check_access(ctx->space,
+				addr, sizeof(long), 0);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+	ret = nommu_swmmu_check_access(ctx->space,
+				addr, SWMMU_PAGE_SIZE, 1);
+	KUNIT_EXPECT_LT(test, ret, 0);
+	ret = nommu_swmmu_unmap(ctx->space, addr, 0);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	/* write-only mapping: write allowed, read rejected */
+	addr = nommu_swmmu_map_at(ctx->space, 0, SWMMU_PAGE_SIZE,
+				NOMMU_SWMMU_WRITE,
+				false);
+	KUNIT_ASSERT_GT(test, addr, 0L);
+	ret = nommu_swmmu_check_access(ctx->space,
+				addr, sizeof(long), 0);
+	KUNIT_EXPECT_LT(test, ret, 0);
+	ret = nommu_swmmu_check_access(ctx->space,
+				addr, SWMMU_PAGE_SIZE, 1);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+	ret = nommu_swmmu_unmap(ctx->space, addr, 0);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	/* PROT_NONE: both read and write rejected */
+	addr = nommu_swmmu_map_at(ctx->space, 0, SWMMU_PAGE_SIZE,
+				0,
+				false);
+	KUNIT_ASSERT_GT(test, addr, 0L);
+	ret = nommu_swmmu_check_access(ctx->space,
+				addr, sizeof(long), 0);
+	KUNIT_EXPECT_LT(test, ret, 0);
+	ret = nommu_swmmu_check_access(ctx->space,
+				addr, SWMMU_PAGE_SIZE, 1);
+	KUNIT_EXPECT_LT(test, ret, 0);
+	ret = nommu_swmmu_unmap(ctx->space, addr, 0);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	/* fixed mapping: exact address returned */
+	addr = nommu_swmmu_map_at(ctx->space, 0x2000000000ULL, SWMMU_PAGE_SIZE,
+				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
+				true);
+	KUNIT_ASSERT_EQ(test, addr, 0x2000000000ULL);
+
+	/* fixed overlap: expected rejection */
+	ret = nommu_swmmu_map_at(ctx->space, 0x2000000000ULL - SWMMU_PAGE_SIZE,
+				SWMMU_PAGE_SIZE * 2,
+				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
+				true);
+	KUNIT_EXPECT_EQ(test, ret, -EEXIST);
+
+	/* MAP_FIXED_NOREPLACE: overlap rejected: (to be implemented) */
+
+	/* unmap allocated fixed previously */
+	ret = nommu_swmmu_unmap(ctx->space, addr, 0);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	/* nonzero hint: current documented behavior */
+	addr = nommu_swmmu_map_at(ctx->space, 0x2000000000ULL, SWMMU_PAGE_SIZE,
+				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
+				false);
+	KUNIT_ASSERT_EQ(test, addr, -EINVAL);
+
 }
 
 
@@ -1305,6 +1412,7 @@ static struct kunit_case nommu_swmmu_test_cases[] = {
 	KUNIT_CASE(map_at_overflow_test),
 	KUNIT_CASE(same_address_different_spaces_test),
 	KUNIT_CASE(nommu_swmmu_mode_test),
+	KUNIT_CASE(nommu_swmmu_prot_test),
 	{}
 };
 

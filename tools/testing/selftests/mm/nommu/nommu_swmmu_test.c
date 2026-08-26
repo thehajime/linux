@@ -1226,6 +1226,103 @@ static int test_standard_mmap_exit_cleanup_churn(void)
 	return KSFT_PASS;
 }
 
+static int test_standard_mmap_permission(void)
+{
+	size_t ps;
+	void *ret;
+	int result = KSFT_FAIL;
+	void *base = MAP_FAILED;
+	size_t mapped_len = 0;
+
+	ps = sysconf(_SC_PAGESIZE);
+
+	/* mmap(PROT_READ) */
+	base = mmap(NULL, ps, PROT_READ,
+		    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (base == MAP_FAILED) {
+		ksft_test_result_fail("mmap failed: %s\n",
+				      strerror(errno));
+		return KSFT_FAIL;
+	}
+	/* this should not cause BUG() in kernel */
+	nommu_swmmu_load_u64(base, sizeof(uint64_t));
+	if (munmap(base, ps) != 0) {
+		ksft_test_result_fail("munmap 0 failed: %s\n",
+			strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	/* mmap(PROT_READ | PROT_WRITE) */
+	base = mmap(NULL, ps, PROT_READ | PROT_WRITE,
+		    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (base == MAP_FAILED) {
+		ksft_test_result_fail("mmap failed: %s\n",
+				      strerror(errno));
+		return KSFT_FAIL;
+	}
+	/* this should not cause BUG() in kernel */
+	nommu_swmmu_load_u64(base, sizeof(uint64_t));
+	nommu_swmmu_store_u64(base, sizeof(uint64_t), 1919);
+	if (munmap(base, ps) != 0) {
+		ksft_test_result_fail("munmap 1 failed: %s\n",
+			strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	/* mmap(PROT_NONE) */
+	base = mmap(NULL, ps, PROT_NONE,
+		    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (base == MAP_FAILED) {
+		ksft_test_result_fail("mmap failed: %s\n",
+				      strerror(errno));
+		return KSFT_FAIL;
+	}
+	/* any ops should cause BUG() in kernel, so do nothing */
+	if (munmap(base, ps) != 0) {
+		ksft_test_result_fail("munmap 2 failed: %s\n",
+			strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	/* MAP_FIXED */
+	base = mmap((void *)0x2000000000ULL, ps, PROT_READ | PROT_WRITE,
+		    MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+	if (base == MAP_FAILED) {
+		ksft_test_result_fail("mmap failed: %s\n",
+				      strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	/* MAP_FIXED_NOREPLACE */
+	ret = mmap((void *)0x2000000000ULL, ps, PROT_READ | PROT_WRITE,
+		    MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+	if (ret != MAP_FAILED || errno != EEXIST) {
+		ksft_test_result_fail(
+			"MAP_FIXED_NOREPLACE returned unexpected result: "
+			"ret=%p errno=%d\n",
+			ret, errno);
+
+		result = KSFT_FAIL;
+		mapped_len = ps;
+		goto out;
+	}
+
+	if (munmap(base, ps) != 0) {
+		ksft_test_result_fail("munmap 3 failed: %s\n",
+			strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	result = KSFT_PASS;
+out:
+	if (base != MAP_FAILED)
+		munmap(base, mapped_len);
+
+	ksft_test_result_pass(
+		"standard mmap permission and fixed-address checks work\n");
+	return result;
+}
+
 int main(void)
 {
 	int result = KSFT_PASS;
@@ -1237,7 +1334,7 @@ int main(void)
 	}
 
 	ksft_print_header();
-	ksft_set_plan(13);
+	ksft_set_plan(14);
 
 	if (test_scalar_access() == KSFT_FAIL)
 		result = KSFT_FAIL;
@@ -1272,10 +1369,12 @@ int main(void)
 	if (test_standard_mmap_fork_child_isolation() == KSFT_FAIL)
 		result = KSFT_FAIL;
 
-	if (test_standard_mmap_exit_cleanup_churn() == KSFT_FAIL)
+	if (test_standard_mmap_permission() == KSFT_FAIL)
 		result = KSFT_FAIL;
 
 	/* shall be the last test */
+	if (test_standard_mmap_exit_cleanup_churn() == KSFT_FAIL)
+		result = KSFT_FAIL;
 	if (test_standard_mmap_exit_cleanup() == KSFT_FAIL)
 		result = KSFT_FAIL;
 

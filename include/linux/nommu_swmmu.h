@@ -11,6 +11,10 @@
 
 #define SWMMU_PAGE_SIZE 4096UL
 
+#define NOMMU_SWMMU_READ	(1U << 0)
+#define NOMMU_SWMMU_WRITE	(1U << 1)
+#define NOMMU_SWMMU_EXEC	(1U << 2)
+
 struct nommu_swmmu_space;
 struct page;
 
@@ -70,6 +74,7 @@ long nommu_swmmu_map(struct nommu_swmmu_space *space,
 long nommu_swmmu_map_at(struct nommu_swmmu_space *space,
 			unsigned long address,
 			size_t size,
+			unsigned int access,
 			bool fixed);
 
 int nommu_swmmu_unmap(struct nommu_swmmu_space *space,
