@@ -34,6 +34,7 @@
 #include <linux/syscalls.h>
 #include <linux/audit.h>
 #include <linux/printk.h>
+#include <linux/nommu_swmmu.h>
 
 #include <linux/uaccess.h>
 #include <linux/uio.h>
@@ -672,7 +673,8 @@ static void delete_vma(struct mm_struct *mm, struct vm_area_struct *vma)
 	vma_close(vma);
 	if (vma->vm_file)
 		fput(vma->vm_file);
-	put_nommu_region(vma->vm_region);
+	if (!vma->vm_swmmu)
+		put_nommu_region(vma->vm_region);
 	vm_area_free(vma);
 }
 
@@ -1063,7 +1065,7 @@ enomem:
 /*
  * handle mapping creation for uClinux
  */
-unsigned long do_mmap(struct file *file,
+unsigned long do_mmap_nommu(struct file *file,
 			unsigned long addr,
 			unsigned long len,
 			unsigned long prot,
@@ -1596,7 +1598,7 @@ end:
  * - under NOMMU conditions the chunk to be unmapped must be backed by a single
  *   VMA, though it need not cover the whole VMA
  */
-int do_munmap(struct mm_struct *mm, unsigned long start, size_t len, struct list_head *uf)
+int do_munmap_nommu(struct mm_struct *mm, unsigned long start, size_t len, struct list_head *uf)
 {
 	VMA_ITERATOR(vmi, mm, start);
 	struct vm_area_struct *vma;
@@ -1682,6 +1684,7 @@ void exit_mmap(struct mm_struct *mm)
 {
 	VMA_ITERATOR(vmi, mm, 0);
 	struct vm_area_struct *vma;
+	int ret;
 
 	if (!mm)
 		return;
@@ -1694,6 +1697,16 @@ void exit_mmap(struct mm_struct *mm)
 	 */
 	mmap_write_lock(mm);
 	for_each_vma(vmi, vma) {
+		if (vma->vm_swmmu) {
+			ret = nommu_swmmu_unmap(mm->swmmu_space,
+						vma->vm_start,
+						vma->vm_end - vma->vm_start);
+			pr_debug("SWMMU exit cleanup: pid=%d mm=%px space=%px "
+				"vma=%px ret=%d range=[%lx-%lx)\n",
+				current->pid, mm, mm->swmmu_space, vma, ret,
+				vma->vm_start, vma->vm_end);
+			WARN_ON_ONCE(ret);
+		}
 		cleanup_vma_from_mm(vma);
 		delete_vma(mm, vma);
 		cond_resched();
@@ -1712,7 +1725,7 @@ void exit_mmap(struct mm_struct *mm)
  *
  * MREMAP_FIXED is not supported under NOMMU conditions
  */
-static unsigned long do_mremap(unsigned long addr,
+unsigned long do_mremap_nommu(unsigned long addr,
 			unsigned long old_len, unsigned long new_len,
 			unsigned long flags, unsigned long new_addr)
 {
@@ -2099,8 +2112,15 @@ subsys_initcall(init_admin_reserve);
 
 int dup_mmap(struct mm_struct *mm, struct mm_struct *oldmm)
 {
+	int ret = 0;
+
 	mmap_write_lock(oldmm);
+	mmap_write_lock_nested(mm, SINGLE_DEPTH_NESTING);
 	dup_mm_exe_file(mm, oldmm);
+#ifdef CONFIG_NOMMU_SWMMU
+	ret = nommu_swmmu_dup_mmap(mm, oldmm);
+#endif
+	mmap_write_unlock(mm);
 	mmap_write_unlock(oldmm);
-	return 0;
+	return ret;
 }

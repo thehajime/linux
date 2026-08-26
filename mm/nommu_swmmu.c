@@ -4,6 +4,9 @@
 #include <linux/gfp.h>
 #include <linux/highmem.h>
 #include <linux/syscalls.h>
+#include <linux/mman.h>
+
+#include "internal.h"
 
 #define SWMMU_VA_BASE ((uintptr_t)0x1000000000ULL)
 
@@ -12,8 +15,6 @@ struct swmmu_mapping {
 	size_t length;
 	size_t page_count;
 	struct page **pages;
-
-	struct swmmu_mapping *next;
 };
 
 struct nommu_swmmu_space {
@@ -750,9 +751,9 @@ long nommu_swmmu_map_at(struct nommu_swmmu_space *space,
 		base = address;
 	} else {
 		if (address) {
-		/* Address hints are not implemented yet. */
-		ret = -EINVAL;
-		goto out_unlock;
+			/* Address hints are not implemented yet. */
+			ret = -EINVAL;
+			goto out_unlock;
 		}
 
 		base = page_align(space->next_address);
@@ -1075,6 +1076,295 @@ long nommu_swmmu_remap(struct nommu_swmmu_space *space,
 
 	up_write(&space->lock);
 	return ret;
+}
+
+int nommu_swmmu_dup_mmap(struct mm_struct *dst,
+			 struct mm_struct *src)
+{
+	VMA_ITERATOR(src_vmi, src, 0);
+	VMA_ITERATOR(dst_vmi, dst, 0);
+	struct vm_area_struct *src_vma;
+	struct vm_area_struct *dst_vma;
+	int ret;
+
+	/*
+	 * The caller must hold the appropriate mmap locks for src
+	 * and dst. Follow the lock ordering used by the surrounding
+	 * dup_mmap() implementation.
+	 */
+	for_each_vma(src_vmi, src_vma) {
+		if (!src_vma->vm_swmmu)
+			continue;
+
+		dst_vma = vm_area_dup(src_vma);
+		if (!dst_vma)
+			return -ENOMEM;
+
+		dst_vma->vm_mm = dst;
+		dst_vma->vm_swmmu = true;
+
+		if (WARN_ON_ONCE(dst_vma->vm_start >= dst_vma->vm_end)) {
+			vm_area_free(dst_vma);
+			return -EINVAL;
+		}
+
+		/*
+		 * use mas_set_range() instead of vma_iter_config(),
+		 * which assumes the new range is a subrange of the
+		 * iterator's current cached slot.
+		 */
+		mas_set_range(&dst_vmi.mas, dst_vma->vm_start,
+			dst_vma->vm_end - 1);
+
+		ret = vma_iter_prealloc(&dst_vmi, dst_vma);
+		if (ret) {
+			vm_area_free(dst_vma);
+			return ret;
+		}
+
+		vma_iter_store_new(&dst_vmi, dst_vma);
+		dst->map_count++;
+	}
+
+	return 0;
+}
+
+/*
+ * currently, file, prot, populate, uf are not used and ignored.
+ * will be updated.
+ */
+static unsigned long do_mmap_swmmu(struct file *file,
+			unsigned long addr,
+			unsigned long len,
+			unsigned long prot,
+			unsigned long flags,
+			vma_flags_t vma_flags,
+			unsigned long pgoff,
+			unsigned long *populate,
+			struct list_head *uf)
+{
+	struct mm_struct *mm = current->mm;
+	vm_flags_t vm_flags = vma_flags_to_legacy(vma_flags);
+	struct vm_area_struct *vma;
+	unsigned long swmmu_addr;
+	int ret;
+	VMA_ITERATOR(vmi, mm, 0);
+
+	/* common validation/address selection */
+	if (populate)
+		*populate = 0;
+
+	if (current->mm->map_count >= get_sysctl_max_map_count())
+		return -ENOMEM;
+
+	swmmu_addr = nommu_swmmu_map_at(mm->swmmu_space,
+					addr,
+					len,
+					flags & MAP_FIXED);
+	if (IS_ERR_VALUE(swmmu_addr))
+		return swmmu_addr;
+
+	/* create and initialize VMA for swmmu_addr..swmmu_addr + len */
+	vma = vm_area_alloc(current->mm);
+	if (!vma) {
+		nommu_swmmu_unmap(mm->swmmu_space,
+				swmmu_addr,
+				0);
+		return -ENOMEM;
+	}
+
+
+	vm_flags_init(vma, vm_flags);
+	vma_set_pgoff(vma, pgoff);
+
+	vma->vm_start = swmmu_addr;
+	vma->vm_end = swmmu_addr + PAGE_ALIGN(len);
+	vma->vm_swmmu = true;
+
+	vma_iter_config(&vmi, vma->vm_start, vma->vm_end);
+	ret = vma_iter_prealloc(&vmi, vma);
+	if (ret) {
+		nommu_swmmu_unmap(mm->swmmu_space,
+				  swmmu_addr,
+				  0);
+		vm_area_free(vma);
+		return ret;
+	}
+	vma_iter_store_new(&vmi, vma);
+
+	current->mm->map_count++;
+	return swmmu_addr;
+}
+
+unsigned long do_mmap(struct file *file,
+			unsigned long addr,
+			unsigned long len,
+			unsigned long prot,
+			unsigned long flags,
+			vma_flags_t vma_flags,
+			unsigned long pgoff,
+			unsigned long *populate,
+			struct list_head *uf)
+{
+	struct mm_struct *mm = current->mm;
+
+	if (nommu_swmmu_get_mode(mm) == NOMMU_SWMMU_ON &&
+		!file &&
+		(flags & MAP_ANONYMOUS) &&
+		(flags & MAP_PRIVATE))
+		return do_mmap_swmmu(file, addr, len, prot, flags,
+				vma_flags, pgoff, populate, uf);
+
+	return do_mmap_nommu(file, addr, len, prot, flags,
+			vma_flags, pgoff, populate, uf);
+}
+
+int do_munmap(struct mm_struct *mm,
+	unsigned long start, size_t len, struct list_head *uf)
+{
+	VMA_ITERATOR(vmi, mm, start);
+	struct vm_area_struct *vma;
+	unsigned long end;
+	int ret;
+
+	len = PAGE_ALIGN(len);
+	if (len == 0)
+		return -EINVAL;
+
+	end = start + len;
+
+	vma = vma_find(&vmi, end);
+	if (vma && vma->vm_swmmu) {
+		/* FIXME: until split is implemented*/
+		if (start != vma->vm_start ||
+			end != vma->vm_end)
+			return -EINVAL;
+
+		vma_iter_config(&vmi, vma->vm_start, vma->vm_end);
+		if (vma_iter_prealloc(&vmi, NULL)) {
+			pr_warn("Allocation of vma tree for process %d failed\n",
+				current->pid);
+			return -ENOMEM;
+		}
+
+		ret = nommu_swmmu_unmap(mm->swmmu_space,
+					vma->vm_start,
+					vma->vm_end - vma->vm_start);
+		if (ret) {
+			pr_debug("SWMMU munmap: mm=%px space=%px vma=%px "
+				"vm_region=%px ret=%d range=[%lx-%lx)\n",
+				mm, mm->swmmu_space, vma, vma->vm_region,
+				ret, vma->vm_start, vma->vm_end);
+			vma_iter_free(&vmi);
+			return ret;
+		}
+
+		/* remove from the MM's tree and list */
+		vma_iter_clear(&vmi);
+		vma->vm_mm->map_count--;
+		vma_close(vma);
+		vm_area_free(vma);
+		return 0;
+	}
+
+	return do_munmap_nommu(mm, start, len, uf);
+}
+
+static int
+nommu_swmmu_update_vma_end(struct vma_iterator *vmi,
+			   struct vm_area_struct *vma,
+			   unsigned long new_end)
+{
+	unsigned long old_start = vma->vm_start;
+	unsigned long old_end = vma->vm_end;
+	int ret;
+
+	/*
+	 * Remove the complete old VMA range.
+	 */
+	vma_iter_config(vmi, old_start, old_end);
+
+	ret = vma_iter_prealloc(vmi, NULL);
+	if (ret)
+		return ret;
+
+	vma_iter_clear(vmi);
+	mas_destroy(&vmi->mas);
+
+	/*
+	 * Publish the new range.
+	 */
+	vma->vm_end = new_end;
+
+	vma_iter_config(vmi, vma->vm_start, vma->vm_end);
+
+	ret = vma_iter_prealloc(vmi, vma);
+	if (ret) {
+		/*
+		 * Restore the VMA metadata and old tree entry.
+		 * Restoration failure should be treated as fatal.
+		 */
+		vma->vm_end = old_end;
+		vma_iter_config(vmi, old_start, old_end);
+
+		if (!vma_iter_prealloc(vmi, vma))
+			vma_iter_store_new(vmi, vma);
+
+		return ret;
+	}
+
+	vma_iter_store_new(vmi, vma);
+	return 0;
+}
+
+unsigned long do_mremap(unsigned long addr,
+			unsigned long old_len, unsigned long new_len,
+			unsigned long flags, unsigned long new_addr)
+{
+	struct mm_struct *mm = current->mm;
+	VMA_ITERATOR(vmi, mm, addr);
+	struct vm_area_struct *vma;
+	unsigned long end;
+	long ret;
+
+	/* not implemented yet */
+	if (new_addr)
+		return -EINVAL;
+
+	old_len = PAGE_ALIGN(old_len);
+	if (old_len == 0)
+		return -EINVAL;
+
+	end = addr + old_len;
+
+	vma = vma_find(&vmi, end);
+	if (vma && vma->vm_swmmu) {
+		if (flags & (MREMAP_MAYMOVE | MREMAP_FIXED))
+			return -EINVAL;
+
+		ret = nommu_swmmu_remap(mm->swmmu_space,
+				vma->vm_start,
+				old_len,
+				new_len);
+		if (IS_ERR_VALUE(ret))
+			return ret;
+
+		/* update vma metadata */
+		ret = nommu_swmmu_update_vma_end(&vmi, vma,
+						vma->vm_start + PAGE_ALIGN(new_len));
+		if (ret) {
+			/*
+			 * The SWMMU mapping has already changed here, so this
+			 * path also needs a SWMMU rollback or a commit ordering
+			 * redesign.
+			 */
+			return ret;
+		}
+
+		return vma->vm_start;
+	}
+
+	return do_mremap_nommu(addr, old_len, new_len, flags, new_addr);
 }
 
 /* prctl interface */

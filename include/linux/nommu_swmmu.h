@@ -81,6 +81,9 @@ long nommu_swmmu_remap(struct nommu_swmmu_space *space,
 		       size_t old_size,
 		       size_t new_size);
 
+int nommu_swmmu_dup_mmap(struct mm_struct *dst,
+			struct mm_struct *src);
+
 /* prctl API */
 long nommu_swmmu_get_mode(struct mm_struct *mm);
 int nommu_swmmu_set_mode(struct mm_struct *mm,

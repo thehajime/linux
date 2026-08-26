@@ -4269,6 +4269,10 @@ unsigned long do_mmap(struct file *file, unsigned long addr,
 	unsigned long len, unsigned long prot, unsigned long flags,
 	vma_flags_t vma_flags, unsigned long pgoff, unsigned long *populate,
 	struct list_head *uf);
+unsigned long do_mmap_nommu(struct file *file, unsigned long addr,
+	unsigned long len, unsigned long prot, unsigned long flags,
+	vma_flags_t vma_flags, unsigned long pgoff, unsigned long *populate,
+	struct list_head *uf);
 extern int do_vmi_munmap(struct vma_iterator *vmi, struct mm_struct *mm,
 			 unsigned long start, size_t len, struct list_head *uf,
 			 bool unlock);
@@ -4277,7 +4281,15 @@ int do_vmi_align_munmap(struct vma_iterator *vmi, struct vm_area_struct *vma,
 		    unsigned long end, struct list_head *uf, bool unlock);
 extern int do_munmap(struct mm_struct *, unsigned long, size_t,
 		     struct list_head *uf);
+extern int do_munmap_nommu(struct mm_struct *, unsigned long, size_t,
+			struct list_head *uf);
 extern int do_madvise(struct mm_struct *mm, unsigned long start, size_t len_in, int behavior);
+extern unsigned long do_mremap_nommu(unsigned long addr,
+			unsigned long old_len, unsigned long new_len,
+				unsigned long flags, unsigned long new_addr);
+extern unsigned long do_mremap(unsigned long addr,
+			unsigned long old_len, unsigned long new_len,
+				unsigned long flags, unsigned long new_addr);
 
 #ifdef CONFIG_MMU
 extern int __mm_populate(unsigned long addr, unsigned long len,
