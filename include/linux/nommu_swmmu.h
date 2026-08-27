@@ -15,6 +15,13 @@
 #define NOMMU_SWMMU_WRITE	(1U << 1)
 #define NOMMU_SWMMU_EXEC	(1U << 2)
 
+enum nommu_swmmu_map_mode {
+	NOMMU_SWMMU_MAP_AUTO,
+	NOMMU_SWMMU_MAP_HINT,
+	NOMMU_SWMMU_MAP_FIXED,
+	NOMMU_SWMMU_MAP_FIXED_NOREPLACE,
+};
+
 struct nommu_swmmu_space;
 struct page;
 
@@ -75,7 +82,7 @@ long nommu_swmmu_map_at(struct nommu_swmmu_space *space,
 			unsigned long address,
 			size_t size,
 			unsigned int access,
-			bool fixed);
+			enum nommu_swmmu_map_mode mode);
 
 int nommu_swmmu_unmap(struct nommu_swmmu_space *space,
 		      unsigned long address,

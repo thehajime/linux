@@ -785,7 +785,7 @@ long nommu_swmmu_map_at(struct nommu_swmmu_space *space,
 			unsigned long address,
 			size_t size,
 			unsigned int access,
-			bool fixed)
+			enum nommu_swmmu_map_mode mode)
 {
 	struct swmmu_mapping *mapping;
 	size_t length;
@@ -822,21 +822,32 @@ long nommu_swmmu_map_at(struct nommu_swmmu_space *space,
 	 * MAP_FIXED_NOREPLACE:
 	 *     exact address, reject overlap
 	 */
-	if (fixed) {
+	switch (mode) {
+	case NOMMU_SWMMU_MAP_AUTO:
+		if (address) {
+			ret = -EINVAL;
+			goto out_unlock;
+		}
+		base = page_align(space->next_address);
+		break;
+
+	case NOMMU_SWMMU_MAP_HINT:
+		/* Not implemented yet. */
+		ret = -EOPNOTSUPP;
+		goto out_unlock;
+
+	case NOMMU_SWMMU_MAP_FIXED:
+	case NOMMU_SWMMU_MAP_FIXED_NOREPLACE:
 		if (!address || !PAGE_ALIGNED(address)) {
 			ret = -EINVAL;
 			goto out_unlock;
 		}
-
 		base = address;
-	} else {
-		if (address) {
-			/* Address hints are not implemented yet. */
-			ret = -EINVAL;
-			goto out_unlock;
-		}
+		break;
 
-		base = page_align(space->next_address);
+	default:
+		ret = -EINVAL;
+		goto out_unlock;
 	}
 
 	/* range overflow ? */
@@ -851,7 +862,10 @@ long nommu_swmmu_map_at(struct nommu_swmmu_space *space,
 	}
 
 	/* overlap check */
-	if (swmmu_range_overlaps(space, base, base + length - 1)) {
+	/* FIXME: MAP_FIXED replacement is not yet implemented */
+	if (swmmu_range_overlaps(space, base, base + length - 1) &&
+		(mode == NOMMU_SWMMU_MAP_FIXED ||
+			mode == NOMMU_SWMMU_MAP_FIXED_NOREPLACE)) {
 		ret = -EEXIST;
 		goto out_unlock;
 	}
@@ -924,7 +938,7 @@ long nommu_swmmu_map(struct nommu_swmmu_space *space,
 	return nommu_swmmu_map_at(space, 0, size,
 				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE |
 				NOMMU_SWMMU_EXEC,
-				false);
+				NOMMU_SWMMU_MAP_AUTO);
 }
 
 int nommu_swmmu_unmap(struct nommu_swmmu_space *space,
@@ -1272,6 +1286,7 @@ static unsigned long do_mmap_swmmu(struct file *file,
 	unsigned long swmmu_addr;
 	int ret;
 	unsigned int access;
+	enum nommu_swmmu_map_mode mode;
 	VMA_ITERATOR(vmi, mm, 0);
 
 	/* common validation/address selection */
@@ -1290,10 +1305,17 @@ static unsigned long do_mmap_swmmu(struct file *file,
 	if (prot & PROT_EXEC)
 		access |= NOMMU_SWMMU_EXEC;
 
+	if (flags & MAP_FIXED)
+		mode = NOMMU_SWMMU_MAP_FIXED;
+	else if (flags & MAP_FIXED_NOREPLACE)
+		mode = NOMMU_SWMMU_MAP_FIXED_NOREPLACE;
+	else if (addr != 0)
+		mode = NOMMU_SWMMU_MAP_HINT;
+	else
+		mode = NOMMU_SWMMU_MAP_AUTO;
+
 	swmmu_addr = nommu_swmmu_map_at(mm->swmmu_space,
-					addr, len, access,
-					(flags & MAP_FIXED) ||
-					(flags & MAP_FIXED_NOREPLACE));
+					addr, len, access, mode);
 	if (IS_ERR_VALUE(swmmu_addr))
 		return swmmu_addr;
 
