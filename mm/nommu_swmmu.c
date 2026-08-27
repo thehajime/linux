@@ -172,8 +172,8 @@ find_mapping(struct nommu_swmmu_space *space,
 	return mapping;
 }
 
-static bool
-swmmu_range_overlaps(struct nommu_swmmu_space *space,
+static struct swmmu_mapping *
+__swmmu_find_overlap(struct nommu_swmmu_space *space,
 		unsigned long first,
 		unsigned long last)
 {
@@ -185,7 +185,37 @@ swmmu_range_overlaps(struct nommu_swmmu_space *space,
 	entry = mas_find(&mas, last);
 	mas_destroy(&mas);
 
-	return entry != NULL;
+	return entry;
+}
+
+static bool
+swmmu_find_overlap(struct nommu_swmmu_space *space,
+		unsigned long first,
+		unsigned long last)
+{
+	return __swmmu_find_overlap(space, first, last) ? true : false;
+}
+
+static unsigned long
+swmmu_find_free_range(struct nommu_swmmu_space *space,
+		      unsigned long start,
+		      size_t length)
+{
+	unsigned long base = page_align(start);
+	unsigned long end;
+	struct swmmu_mapping *mapping;
+
+	for (;;) {
+		if (base > ULONG_MAX - length)
+			return 0;
+
+		end = base + length - 1;
+		mapping = __swmmu_find_overlap(space, base, end);
+		if (!mapping)
+			return base;
+
+		base = page_align(mapping->base + mapping->length);
+	}
 }
 
 static void
@@ -828,14 +858,27 @@ long nommu_swmmu_map_at(struct nommu_swmmu_space *space,
 			ret = -EINVAL;
 			goto out_unlock;
 		}
-		base = page_align(space->next_address);
+		base = swmmu_find_free_range(space, space->next_address, length);
+		if (!base) {
+			ret = -ENOMEM;
+			goto out_unlock;
+		}
 		break;
 
 	case NOMMU_SWMMU_MAP_HINT:
-		/* Not implemented yet. */
-		ret = -EOPNOTSUPP;
-		goto out_unlock;
-
+		if (!address) {
+			ret = -EINVAL;
+			goto out_unlock;
+		}
+		base = swmmu_find_free_range(space, page_align(address), length);
+		if (!base)
+			base = swmmu_find_free_range(space, space->next_address,
+						length);
+		if (!base) {
+			ret = -ENOMEM;
+			goto out_unlock;
+		}
+		break;
 	case NOMMU_SWMMU_MAP_FIXED:
 	case NOMMU_SWMMU_MAP_FIXED_NOREPLACE:
 		if (!address || !PAGE_ALIGNED(address)) {
@@ -863,7 +906,7 @@ long nommu_swmmu_map_at(struct nommu_swmmu_space *space,
 
 	/* overlap check */
 	/* FIXME: MAP_FIXED replacement is not yet implemented */
-	if (swmmu_range_overlaps(space, base, base + length - 1) &&
+	if (swmmu_find_overlap(space, base, base + length - 1) &&
 		(mode == NOMMU_SWMMU_MAP_FIXED ||
 			mode == NOMMU_SWMMU_MAP_FIXED_NOREPLACE)) {
 		ret = -EEXIST;
@@ -1037,7 +1080,7 @@ swmmu_remap_prepare(struct nommu_swmmu_space *space,
 	} else {
 		/* growth */
 		/* check overlap */
-		if (swmmu_range_overlaps(space, tx->old_end, /* grow_start */
+		if (swmmu_find_overlap(space, tx->old_end, /* grow_start */
 						tx->new_end - 1 /* grow_end */
 						)) {
 			ret = -EEXIST;

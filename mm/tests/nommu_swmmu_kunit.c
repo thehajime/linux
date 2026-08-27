@@ -1423,11 +1423,117 @@ static void nommu_swmmu_prot_test(struct kunit *test)
 	ret = nommu_swmmu_unmap(ctx->space, addr, 0);
 	KUNIT_ASSERT_EQ(test, ret, 0);
 
-	/* nonzero hint: current documented behavior */
+	/* nonzero hint */
 	addr = nommu_swmmu_map_at(ctx->space, 0x2000000000ULL, SWMMU_PAGE_SIZE,
 				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
 				NOMMU_SWMMU_MAP_HINT);
-	KUNIT_ASSERT_EQ(test, addr, -EOPNOTSUPP);
+	KUNIT_ASSERT_EQ(test, addr, 0x2000000000ULL);
+}
+
+
+static void nommu_swmmu_map_hint_free_test(struct kunit *test)
+{
+	struct nommu_swmmu_test_ctx *ctx = test->priv;
+	long ret;
+	long addr1, addr2;
+
+	/* free hint is honored */
+	addr1 = nommu_swmmu_map_at(ctx->space, 0x1000000000UL, SWMMU_PAGE_SIZE,
+				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
+				NOMMU_SWMMU_MAP_HINT);
+	KUNIT_ASSERT_EQ(test, addr1, 0x1000000000UL);
+
+	addr2 = nommu_swmmu_map_at(ctx->space, 0x2000000000UL, SWMMU_PAGE_SIZE,
+				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
+				NOMMU_SWMMU_MAP_HINT);
+	KUNIT_ASSERT_EQ(test, addr2, 0x2000000000UL);
+
+	ret = nommu_swmmu_unmap(ctx->space, addr2, 0);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+	ret = nommu_swmmu_unmap(ctx->space, addr1, 0);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+}
+
+static void nommu_swmmu_map_hint_occupied_test(struct kunit *test)
+{
+	struct nommu_swmmu_test_ctx *ctx = test->priv;
+	long ret;
+	long fixed, hint;
+
+	/* occupied hint falls back to another range */
+	fixed = nommu_swmmu_map_at(ctx->space,
+				0x2000000000UL,
+				SWMMU_PAGE_SIZE,
+				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
+				NOMMU_SWMMU_MAP_FIXED);
+	KUNIT_ASSERT_EQ(test, fixed, 0x2000000000UL);
+
+	hint = nommu_swmmu_map_at(ctx->space,
+				0x2000000000UL,
+				SWMMU_PAGE_SIZE,
+				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
+				NOMMU_SWMMU_MAP_HINT);
+
+	KUNIT_ASSERT_GT(test, hint, 0L);
+	KUNIT_EXPECT_NE(test, hint, fixed);
+
+	ret = nommu_swmmu_unmap(ctx->space, hint, 0);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+	ret = nommu_swmmu_unmap(ctx->space, fixed, 0);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+}
+
+static void nommu_swmmu_map_hint_unaligned_test(struct kunit *test)
+{
+	struct nommu_swmmu_test_ctx *ctx = test->priv;
+	long ret;
+	long addr1;
+
+	/* hint follows documented alignment behavior */
+	addr1 = nommu_swmmu_map_at(ctx->space, 0x1000000010UL, SWMMU_PAGE_SIZE,
+				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
+				NOMMU_SWMMU_MAP_HINT);
+	KUNIT_ASSERT_EQ(test, addr1, 0x1000001000UL);
+
+	ret = nommu_swmmu_unmap(ctx->space, addr1, 0);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+}
+
+static void nommu_swmmu_map_auto_avoids_fixed_test(struct kunit *test)
+{
+	struct nommu_swmmu_test_ctx *ctx = test->priv;
+	long ret;
+	long addr1, addr2;
+
+	/* automatic allocation does not overlap a fixed mapping */
+	addr1 = nommu_swmmu_map_at(ctx->space, 0x1000000000UL, SWMMU_PAGE_SIZE,
+				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
+				NOMMU_SWMMU_MAP_FIXED);
+	KUNIT_ASSERT_EQ(test, addr1, 0x1000000000UL);
+
+	addr2 = nommu_swmmu_map_at(ctx->space, 0, SWMMU_PAGE_SIZE,
+				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
+				NOMMU_SWMMU_MAP_AUTO);
+	KUNIT_ASSERT_GT(test, addr2, 0);
+	KUNIT_ASSERT_NE(test, addr2, 0x1000000000UL);
+
+	ret = nommu_swmmu_unmap(ctx->space, addr2, 0);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+	ret = nommu_swmmu_unmap(ctx->space, addr1, 0);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+}
+
+static void nommu_swmmu_invalid_map_mode_test(struct kunit *test)
+{
+	struct nommu_swmmu_test_ctx *ctx = test->priv;
+	long addr1;
+
+	/* invalid enum returns -EINVAL */
+	addr1 = nommu_swmmu_map_at(ctx->space, 0x1000000000UL, SWMMU_PAGE_SIZE,
+				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
+				NOMMU_SWMMU_MAP_FIXED_NOREPLACE + 1);
+	KUNIT_ASSERT_EQ(test, addr1, -EINVAL);
 }
 
 
@@ -1493,6 +1599,11 @@ static struct kunit_case nommu_swmmu_test_cases[] = {
 	KUNIT_CASE(same_address_different_spaces_test),
 	KUNIT_CASE(nommu_swmmu_mode_test),
 	KUNIT_CASE(nommu_swmmu_prot_test),
+	KUNIT_CASE(nommu_swmmu_map_hint_free_test),
+	KUNIT_CASE(nommu_swmmu_map_hint_occupied_test),
+	KUNIT_CASE(nommu_swmmu_map_hint_unaligned_test),
+	KUNIT_CASE(nommu_swmmu_map_auto_avoids_fixed_test),
+	KUNIT_CASE(nommu_swmmu_invalid_map_mode_test),
 	{}
 };
 

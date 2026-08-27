@@ -1323,6 +1323,107 @@ out:
 	return result;
 }
 
+static int test_standard_mmap_nonzero_hint(void)
+{
+	size_t ps;
+	void *base = MAP_FAILED;
+
+	ps = sysconf(_SC_PAGESIZE);
+
+	/* returned address is the hint when it is free */
+	base = mmap((void *)0x1000000000UL, ps, PROT_READ,
+		    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (base == MAP_FAILED) {
+		ksft_test_result_fail("mmap failed: %s\n",
+				      strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	if (base != (void *)0x1000000000UL) {
+		ksft_test_result_fail("mmap returns non-hinted address %p: %s\n",
+				base, strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	if (base != MAP_FAILED)
+		munmap(base, ps);
+
+	ksft_test_result_pass(
+		"standard mmap with nonzero hint test works\n");
+	return KSFT_PASS;
+}
+
+static int test_standard_mmap_occupied_hint(void)
+{
+	size_t ps;
+	void *fixed, *hint;
+
+	ps = sysconf(_SC_PAGESIZE);
+
+	/* returned address differs from the hint */
+	fixed = mmap((void *)0x2000000000UL, ps, PROT_READ,
+		MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+	if (fixed == MAP_FAILED || fixed != (void *)0x2000000000UL) {
+		ksft_test_result_fail("mmap fixed failed (%p): %s\n",
+				fixed, strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	hint = mmap((void *)0x2000000000UL, ps, PROT_READ,
+		MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (hint == MAP_FAILED || hint == (void *)0x2000000000UL) {
+		ksft_test_result_fail("mmap with hint failed (%p): %s\n",
+				hint, strerror(errno));
+		munmap(fixed, ps);
+		return KSFT_FAIL;
+	}
+
+	if (fixed != MAP_FAILED)
+		munmap(fixed, ps);
+
+	if (hint != MAP_FAILED)
+		munmap(hint, ps);
+
+	ksft_test_result_pass(
+		"standard mmap with occupied hint test works\n");
+	return KSFT_PASS;
+}
+
+static int test_standard_mmap_fixed_noreplace(void)
+{
+	size_t ps;
+	void *addr1, *addr2;
+
+	ps = sysconf(_SC_PAGESIZE);
+
+	/* returned address differs from the hint */
+	addr1 = mmap((void *)0x2000000000UL, ps, PROT_READ,
+		MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+	if (addr1 == MAP_FAILED || addr1 != (void *)0x2000000000UL) {
+		ksft_test_result_fail("mmap fixed failed (%p): %s\n",
+				addr1, strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	addr2 = mmap((void *)0x2000000000UL, ps, PROT_READ,
+		MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+	if (addr2 != MAP_FAILED || errno != EEXIST) {
+		ksft_test_result_fail("mmap with FIXED_NOREPLACE failed (%p)): %s\n",
+				addr2, strerror(errno));
+		munmap(addr1, ps);
+		return KSFT_FAIL;
+	}
+
+	if (addr2 != MAP_FAILED)
+		munmap(addr2, ps);
+	if (addr1 != MAP_FAILED)
+		munmap(addr1, ps);
+
+	ksft_test_result_pass(
+		"standard mmap with MAP_FIXED_NOREPLACE test works\n");
+	return KSFT_PASS;
+}
+
 int main(void)
 {
 	int result = KSFT_PASS;
@@ -1334,7 +1435,7 @@ int main(void)
 	}
 
 	ksft_print_header();
-	ksft_set_plan(14);
+	ksft_set_plan(17);
 
 	if (test_scalar_access() == KSFT_FAIL)
 		result = KSFT_FAIL;
@@ -1371,6 +1472,16 @@ int main(void)
 
 	if (test_standard_mmap_permission() == KSFT_FAIL)
 		result = KSFT_FAIL;
+
+	if (test_standard_mmap_nonzero_hint() == KSFT_FAIL)
+		result = KSFT_FAIL;
+
+	if (test_standard_mmap_occupied_hint() == KSFT_FAIL)
+		result = KSFT_FAIL;
+
+	if (test_standard_mmap_fixed_noreplace() == KSFT_FAIL)
+		result = KSFT_FAIL;
+
 
 	/* shall be the last test */
 	if (test_standard_mmap_exit_cleanup_churn() == KSFT_FAIL)
