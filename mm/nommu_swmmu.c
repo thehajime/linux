@@ -29,6 +29,34 @@ struct nommu_swmmu_space {
 	const struct nommu_swmmu_mem_ops *ops;
 };
 
+struct nommu_swmmu_remap_tx {
+	struct nommu_swmmu_space *space;
+	struct swmmu_mapping *mapping;
+
+	struct page **old_pages;
+	struct page **new_pages;
+
+	size_t old_page_count;
+	size_t new_page_count;
+
+	unsigned long old_end;
+	unsigned long new_end;
+
+	struct ma_state mas;
+	bool mas_prepared;
+	bool committed;
+};
+
+struct nommu_swmmu_vma_tx {
+	struct vma_iterator clear_vmi;
+
+	unsigned long old_start;
+	unsigned long old_end;
+	unsigned long new_end;
+
+	bool clear_prepared;
+};
+
 static inline void *default_kzalloc(size_t size, gfp_t gfp)
 {
 	return kzalloc(size, gfp);
@@ -251,9 +279,6 @@ static void swmmu_space_destroy_final(struct nommu_swmmu_space *space)
 
 	MA_STATE(mas, &space->mappings, 0, 0);
 	mas_for_each(&mas, mapping, ULONG_MAX) {
-		unsigned long start = mas.index;
-		unsigned long last = mas.last;
-
 		for (i = 0; i < mapping->page_count; i++)
 			mem_ops->page_free(mapping->pages[i]);
 
@@ -378,7 +403,7 @@ void nommu_swmmu_kunit_clear_space(void)
 
 /* helper functions for maple tree */
 static int
-swmmu_store_range_locked(struct nommu_swmmu_space *space,
+swmmu_store_range(struct nommu_swmmu_space *space,
 			 unsigned long first,
 			 unsigned long last,
 			 void *entry,
@@ -396,7 +421,7 @@ swmmu_store_range_locked(struct nommu_swmmu_space *space,
 }
 
 static void *
-swmmu_erase_locked(struct nommu_swmmu_space *space,
+swmmu_erase(struct nommu_swmmu_space *space,
 		   unsigned long index)
 {
 	MA_STATE(mas, &space->mappings, index, index);
@@ -473,6 +498,36 @@ static void *__swmmu_translate(struct nommu_swmmu_space *space,
 	return page_address(mapping->pages[page_index]) + offset;
 }
 
+static int
+__swmmu_check_access(struct nommu_swmmu_space *space,
+		     uintptr_t address,
+		     size_t size,
+		     int write)
+{
+	lockdep_assert_held(&space->lock);
+
+	while (size) {
+		size_t page_offset;
+		size_t chunk;
+
+		if (address > ULONG_MAX - (size - 1))
+			return -EFAULT;
+
+		page_offset = address & (SWMMU_PAGE_SIZE - 1);
+		chunk = SWMMU_PAGE_SIZE - page_offset;
+		if (chunk > size)
+			chunk = size;
+
+		if (!__swmmu_translate(space, address, chunk, write))
+			return -EFAULT;
+
+		address += chunk;
+		size -= chunk;
+	}
+
+	return 0;
+}
+
 int nommu_swmmu_check_access(struct nommu_swmmu_space *space,
 			uintptr_t address,
 			size_t size,
@@ -484,10 +539,7 @@ int nommu_swmmu_check_access(struct nommu_swmmu_space *space,
 		return -EINVAL;
 
 	down_read(&space->lock);
-
-	ret = __swmmu_translate(space, address, size, write) ?
-	      0 : -EFAULT;
-
+	ret = __swmmu_check_access(space, address, size, write);
 	up_read(&space->lock);
 
 	return ret;
@@ -608,7 +660,7 @@ clone_one_mapping(struct nommu_swmmu_space *child,
 		}
 	}
 
-	ret = swmmu_store_range_locked(child,
+	ret = swmmu_store_range(child,
 				copy->base,
 				copy->base + copy->length - 1,
 				copy,
@@ -835,7 +887,7 @@ long nommu_swmmu_map_at(struct nommu_swmmu_space *space,
 		}
 	}
 
-	ret = swmmu_store_range_locked(space,
+	ret = swmmu_store_range(space,
 				base,
 				base + length - 1,
 				mapping,
@@ -899,7 +951,7 @@ int nommu_swmmu_unmap(struct nommu_swmmu_space *space,
 		goto out;
 	}
 
-	entry = swmmu_erase_locked(space, mapping->base);
+	entry = swmmu_erase(space, mapping->base);
 	if (entry != mapping) {
 		pr_warn("%s: maple tree inconsistency", __func__);
 		ret = -EINVAL;
@@ -913,152 +965,187 @@ out:
 	return ret;
 }
 
-static long swmmu_remap_shrink(struct nommu_swmmu_space *space,
-			struct swmmu_mapping *mapping,
-			size_t old_size,
-			size_t new_size)
+static void swmmu_remap_abort(struct nommu_swmmu_remap_tx *tx)
 {
-	long ret = 0;
-	unsigned long tail_start;
-	unsigned long tail_end;
-	size_t old_pages;
-	size_t new_pages;
 	size_t i;
 
-	lockdep_assert_held_write(&space->lock);
+	lockdep_assert_held(&tx->space->lock);
 
-	old_pages = mapping->page_count;
-	new_pages = new_size / SWMMU_PAGE_SIZE;
+	if (tx->committed)
+		return;
 
-	tail_start = mapping->base + new_size;
-	tail_end = mapping->base + old_size - 1;
-
-	/* remove tail from maple tree */
-	MA_STATE(mas, &space->mappings, tail_start, tail_end);
-
-	ret = mas_preallocate(&mas, NULL, GFP_KERNEL);
-	if (ret) {
-		mas_destroy(&mas);
-		return ret;
+	if (tx->mas_prepared) {
+		mas_destroy(&tx->mas);
+		tx->mas_prepared = false;
 	}
 
-	/*
-	 * Commit the removal of the tail. The old mapping becomes
-	 * [base, base + new_size - 1].
-	 */
-	mas_store_prealloc(&mas, NULL);
-	/*
-	 * Returns any unused preallocated nodes.
-	 */
-	mas_destroy(&mas);
+	if (!tx->new_pages)
+		return;
 
-	/*
-	 * The Maple Tree no longer exposes these pages, so now release
-	 * the obsolete backing pages.
-	 */
-	for (i = old_pages; i > new_pages; ) {
-		i--;
-
-		space->ops->page_free(mapping->pages[i]);
-		mapping->pages[i] = NULL;
+	for (i = tx->old_page_count; i < tx->new_page_count; i++) {
+		if (tx->new_pages[i])
+			tx->space->ops->page_free(tx->new_pages[i]);
 	}
 
-	mapping->page_count = new_pages;
-	mapping->length = new_size;
-
-	return ret;
+	tx->space->ops->dealloc(tx->new_pages);
+	tx->new_pages = NULL;
 }
 
-static long swmmu_remap_grow(struct nommu_swmmu_space *space,
-			struct swmmu_mapping *mapping,
-			size_t old_size,
-			size_t new_size)
+static int
+swmmu_remap_prepare(struct nommu_swmmu_space *space,
+		struct swmmu_mapping *mapping,
+		size_t new_size,
+		struct nommu_swmmu_remap_tx *tx)
 {
-	unsigned long grow_start;
-	unsigned long grow_end;
-	long ret = 0;
+	int ret = 0;
 
-	lockdep_assert_held_write(&space->lock);
+	lockdep_assert_held(&space->lock);
 
-	grow_start = mapping->base + old_size;
-	grow_end = mapping->base + new_size - 1;
+	tx->committed = false;
 
-	/* 0. check if new range overlapped or not */
-	if (swmmu_range_overlaps(space, grow_start, grow_end)) {
-		ret = -EEXIST;
-		goto out;
-	}
+	/* validate new size */
+	if (tx->new_end < tx->old_end) {
+		/* shrink */
+		/* remove tail from maple tree */
+		MA_STATE(mas, &space->mappings,
+			tx->new_end, /* remove start */
+			tx->old_end - 1); /* remove end */
 
-	/* 1. allocate the new page array and pages without modifying the current mapping */
-	struct page **old_pages = mapping->pages;
-	struct page **new_pages;
-	size_t old_pages_count = mapping->page_count;
-	size_t new_pages_count = new_size / SWMMU_PAGE_SIZE;
-
-	new_pages = space->ops->zalloc(
-		new_pages_count * sizeof(*new_pages),
-		GFP_KERNEL);
-	if (!new_pages) {
-		ret = -ENOMEM;
-		goto out;
-	}
-
-	memcpy(new_pages,
-		old_pages,
-		old_pages_count * sizeof(*new_pages));
-
-	for (int i = old_pages_count; i < new_pages_count; i++) {
-		new_pages[i] = space->ops->page_alloc(GFP_KERNEL);
-		if (!new_pages[i]) {
-			while (i > old_pages_count)
-				space->ops->page_free(new_pages[--i]);
-
-			space->ops->dealloc(new_pages);
-			ret = -ENOMEM;
+		tx->mas = mas;
+		ret = mas_preallocate(&tx->mas, NULL, GFP_KERNEL);
+		if (ret) {
+			mas_destroy(&tx->mas);
+			pr_warn("maple tree preallocate shrink");
 			goto out;
 		}
-		clear_highpage(new_pages[i]);
+		tx->mas_prepared = true;
+
+	} else {
+		/* growth */
+		/* check overlap */
+		if (swmmu_range_overlaps(space, tx->old_end, /* grow_start */
+						tx->new_end - 1 /* grow_end */
+						)) {
+			ret = -EEXIST;
+			pr_warn("overlap");
+			goto out;
+		}
+		/* allocate new page array */
+		tx->new_pages = space->ops->zalloc(
+			tx->new_page_count * sizeof(*tx->new_pages),
+			GFP_KERNEL);
+		if (!tx->new_pages) {
+			ret = -ENOMEM;
+			pr_warn("page array");
+			goto out;
+		}
+		tx->old_pages = mapping->pages;
+
+		memcpy(tx->new_pages,
+			tx->old_pages,
+			tx->old_page_count * sizeof(*tx->new_pages));
+
+		for (int i = tx->old_page_count; i < tx->new_page_count; i++) {
+			tx->new_pages[i] = space->ops->page_alloc(GFP_KERNEL);
+			if (!tx->new_pages[i]) {
+				while (i > tx->old_page_count) {
+					space->ops->page_free(tx->new_pages[--i]);
+					tx->new_pages[i] = NULL;
+				}
+
+				space->ops->dealloc(tx->new_pages);
+				tx->new_pages = NULL;
+				ret = -ENOMEM;
+				pr_warn("backing page");
+				goto out;
+			}
+			/* zero-fill new pages */
+			clear_highpage(tx->new_pages[i]);
+		}
+
+		/* allocate new backing pages */
+		MA_STATE(mas, &space->mappings,
+			mapping->base,
+			mapping->base + new_size - 1);
+		tx->mas = mas;
+		/* preallocate SWMMU Maple Tree nodes */
+		ret = mas_preallocate(&tx->mas, mapping, GFP_KERNEL);
+		if (ret) {
+			mas_destroy(&tx->mas);
+
+			for (int i = tx->old_page_count; i < tx->new_page_count; i++) {
+				space->ops->page_free(tx->new_pages[i]);
+				tx->new_pages[i] = NULL;
+			}
+
+			space->ops->dealloc(tx->new_pages);
+			tx->new_pages = NULL;
+			pr_warn("maple tree prealloc");
+			goto out;
+		}
+		tx->mas_prepared = true;
 	}
 
-	/* 2. preallocate and commit the expanded tree range */
-	MA_STATE(mas, &space->mappings,
-		mapping->base,
-		mapping->base + new_size - 1);
-
-	ret = mas_preallocate(&mas, mapping, GFP_KERNEL);
-	if (ret) {
-		mas_destroy(&mas);
-
-		for (int i = old_pages_count; i < new_pages_count; i++)
-			space->ops->page_free(new_pages[i]);
-
-		space->ops->dealloc(new_pages);
-		goto out;
-	}
-
-	mas_store_prealloc(&mas, mapping);
-	mas_destroy(&mas);
-
-	/* 3. update the mapping */
-	mapping->pages = new_pages;
-	mapping->page_count = new_pages_count;
-	mapping->length = new_size;
-
-	space->ops->dealloc(old_pages);
-	ret = 0;
 out:
 	return ret;
 }
 
-long nommu_swmmu_remap(struct nommu_swmmu_space *space,
-		       unsigned long address,
-		       size_t old_size,
-		       size_t new_size)
+static void
+swmmu_remap_commit(struct nommu_swmmu_remap_tx *tx)
 {
-	struct swmmu_mapping *mapping;
-	long ret;
+	lockdep_assert_held(&tx->space->lock);
+
+	if (tx->new_end < tx->old_end) {
+		/* shrink */
+		/* preallocate removal of the tail */
+		/* clear the tail with mas_store_prealloc(NULL) */
+		mas_store_prealloc(&tx->mas, NULL);
+
+		/* Returns any unused preallocated nodes. */
+		mas_destroy(&tx->mas);
+		tx->mas_prepared = false;
+
+		/* free obsolete page array/pages */
+		for (int i = tx->old_page_count; i > tx->new_page_count;) {
+			i--;
+			tx->space->ops->page_free(tx->mapping->pages[i]);
+			tx->mapping->pages[i] = NULL;
+		}
+
+		/* publish new mapping metadata */
+		tx->mapping->page_count = tx->new_page_count;
+		tx->mapping->length = tx->new_end - tx->mapping->base;
+	} else {
+		/* growth */
+		mas_store_prealloc(&tx->mas, tx->mapping);
+		mas_destroy(&tx->mas);
+		tx->mas_prepared = false;
+
+		tx->space->ops->dealloc(tx->old_pages);
+		tx->old_pages = NULL;
+
+		/* publish new mapping metadata */
+		tx->mapping->pages = tx->new_pages;
+		tx->new_pages = NULL;
+
+		tx->mapping->page_count = tx->new_page_count;
+		tx->mapping->length = tx->new_page_count * SWMMU_PAGE_SIZE;
+	}
+
+	tx->committed = true;
+}
+
+
+long nommu_swmmu_remap(struct nommu_swmmu_space *space,
+			unsigned long address,
+			size_t old_size,
+			size_t new_size)
+{
 	uintptr_t base = (uintptr_t)address;
-	size_t new_page_count;
+	long ret;
+	struct nommu_swmmu_remap_tx tx = {
+		.space = space,
+	};
 
 	if (!space)
 		return -EINVAL;
@@ -1077,38 +1164,39 @@ long nommu_swmmu_remap(struct nommu_swmmu_space *space,
 		base > ULONG_MAX - (new_size - 1))
 		return -EINVAL;
 
-	new_page_count = new_size / SWMMU_PAGE_SIZE;
-
 	down_write(&space->lock);
-	mapping = find_mapping(space, base, 1);
-	if (!mapping || mapping->base != base) {
-		up_write(&space->lock);
-		return -EINVAL;
+	tx.mapping = find_mapping(space, base, 1);
+	if (!tx.mapping || tx.mapping->base != base) {
+		ret = -EINVAL;
+		goto out;
 	}
 
-	if (mapping->length != old_size) {
-		up_write(&space->lock);
-		return -EINVAL;
+	if (tx.mapping->length != old_size) {
+		ret = -EINVAL;
+		goto out;
 	}
 
 	if (old_size == new_size) {
-		up_write(&space->lock);
-		return address;
+		ret = address;
+		goto out;
 	}
 
-	/* do the jobs */
-	if (old_size > new_size) {
-		/* shrink path */
-		ret = swmmu_remap_shrink(space, mapping, old_size, new_size);
-		if (!ret)
-			ret = address;
-	} else {
-		/* growth path */
-		ret = swmmu_remap_grow(space, mapping, old_size, new_size);
-		if (!ret)
-			ret = address;
+	tx.old_page_count = old_size / SWMMU_PAGE_SIZE;
+	tx.new_page_count = new_size / SWMMU_PAGE_SIZE;
+	tx.old_end = base + old_size;
+	tx.new_end = base + new_size;
+
+	ret = swmmu_remap_prepare(space, tx.mapping, new_size, &tx);
+	if (ret) {
+		swmmu_remap_abort(&tx);
+		goto out;
 	}
 
+	/* commit must not fail */
+	swmmu_remap_commit(&tx);
+	ret = address;
+
+out:
 	up_write(&space->lock);
 	return ret;
 }
@@ -1350,50 +1438,76 @@ int do_munmap(struct mm_struct *mm,
 	return do_munmap_nommu(mm, start, len, uf);
 }
 
-static int
-nommu_swmmu_update_vma_end(struct vma_iterator *vmi,
-			   struct vm_area_struct *vma,
-			   unsigned long new_end)
+static int nommu_swmmu_vma_prepare(struct vm_area_struct *vma,
+				unsigned long new_end,
+				struct nommu_swmmu_vma_tx *vma_tx)
 {
-	unsigned long old_start = vma->vm_start;
-	unsigned long old_end = vma->vm_end;
 	int ret;
 
-	/*
-	 * Remove the complete old VMA range.
-	 */
-	vma_iter_config(vmi, old_start, old_end);
+	vma_tx->old_start = vma->vm_start;
+	vma_tx->old_end = vma->vm_end;
+	vma_tx->new_end = new_end;
+	vma_tx->clear_prepared = false;
 
-	ret = vma_iter_prealloc(vmi, NULL);
+	vma_iter_config(&vma_tx->clear_vmi,
+			vma_tx->old_start,
+			vma_tx->old_end);
+
+	ret = vma_iter_prealloc(&vma_tx->clear_vmi, NULL);
 	if (ret)
 		return ret;
 
-	vma_iter_clear(vmi);
-	mas_destroy(&vmi->mas);
+	vma_tx->clear_prepared = true;
+	return 0;
+}
+
+static int nommu_swmmu_vma_commit(struct nommu_swmmu_vma_tx *vma_tx,
+				struct vm_area_struct *vma)
+{
+	VMA_ITERATOR(store_vmi, vma->vm_mm, vma->vm_start);
+	int ret;
+
+	vma_iter_clear(&vma_tx->clear_vmi);
+	vma_iter_free(&vma_tx->clear_vmi);
+	vma_tx->clear_prepared = false;
+
+	vma->vm_end = vma_tx->new_end;
 
 	/*
-	 * Publish the new range.
+	 * do not use the previously preallocated store_vmi after the
+	 * old range has been cleared.
 	 */
-	vma->vm_end = new_end;
+	vma_iter_config(&store_vmi,
+			vma->vm_start,
+			vma->vm_end);
 
-	vma_iter_config(vmi, vma->vm_start, vma->vm_end);
-
-	ret = vma_iter_prealloc(vmi, vma);
+	ret = vma_iter_prealloc(&store_vmi, vma);
 	if (ret) {
-		/*
-		 * Restore the VMA metadata and old tree entry.
-		 * Restoration failure should be treated as fatal.
-		 */
-		vma->vm_end = old_end;
-		vma_iter_config(vmi, old_start, old_end);
+		vma->vm_end = vma_tx->old_end;
 
-		if (!vma_iter_prealloc(vmi, vma))
-			vma_iter_store_new(vmi, vma);
+		/*
+		 * Restore the old range. If restoration fails,
+		 * the mm is inconsistent and should be treated as fatal.
+		 */
+		VMA_ITERATOR(restore_vmi, vma->vm_mm,
+			     vma_tx->old_start);
+
+		vma_iter_config(&restore_vmi,
+				vma_tx->old_start,
+				vma_tx->old_end);
+
+		if (vma_iter_prealloc(&restore_vmi, vma))
+			return -ENOMEM;
+
+		vma_iter_store_overwrite(&restore_vmi, vma);
+		vma_iter_free(&restore_vmi);
 
 		return ret;
 	}
 
-	vma_iter_store_new(vmi, vma);
+	vma_iter_store_overwrite(&store_vmi, vma);
+	vma_iter_free(&store_vmi);
+
 	return 0;
 }
 
@@ -1406,6 +1520,7 @@ unsigned long do_mremap(unsigned long addr,
 	struct vm_area_struct *vma;
 	unsigned long end;
 	long ret;
+	uintptr_t base = (uintptr_t)addr;
 
 	/* not implemented yet */
 	if (new_addr)
@@ -1422,29 +1537,83 @@ unsigned long do_mremap(unsigned long addr,
 
 	vma = vma_find(&vmi, end);
 	if (vma && vma->vm_swmmu) {
+		struct nommu_swmmu_remap_tx swmmu_tx = {
+			.space = mm->swmmu_space,
+		};
+		struct nommu_swmmu_vma_tx vma_tx;
+
 		if (flags & (MREMAP_MAYMOVE | MREMAP_FIXED))
 			return -EINVAL;
 
-		ret = nommu_swmmu_remap(mm->swmmu_space,
-				vma->vm_start,
-				old_len,
-				new_len);
-		if (IS_ERR_VALUE(ret))
-			return ret;
+		if (addr != vma->vm_start ||
+			old_len != vma->vm_end - vma->vm_start)
+			return -EINVAL;
 
-		/* update vma metadata */
-		ret = nommu_swmmu_update_vma_end(&vmi, vma,
-						vma->vm_start + PAGE_ALIGN(new_len));
-		if (ret) {
-			/*
-			 * The SWMMU mapping has already changed here, so this
-			 * path also needs a SWMMU rollback or a commit ordering
-			 * redesign.
-			 */
-			return ret;
+
+		down_write(&mm->swmmu_space->lock);
+		swmmu_tx.mapping = find_mapping(mm->swmmu_space, base, 1);
+		if (!swmmu_tx.mapping || swmmu_tx.mapping->base != base) {
+			ret = -EINVAL;
+			goto out_space_unlock;
 		}
 
-		return vma->vm_start;
+		if (swmmu_tx.mapping->length != old_len) {
+			ret = -EINVAL;
+			goto out_space_unlock;
+		}
+
+		if (new_len > ULONG_MAX - (PAGE_SIZE - 1)) {
+			ret = -EINVAL;
+			goto out_space_unlock;
+		}
+
+		new_len = PAGE_ALIGN(new_len);
+		if (!new_len) {
+			ret = -EINVAL;
+			goto out_space_unlock;
+		}
+
+		if (old_len == new_len) {
+			ret = addr;
+			goto out_space_unlock;
+		}
+
+		swmmu_tx.old_page_count = old_len / SWMMU_PAGE_SIZE;
+		swmmu_tx.new_page_count = new_len / SWMMU_PAGE_SIZE;
+		swmmu_tx.old_end = base + old_len;
+		swmmu_tx.new_end = base + new_len;
+
+		ret = swmmu_remap_prepare(mm->swmmu_space,
+			swmmu_tx.mapping, new_len, &swmmu_tx);
+		if (ret) {
+			swmmu_remap_abort(&swmmu_tx);
+			goto out_space_unlock;
+		}
+
+		VMA_ITERATOR(vmi1, mm, addr);
+		vma_tx.clear_vmi = vmi1;
+
+		ret = nommu_swmmu_vma_prepare(vma,
+					vma->vm_start + new_len,
+					&vma_tx);
+		if (ret) {
+			swmmu_remap_abort(&swmmu_tx);
+			goto out_space_unlock;
+		}
+
+		ret = nommu_swmmu_vma_commit(&vma_tx, vma);
+		if (ret) {
+			swmmu_remap_abort(&swmmu_tx);
+			goto out_space_unlock;
+		}
+		swmmu_remap_commit(&swmmu_tx);
+
+		ret = vma->vm_start;
+		goto out_space_unlock;
+
+out_space_unlock:
+		up_write(&mm->swmmu_space->lock);
+		return ret;
 	}
 
 	return do_mremap_nommu(addr, old_len, new_len, flags, new_addr);

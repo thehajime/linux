@@ -875,6 +875,82 @@ static void nommu_swmmu_remap_shrink_test(struct kunit *test)
 	KUNIT_ASSERT_EQ(test, ret, 0);
 }
 
+static void nommu_swmmu_remap_shrink_extended_test(struct kunit *test)
+{
+	struct nommu_swmmu_test_ctx *ctx = test->priv;
+	long ret, addr, addr2;
+	void *base, *base2;
+
+	addr = nommu_swmmu_map(ctx->space, SWMMU_PAGE_SIZE * 2);
+	KUNIT_ASSERT_GT(test, addr, 0L);
+
+	base = (void *)(uintptr_t)addr;
+	nommu_swmmu_store_u64(base, sizeof(u64), 671ULL);
+
+	/* old mapping is accessible before shrink */
+	KUNIT_EXPECT_EQ(test,
+			nommu_swmmu_check_access(ctx->space,
+						(uintptr_t)base,
+						sizeof(u64),
+						0),
+			0);
+
+	/* adjacent-mapping test */
+
+	/* allocate adjacent map  */
+	addr2 = nommu_swmmu_map_at(ctx->space, addr + SWMMU_PAGE_SIZE * 2,
+				SWMMU_PAGE_SIZE * 3,
+				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
+				true);
+	KUNIT_ASSERT_GT(test, addr2, 0L);
+
+	base2 = (void *)(uintptr_t)addr2;
+	nommu_swmmu_store_u64(base2, sizeof(u64), 771ULL);
+
+	/* shrink should succeed */
+	ret = nommu_swmmu_remap(ctx->space, addr,
+				SWMMU_PAGE_SIZE * 2, SWMMU_PAGE_SIZE);
+	KUNIT_ASSERT_EQ(test, ret, addr);
+
+	/* new range is accessible */
+	KUNIT_EXPECT_EQ(test,
+			nommu_swmmu_check_access(ctx->space,
+						(uintptr_t)base,
+						SWMMU_PAGE_SIZE,
+						0),
+			0);
+
+	/* removed tail is inaccessible */
+	KUNIT_EXPECT_EQ(test,
+		nommu_swmmu_check_access(ctx->space,
+					(uintptr_t)base +
+					SWMMU_PAGE_SIZE,
+					1,
+					0),
+		-EFAULT);
+
+	KUNIT_EXPECT_EQ(test,
+			nommu_swmmu_check_access(ctx->space,
+						(uintptr_t)addr2,
+						SWMMU_PAGE_SIZE * 3,
+						0),
+			0);
+
+	/* original contents are preserved */
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_load_u64(base, sizeof(u64)),
+			671ULL);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_load_u64(base2, sizeof(u64)),
+			771ULL);
+
+	ret = nommu_swmmu_unmap(ctx->space, addr, SWMMU_PAGE_SIZE);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+	ret = nommu_swmmu_unmap(ctx->space, addr2, SWMMU_PAGE_SIZE * 3);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+}
+
 static void nommu_swmmu_remap_grow_test(struct kunit *test)
 {
 	struct nommu_swmmu_test_ctx *ctx = test->priv;
@@ -1403,6 +1479,7 @@ static struct kunit_case nommu_swmmu_test_cases[] = {
 	KUNIT_CASE(nommu_swmmu_map_test),
 	KUNIT_CASE(nommu_swmmu_unmap_test),
 	KUNIT_CASE(nommu_swmmu_remap_shrink_test),
+	KUNIT_CASE(nommu_swmmu_remap_shrink_extended_test),
 	KUNIT_CASE(nommu_swmmu_remap_grow_test),
 	KUNIT_CASE(nommu_swmmu_remap_rollback_test),
 	KUNIT_CASE(nommu_swmmu_remap_overlap_test),
