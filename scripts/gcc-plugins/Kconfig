@@ -19,6 +19,21 @@ menuconfig GCC_PLUGINS
 
 if GCC_PLUGINS
 
+config GCC_PLUGIN_SWMMU
+	bool "SWMMU compiler instrumentation"
+	depends on GCC_PLUGINS
+	depends on NOMMU_SWMMU
+	help
+	  Enable the SWMMU GCC plugin.
+
+	  The plugin rewrites accesses to SWMMU-annotated objects into
+	  calls to nommu_swmmu_load_u64() and nommu_swmmu_store_u64().
+
+	  SWMMU runtime failures currently terminate through BUG() in
+	  the kernel and abort() in userspace. The runtime fault
+	  notification ABI may require corresponding plugin changes later.
+
+
 config GCC_PLUGIN_LATENT_ENTROPY
 	bool "Generate some entropy during boot and runtime"
 	help
