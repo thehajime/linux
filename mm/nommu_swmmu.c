@@ -481,7 +481,7 @@ int swmmu_free(void *address)
 	struct nommu_swmmu_space *space;
 
 	space = nommu_swmmu_current();
-	if (!space)
+	if (!space || !address)
 		return -EINVAL;
 
 	return nommu_swmmu_unmap(space,
@@ -663,7 +663,7 @@ clone_one_mapping(struct nommu_swmmu_space *child,
 
 	copy = child->ops->zalloc(sizeof(*copy), GFP_KERNEL);
 	if (!copy) {
-		pr_warn("%s: page metadata allocation failure", __func__);
+		pr_debug("%s: page metadata allocation failure", __func__);
 		return -ENOMEM;
 	}
 
@@ -676,7 +676,7 @@ clone_one_mapping(struct nommu_swmmu_space *child,
 				GFP_KERNEL);
 	if (!copy->pages) {
 		child->ops->dealloc(copy);
-		pr_warn("%s: page array allocation failure", __func__);
+		pr_debug("%s: page array allocation failure", __func__);
 		return -ENOMEM;
 	}
 
@@ -684,7 +684,7 @@ clone_one_mapping(struct nommu_swmmu_space *child,
 		copy->pages[i] = child->ops->page_alloc(GFP_KERNEL);
 		if (!copy->pages[i]) {
 			release_mapping(child, copy, i);
-			pr_warn("%s: page allocation failure at [%lu]", __func__, i);
+			pr_debug("%s: page allocation failure at [%lu]", __func__, i);
 			return -ENOMEM;
 		}
 
@@ -692,7 +692,7 @@ clone_one_mapping(struct nommu_swmmu_space *child,
 					source->pages[i]);
 		if (ret) {
 			release_mapping(child, copy, i + 1);
-			pr_warn("%s: page copy failure at [%lu]", __func__, i);
+			pr_debug("%s: page copy failure at [%lu]", __func__, i);
 			return ret;
 		}
 	}
@@ -704,7 +704,7 @@ clone_one_mapping(struct nommu_swmmu_space *child,
 				GFP_KERNEL);
 	if (ret) {
 		release_mapping(child, copy, copy->page_count);
-		pr_warn("%s: mtree_store_range failure: %d", __func__, ret);
+		pr_debug("%s: mtree_store_range failure: %d", __func__, ret);
 		return ret;
 	}
 
@@ -733,7 +733,7 @@ int swmmu_clone_space(struct nommu_swmmu_space *parent,
 
 	child = __nommu_swmmu_space_create(parent->ops);
 	if (!child) {
-		pr_warn("%s: page metadata allocation failure", __func__);
+		pr_debug("%s: page metadata allocation failure", __func__);
 		return -ENOMEM;
 	}
 
@@ -976,7 +976,6 @@ long nommu_swmmu_map_at(struct nommu_swmmu_space *space,
 
 	mapping = space->ops->zalloc(sizeof(*mapping), GFP_KERNEL);
 	if (!mapping) {
-		pr_warn("%s: page metadata allocation failure", __func__);
 		ret = -ENOMEM;
 		goto out_unlock;
 	}
@@ -991,7 +990,6 @@ long nommu_swmmu_map_at(struct nommu_swmmu_space *space,
 					sizeof(*mapping->pages),
 					GFP_KERNEL);
 	if (!mapping->pages) {
-		pr_warn("%s: page array allocation failure", __func__);
 		ret = -ENOMEM;
 		goto free_mapping;
 	}
@@ -1000,7 +998,6 @@ long nommu_swmmu_map_at(struct nommu_swmmu_space *space,
 		mapping->pages[i] = space->ops->page_alloc(GFP_KERNEL);
 		if (!mapping->pages[i]) {
 			ret = -ENOMEM;
-			pr_warn("%s: page allocation failure at [%lu]", __func__, i);
 			goto free_pages;
 		}
 	}
@@ -1040,8 +1037,7 @@ long nommu_swmmu_map(struct nommu_swmmu_space *space,
 	 * the current compiler/runtime ABI only validates data reads and writes.
 	 */
 	return nommu_swmmu_map_at(space, 0, size,
-				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE |
-				NOMMU_SWMMU_EXEC,
+				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
 				NOMMU_SWMMU_MAP_AUTO);
 }
 
@@ -1145,7 +1141,6 @@ swmmu_remap_prepare(struct nommu_swmmu_space *space,
 						tx->new_end - 1 /* grow_end */
 						)) {
 			ret = -EEXIST;
-			pr_warn("overlap");
 			goto out;
 		}
 		/* allocate new page array */
@@ -1154,7 +1149,6 @@ swmmu_remap_prepare(struct nommu_swmmu_space *space,
 			GFP_KERNEL);
 		if (!tx->new_pages) {
 			ret = -ENOMEM;
-			pr_warn("page array");
 			goto out;
 		}
 		tx->old_pages = mapping->pages;
@@ -1174,7 +1168,6 @@ swmmu_remap_prepare(struct nommu_swmmu_space *space,
 				space->ops->dealloc(tx->new_pages);
 				tx->new_pages = NULL;
 				ret = -ENOMEM;
-				pr_warn("backing page");
 				goto out;
 			}
 			/* zero-fill new pages */
@@ -1198,7 +1191,6 @@ swmmu_remap_prepare(struct nommu_swmmu_space *space,
 
 			space->ops->dealloc(tx->new_pages);
 			tx->new_pages = NULL;
-			pr_warn("maple tree prealloc");
 			goto out;
 		}
 		tx->mas_prepared = true;
@@ -1834,7 +1826,7 @@ SYSCALL_DEFINE3(nommu_swmmu_store, void __user *, address, size_t, size, uint64_
 }
 
 SYSCALL_DEFINE3(nommu_swmmu_remap,
-		unsigned long, address,
+		void __user *, address,
 		size_t, old_size,
 		size_t, new_size)
 {
@@ -1845,7 +1837,7 @@ SYSCALL_DEFINE3(nommu_swmmu_remap,
 		return -EINVAL;
 
 	return nommu_swmmu_remap(space,
-				  address,
-				  old_size,
-				  new_size);
+				(unsigned long)address,
+				old_size,
+				new_size);
 }

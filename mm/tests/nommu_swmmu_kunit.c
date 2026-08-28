@@ -155,15 +155,17 @@ nommu_swmmu_increment_test(struct kunit *test)
 	struct nommu_swmmu_space *space;
 	struct swmmu_test_object *object;
 	u64 value;
+	long ret;
 
 	space = nommu_swmmu_space_create_with_ops(&test_ops);
 	KUNIT_ASSERT_NOT_NULL(test, space);
 
 	nommu_swmmu_kunit_set_space(space);
 
-	object = (void *)swmmu_alloc(sizeof(*object));
-	KUNIT_ASSERT_GT(test, (long)object, 0L);
+	ret = swmmu_alloc(sizeof(*object));
+	KUNIT_ASSERT_GT(test, ret, 0L);
 
+	object = (void *)(uintptr_t)ret;
 	nommu_swmmu_store_u64(&object->value,
 			      sizeof(object->value),
 			      41);
@@ -211,11 +213,13 @@ nommu_swmmu_clone_test(struct kunit *test)
 
 	nommu_swmmu_kunit_set_space(parent);
 
-	parent_object1 = (void *)swmmu_alloc(sizeof(*parent_object1));
-	KUNIT_ASSERT_GT(test, (long)parent_object1, 0L);
+	ret = swmmu_alloc(sizeof(*parent_object1));
+	KUNIT_ASSERT_GT(test, ret, 0L);
+	parent_object1 = (void *)(uintptr_t)ret;
 
-	parent_object2 = (void *)swmmu_alloc(SWMMU_PAGE_SIZE * 2);
-	KUNIT_ASSERT_GT(test, (long)parent_object2, 0L);
+	ret = swmmu_alloc(SWMMU_PAGE_SIZE * 2);
+	KUNIT_ASSERT_GT(test, ret, 0L);
+	parent_object2 = (void *)(uintptr_t)ret;
 
 	nommu_swmmu_store_u64(&parent_object1->value,
 			      sizeof(parent_object1->value),
@@ -249,39 +253,28 @@ nommu_swmmu_clone_test(struct kunit *test)
 	child_object2 = (struct swmmu_test_object *)vaddr2;
 	child_object3 = (struct swmmu_test_object *)vaddr3;
 
-	kunit_log(KERN_INFO, test, "# %s: parent=%p, child=%p", __func__,
-		parent_object1, child_object1);
-	kunit_log(KERN_INFO, test, "# %s: parent=%p, child=%p", __func__,
-		parent_object2, child_object2);
-
 	value = test_swmmu_increment(child_object1);
 	KUNIT_EXPECT_EQ(test, value, 42ULL);
-	kunit_log(KERN_INFO, test, "# %s: child=%llu", __func__, value);
 
 	value = test_swmmu_increment(child_object2);
 	KUNIT_EXPECT_EQ(test, value, 82ULL);
-	kunit_log(KERN_INFO, test, "# %s: child=%llu", __func__, value);
 
 	value = test_swmmu_increment(child_object3);
 	KUNIT_EXPECT_EQ(test, value, 92ULL);
-	kunit_log(KERN_INFO, test, "# %s: child=%llu", __func__, value);
 
 	nommu_swmmu_kunit_set_space(parent);
 
 	value = nommu_swmmu_load_u64(&parent_object1->value,
 				     sizeof(parent_object1->value));
 	KUNIT_EXPECT_EQ(test, value, 41ULL);
-	kunit_log(KERN_INFO, test, "# %s: parent=%llu", __func__, value);
 
 	value = nommu_swmmu_load_u64(&parent_object2->value,
 				     sizeof(parent_object2->value));
 	KUNIT_EXPECT_EQ(test, value, 81ULL);
-	kunit_log(KERN_INFO, test, "# %s: parent=%llu", __func__, value);
 
 	value = nommu_swmmu_load_u64(&parent_object3->value,
 				     sizeof(parent_object3->value));
 	KUNIT_EXPECT_EQ(test, value, 91ULL);
-	kunit_log(KERN_INFO, test, "# %s: parent=%llu", __func__, value);
 }
 
 static void nommu_swmmu_attach_test(struct kunit *test)
@@ -473,11 +466,13 @@ static void nommu_swmmu_repeated_clone_test(struct kunit *test)
 	for (i = 0; i < 32; i++) {
 		struct nommu_swmmu_space *child;
 		void *base;
+		long ret;
 		u64 value;
 
-		base = (void *)swmmu_alloc(SWMMU_PAGE_SIZE * 2);
-		KUNIT_ASSERT_NOT_NULL(test, base);
+		ret = swmmu_alloc(SWMMU_PAGE_SIZE * 2);
+		KUNIT_ASSERT_GT(test, ret, 0UL);
 
+		base = (void *)(uintptr_t)ret;
 		nommu_swmmu_store_u64(base, sizeof(u64), 100 + i);
 
 		KUNIT_ASSERT_EQ(test,
@@ -1633,6 +1628,26 @@ static void nommu_swmmu_access_test(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, ret, -EFAULT);
 }
 
+static void nommu_swmmu_simple_map_test(struct kunit *test)
+{
+	struct nommu_swmmu_test_ctx *ctx = test->priv;
+	long ret, addr, addr2;
+
+	addr = nommu_swmmu_map(ctx->space, SWMMU_PAGE_SIZE);
+	KUNIT_ASSERT_GT(test, addr, 0L);
+
+	addr2 = swmmu_alloc(SWMMU_PAGE_SIZE);
+	KUNIT_ASSERT_GT(test, addr2, 0L);
+
+	KUNIT_ASSERT_EQ(test,
+			swmmu_free((void *)(uintptr_t)addr2),
+			0);
+	ret = nommu_swmmu_unmap(ctx->space, addr, 0);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	ret = nommu_swmmu_unmap(ctx->space, addr, 0);
+	KUNIT_ASSERT_EQ(test, ret, -EINVAL);
+}
 
 /* init/exit */
 static int nommu_swmmu_test_init(struct kunit *test)
@@ -1702,6 +1717,7 @@ static struct kunit_case nommu_swmmu_test_cases[] = {
 	KUNIT_CASE(nommu_swmmu_map_auto_avoids_fixed_test),
 	KUNIT_CASE(nommu_swmmu_invalid_map_mode_test),
 	KUNIT_CASE(nommu_swmmu_access_test),
+	KUNIT_CASE(nommu_swmmu_simple_map_test),
 	{}
 };
 

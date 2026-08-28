@@ -94,8 +94,8 @@ int nommu_swmmu_free(void *address)
 	ret = syscall(SYS_nommu_swmmu_free,
 		      (uintptr_t)address);
 
-	if (ret < 0)
-		return (int)ret;
+	if (ret == -1)
+		return -errno;
 
 	return 0;
 }
@@ -112,7 +112,7 @@ void *nommu_swmmu_remap(void *address,
 		      new_size);
 
 	if (ret == -1)
-		return -errno;
+		return MAP_FAILED;
 
 	return (void *)(uintptr_t)ret;
 }

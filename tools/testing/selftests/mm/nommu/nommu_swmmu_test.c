@@ -1358,55 +1358,50 @@ static int test_standard_mmap_access(void)
 {
 	size_t ps;
 	void *addr;
-	long ret;
 	uint64_t dummy;
+	int ret = KSFT_FAIL;
 
 	ps = sysconf(_SC_PAGESIZE);
 
 	/* returned address differs from the hint */
 	addr = mmap((void *)0x2000000000UL, ps, PROT_NONE,
 		MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
-	if (addr == MAP_FAILED || addr != (void *)0x2000000000UL) {
-		ksft_test_result_fail("mmap fixed failed (%p): %s\n",
-				addr, strerror(errno));
-		return KSFT_FAIL;
-	}
+	if (addr == MAP_FAILED || addr != (void *)0x2000000000ULL)
+		goto out;
 
-	ret = nommu_swmmu_store_u64_checked(addr,
-					sizeof(uint64_t),
-					3939);
-	if (ret != -EACCES) {
+	if (nommu_swmmu_store_u64_checked(addr, sizeof(dummy), 3939) !=
+		-EACCES)
+		goto out;
+
+	if (nommu_swmmu_load_u64_checked(addr, sizeof(dummy), &dummy) !=
+		-EACCES)
+		goto out;
+
+	if (munmap(addr, ps))
+		goto out;
+
+	addr = MAP_FAILED;
+
+	if (nommu_swmmu_load_u64_checked(
+			(void *)0x2000000000ULL,
+			sizeof(dummy),
+			&dummy) != -EFAULT)
+		goto out;
+
+	ret = KSFT_PASS;
+
+out:
+	if (addr != MAP_FAILED)
+		munmap(addr, ps);
+
+	if (ret == KSFT_PASS)
+		ksft_test_result_pass(
+			"standard mmap access control test works\n");
+	else
 		ksft_test_result_fail(
-			"store returned %ld, expected %d\n",
-			ret, -EACCES);
-		return KSFT_FAIL;
-	}
+			"standard mmap access control test failed\n");
 
-	ret = nommu_swmmu_load_u64_checked(addr, sizeof(uint64_t), &dummy);
-	if (ret != -EACCES) {
-		ksft_test_result_fail(
-			"load returned %ld, expected %d\n",
-			ret, -EACCES);
-		return KSFT_FAIL;
-	}
-
-	if (munmap(addr, ps) != 0) {
-		ksft_test_result_fail("munmap failed: %s\n",
-				strerror(errno));
-		return KSFT_FAIL;
-	}
-
-	ret = nommu_swmmu_load_u64_checked(addr, sizeof(uint64_t), &dummy);
-	if (ret != -EFAULT) {
-		ksft_test_result_fail(
-			"unmapped load returned %ld, expected %d\n",
-			ret, -EFAULT);
-		return KSFT_FAIL;
-	}
-
-	ksft_test_result_pass(
-		"standard mmap acesss control test works\n");
-	return KSFT_PASS;
+	return ret;
 }
 
 int main(void)

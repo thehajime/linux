@@ -131,7 +131,6 @@ static int uml_nommu_get_user_stack_range(struct mm_struct *mm,
 				   unsigned long sp,
 				   unsigned long *low,
 					unsigned long *high);
-static void log_all_register(unsigned long stack_low, unsigned long stack_high);
 
 /* Called magically, see new_thread_handler above */
 static void fork_handler(void)
@@ -314,6 +313,7 @@ uml_nommu_relocate_stack_image(void *new_base,
 	}
 }
 
+#if IS_ENABLED(CONFIG_NOMMU_SWMMU_DEBUG)
 static void
 log_stack_register(const char *name,
 		   unsigned long value,
@@ -321,7 +321,7 @@ log_stack_register(const char *name,
 		   unsigned long high)
 {
 	if (value >= low && value < high)
-		pr_info("SWMMU fork: %s=%lx points into parent stack\n",
+		pr_debug("SWMMU fork: %s=%lx points into parent stack\n",
 			name, value);
 }
 
@@ -355,6 +355,7 @@ static void log_all_register(unsigned long stack_low, unsigned long stack_high)
 			current->thread.regs.regs.gp[HOST_DI],
 			stack_low, stack_high);
 }
+#endif
 
 static int
 uml_nommu_copy_user_stack(struct task_struct *child)
