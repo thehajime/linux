@@ -492,6 +492,7 @@ int swmmu_free(void *address)
 static void *__swmmu_translate(struct nommu_swmmu_space *space,
 			uintptr_t address,
 			size_t size,
+			int *status,
 			int write)
 {
 	struct swmmu_mapping *mapping;
@@ -503,15 +504,21 @@ static void *__swmmu_translate(struct nommu_swmmu_space *space,
 	lockdep_assert_held(&space->lock);
 
 	mapping = find_mapping(space, address, size);
-	if (!mapping)
+	if (!mapping) {
+		*status = -EFAULT;
 		return NULL;
+	}
 
 	if (write) {
-		if (!(mapping->access & NOMMU_SWMMU_WRITE))
+		if (!(mapping->access & NOMMU_SWMMU_WRITE)) {
+			*status = -EACCES;
 			return NULL;
+		}
 	} else {
-		if (!(mapping->access & NOMMU_SWMMU_READ))
+		if (!(mapping->access & NOMMU_SWMMU_READ)) {
+			*status = -EACCES;
 			return NULL;
+		}
 	}
 
 	offset = address - mapping->base;
@@ -522,8 +529,10 @@ static void *__swmmu_translate(struct nommu_swmmu_space *space,
 	 * This function returns a contiguous pointer from one page only.
 	 * Multi-page copies are handled by swmmu_load_u64/store_u64.
 	 */
-	if (offset + size > SWMMU_PAGE_SIZE)
+	if (offset + size > SWMMU_PAGE_SIZE) {
+		*status = -EINVAL;
 		return NULL;
+	}
 
 	return page_address(mapping->pages[page_index]) + offset;
 }
@@ -534,6 +543,8 @@ __swmmu_check_access(struct nommu_swmmu_space *space,
 		     size_t size,
 		     int write)
 {
+	int ret;
+
 	lockdep_assert_held(&space->lock);
 
 	while (size) {
@@ -548,8 +559,8 @@ __swmmu_check_access(struct nommu_swmmu_space *space,
 		if (chunk > size)
 			chunk = size;
 
-		if (!__swmmu_translate(space, address, chunk, write))
-			return -EFAULT;
+		if (!__swmmu_translate(space, address, chunk, &ret, write))
+			return ret;
 
 		address += chunk;
 		size -= chunk;
@@ -592,11 +603,9 @@ static int swmmu_copy_from_space(struct nommu_swmmu_space *space,
 		if (chunk > size)
 			chunk = size;
 
-		source = __swmmu_translate(space, address, chunk, 0);
-		if (!source) {
-			ret = -EFAULT;
+		source = __swmmu_translate(space, address, chunk, &ret, 0);
+		if (!source)
 			goto out;
-		}
 
 		memcpy(destination, source, chunk);
 
@@ -627,11 +636,9 @@ static int swmmu_copy_to_space(struct nommu_swmmu_space *space,
 		if (chunk > size)
 			chunk = size;
 
-		destination = __swmmu_translate(space, address, chunk, 1);
-		if (!destination) {
-			ret = -EFAULT;
+		destination = __swmmu_translate(space, address, chunk, &ret, 1);
+		if (!destination)
 			goto out;
-		}
 
 		memcpy(destination, source, chunk);
 
@@ -766,6 +773,58 @@ error:
 	return ret;
 }
 
+
+int
+nommu_swmmu_load_u64_checked(const void *address,
+			     size_t size,
+			     u64 *value)
+{
+	int ret;
+	struct nommu_swmmu_space *space;
+
+	space = nommu_swmmu_current();
+
+	if (size != 1 && size != 2 && size != 4 && size != 8)
+		return -EINVAL;
+
+	if (!space)
+		return -EFAULT;
+
+	if (!value)
+		return -EINVAL;
+
+	ret = swmmu_copy_from_space(space,
+				    (uintptr_t)address,
+				    value,
+				    size);
+
+	return ret;
+}
+
+int
+nommu_swmmu_store_u64_checked(void *address,
+			      size_t size,
+			      u64 value)
+{
+	int ret;
+	struct nommu_swmmu_space *space;
+
+	space = nommu_swmmu_current();
+
+	if (size != 1 && size != 2 && size != 4 && size != 8)
+		return -EINVAL;
+
+	if (!space)
+		return -EFAULT;
+
+	ret = swmmu_copy_to_space(space,
+				  (uintptr_t)address,
+				  &value,
+				  size);
+
+	return ret;
+}
+
 uint64_t nommu_swmmu_load_u64(const void *address, size_t size)
 {
 	uint64_t value = 0;
@@ -790,7 +849,7 @@ uint64_t nommu_swmmu_load_u64(const void *address, size_t size)
 	return value;
 }
 
-void nommu_swmmu_store_u64(void *address, size_t size, uint64_t value)
+long nommu_swmmu_store_u64(void *address, size_t size, uint64_t value)
 {
 	int ret;
 	struct nommu_swmmu_space *space;
@@ -809,6 +868,8 @@ void nommu_swmmu_store_u64(void *address, size_t size, uint64_t value)
 				  size);
 	if (ret)
 		BUG();
+
+	return ret;
 }
 
 long nommu_swmmu_map_at(struct nommu_swmmu_space *space,
@@ -1755,18 +1816,21 @@ SYSCALL_DEFINE3(nommu_swmmu_load,
 		u64 __user *, result)
 {
 	u64 value;
+	int ret;
 
-	value = nommu_swmmu_load_u64(address, size);
+	ret = nommu_swmmu_load_u64_checked(address, size, &value);
+	if (ret)
+		return ret;
 
 	if (copy_to_user(result, &value, sizeof(value)))
 		return -EFAULT;
-	return (long)value;
+
+	return 0;
 }
 
 SYSCALL_DEFINE3(nommu_swmmu_store, void __user *, address, size_t, size, uint64_t, value)
 {
-	nommu_swmmu_store_u64(address, size, value);
-	return 0;
+	return nommu_swmmu_store_u64_checked(address, size, value);
 }
 
 SYSCALL_DEFINE3(nommu_swmmu_remap,

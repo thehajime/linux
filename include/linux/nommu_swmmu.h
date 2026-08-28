@@ -11,6 +11,7 @@
 
 #define SWMMU_PAGE_SIZE 4096UL
 
+#define NOMMU_SWMMU_NONE	(0)
 #define NOMMU_SWMMU_READ	(1U << 0)
 #define NOMMU_SWMMU_WRITE	(1U << 1)
 #define NOMMU_SWMMU_EXEC	(1U << 2)
@@ -57,12 +58,18 @@ long swmmu_alloc(size_t size);
 int swmmu_free(void *address);
 
 /*
- * verify that the address is accessible or not
+ * Check whether a range is accessible in the current SWMMU space.
  */
 int nommu_swmmu_check_access(struct nommu_swmmu_space *space,
 			uintptr_t address,
 			size_t size,
 			int write);
+int nommu_swmmu_load_u64_checked(const void *address,
+				size_t size,
+				u64 *value);
+int nommu_swmmu_store_u64_checked(void *address,
+				size_t size,
+				u64 value);
 
 /* Eagerly clone all mappings and backing pages. */
 int swmmu_clone_space(struct nommu_swmmu_space *parent,
@@ -71,9 +78,9 @@ int swmmu_clone_space(struct nommu_swmmu_space *parent,
 /* Compiler-generated access ABI. */
 uint64_t nommu_swmmu_load_u64(const void *address, size_t size);
 
-void nommu_swmmu_store_u64(void *address,
-                     size_t size,
-                     uint64_t value);
+long nommu_swmmu_store_u64(void *address,
+			size_t size,
+			uint64_t value);
 
 /* mapping API */
 long nommu_swmmu_map(struct nommu_swmmu_space *space,

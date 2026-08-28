@@ -138,7 +138,7 @@ static const struct nommu_swmmu_mem_ops test_ops = {
 static u64 (* const __used swmmu_load_ref)
 	(const void *, size_t) = nommu_swmmu_load_u64;
 
-static void (* const __used swmmu_store_ref)
+static long (* const __used swmmu_store_ref)
 	(void *, size_t, u64) = nommu_swmmu_store_u64;
 
 __attribute__((swmmu))
@@ -1536,6 +1536,103 @@ static void nommu_swmmu_invalid_map_mode_test(struct kunit *test)
 	KUNIT_ASSERT_EQ(test, addr1, -EINVAL);
 }
 
+static void nommu_swmmu_access_test(struct kunit *test)
+{
+	struct nommu_swmmu_test_ctx *ctx = test->priv;
+	long ret;
+	long addr;
+	u64 value;
+	void *base;
+
+	addr = nommu_swmmu_map_at(ctx->space, 0, SWMMU_PAGE_SIZE,
+				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
+				NOMMU_SWMMU_MAP_AUTO);
+	KUNIT_ASSERT_GT(test, addr, 0L);
+	base = (void *)(uintptr_t)addr;
+
+	nommu_swmmu_store_u64(base, sizeof(u64), 871ULL);
+
+	/* valid read */
+	ret = nommu_swmmu_load_u64_checked(base, sizeof(u64), &value);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+	KUNIT_EXPECT_EQ(test, value, 871ULL);
+
+	/* valid write */
+	value = 1001ULL;
+	ret = nommu_swmmu_store_u64_checked(base, sizeof(u64), value);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+	ret = nommu_swmmu_load_u64_checked(base, sizeof(value), &value);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+	KUNIT_EXPECT_EQ(test, value, 1001ULL);
+
+	ret = nommu_swmmu_unmap(ctx->space, addr, 0);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	/* unmapped read => -EFAULT */
+	ret = nommu_swmmu_load_u64_checked(base, sizeof(u64), &value);
+	KUNIT_EXPECT_EQ(test, ret, -EFAULT);
+
+	/* unmapped write => -EFAULT */
+	ret = nommu_swmmu_store_u64_checked(base, sizeof(u64), value);
+	KUNIT_EXPECT_EQ(test, ret, -EFAULT);
+
+	addr = nommu_swmmu_map_at(ctx->space, 0, SWMMU_PAGE_SIZE,
+				NOMMU_SWMMU_NONE, NOMMU_SWMMU_MAP_AUTO);
+	KUNIT_ASSERT_GT(test, addr, 0L);
+	base = (void *)(uintptr_t)addr;
+
+	/* PROT_NONE read => -EACCES */
+	ret = nommu_swmmu_load_u64_checked(base, sizeof(u64), &value);
+	KUNIT_EXPECT_EQ(test, ret, -EACCES);
+
+	/* PROT_NONE write => -EACCES */
+	ret = nommu_swmmu_store_u64_checked(base, sizeof(u64), value);
+	KUNIT_EXPECT_EQ(test, ret, -EACCES);
+
+	ret = nommu_swmmu_unmap(ctx->space, addr, 0);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	addr = nommu_swmmu_map_at(ctx->space, 0, SWMMU_PAGE_SIZE,
+				NOMMU_SWMMU_READ, NOMMU_SWMMU_MAP_AUTO);
+	KUNIT_ASSERT_GT(test, addr, 0L);
+	base = (void *)(uintptr_t)addr;
+
+	/* read-only write => -EACCES */
+	ret = nommu_swmmu_store_u64_checked(base, sizeof(u64), value);
+	KUNIT_EXPECT_EQ(test, ret, -EACCES);
+
+	ret = nommu_swmmu_unmap(ctx->space, addr, 0);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	addr = nommu_swmmu_map_at(ctx->space, 0, SWMMU_PAGE_SIZE,
+				NOMMU_SWMMU_WRITE, NOMMU_SWMMU_MAP_AUTO);
+	KUNIT_ASSERT_GT(test, addr, 0L);
+	base = (void *)(uintptr_t)addr;
+
+	/* write-only read => -EACCES */
+	ret = nommu_swmmu_load_u64_checked(base, sizeof(u64), &value);
+	KUNIT_EXPECT_EQ(test, ret, -EACCES);
+
+	ret = nommu_swmmu_unmap(ctx->space, addr, 0);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	addr = nommu_swmmu_map_at(ctx->space, 0, SWMMU_PAGE_SIZE * 2,
+				NOMMU_SWMMU_READ, NOMMU_SWMMU_MAP_AUTO);
+	KUNIT_ASSERT_GT(test, addr, 0L);
+	base = (void *)(uintptr_t)addr;
+
+	/* cross-page valid access */
+	ret = nommu_swmmu_load_u64_checked(base + SWMMU_PAGE_SIZE - 1, sizeof(u64), &value);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+
+	ret = nommu_swmmu_unmap(ctx->space, addr, 0);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	/* cross-page access into an unmapped page */
+	ret = nommu_swmmu_load_u64_checked(base + SWMMU_PAGE_SIZE - 1, sizeof(u64), &value);
+	KUNIT_EXPECT_EQ(test, ret, -EFAULT);
+}
+
 
 /* init/exit */
 static int nommu_swmmu_test_init(struct kunit *test)
@@ -1604,6 +1701,7 @@ static struct kunit_case nommu_swmmu_test_cases[] = {
 	KUNIT_CASE(nommu_swmmu_map_hint_unaligned_test),
 	KUNIT_CASE(nommu_swmmu_map_auto_avoids_fixed_test),
 	KUNIT_CASE(nommu_swmmu_invalid_map_mode_test),
+	KUNIT_CASE(nommu_swmmu_access_test),
 	{}
 };
 

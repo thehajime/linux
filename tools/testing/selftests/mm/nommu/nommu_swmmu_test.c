@@ -40,7 +40,7 @@ static uint64_t (* const __attribute__((used))
 keep_swmmu_load)(const void *, size_t) =
 	nommu_swmmu_load_u64;
 
-static void (* const __attribute__((used))
+static long (* const __attribute__((used))
 keep_swmmu_store)(void *, size_t, uint64_t) =
 	nommu_swmmu_store_u64;
 
@@ -56,77 +56,6 @@ test_swmmu_increment(struct swmmu_test_object *object)
 	return object->value;
 }
 
-uint64_t nommu_swmmu_load_u64(const void *address,
-			       size_t size)
-{
-	long ret;
-	unsigned long long result;
-
-	ret = syscall(SYS_nommu_swmmu_load,
-		(uintptr_t)address,
-		size,
-		&result);
-
-	if (ret < 0)
-		abort();
-
-	return (uint64_t)ret;
-}
-
-void nommu_swmmu_store_u64(void *address,
-			   size_t size,
-			   uint64_t value)
-{
-	long ret;
-
-	ret = syscall(SYS_nommu_swmmu_store,
-		(uintptr_t)address,
-		size,
-		value);
-}
-
-void *nommu_swmmu_alloc(size_t size)
-{
-	long ret;
-
-	ret = syscall(SYS_nommu_swmmu_alloc, size);
-	if (ret < 0)
-		return NULL;
-
-	return (void *)(uintptr_t)ret;
-}
-
-int nommu_swmmu_free(void *address)
-{
-	long ret;
-
-	ret = syscall(SYS_nommu_swmmu_free,
-		      (uintptr_t)address);
-
-	if (ret < 0)
-		return (int)ret;
-
-	return 0;
-}
-
-void *nommu_swmmu_remap(void *address,
-			size_t old_size,
-			size_t new_size)
-{
-	long ret;
-
-	ret = syscall(SYS_nommu_swmmu_remap,
-		      (uintptr_t)address,
-		      old_size,
-		      new_size);
-
-	if (ret < 0) {
-		errno = -ret;
-		return MAP_FAILED;
-	}
-
-	return (void *)(uintptr_t)ret;
-}
 
 static int
 test_scalar_access(void)
@@ -522,6 +451,7 @@ static int test_standard_mmap(void)
 		goto end;
 	}
 
+	grown = MAP_FAILED;
 	ksft_test_result_pass("standard mmap/mremap/munmap use SWMMU\n");
 end:
 	/* ignore failure as it might be already failed */
@@ -1424,6 +1354,61 @@ static int test_standard_mmap_fixed_noreplace(void)
 	return KSFT_PASS;
 }
 
+static int test_standard_mmap_access(void)
+{
+	size_t ps;
+	void *addr;
+	long ret;
+	uint64_t dummy;
+
+	ps = sysconf(_SC_PAGESIZE);
+
+	/* returned address differs from the hint */
+	addr = mmap((void *)0x2000000000UL, ps, PROT_NONE,
+		MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+	if (addr == MAP_FAILED || addr != (void *)0x2000000000UL) {
+		ksft_test_result_fail("mmap fixed failed (%p): %s\n",
+				addr, strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	ret = nommu_swmmu_store_u64_checked(addr,
+					sizeof(uint64_t),
+					3939);
+	if (ret != -EACCES) {
+		ksft_test_result_fail(
+			"store returned %ld, expected %d\n",
+			ret, -EACCES);
+		return KSFT_FAIL;
+	}
+
+	ret = nommu_swmmu_load_u64_checked(addr, sizeof(uint64_t), &dummy);
+	if (ret != -EACCES) {
+		ksft_test_result_fail(
+			"load returned %ld, expected %d\n",
+			ret, -EACCES);
+		return KSFT_FAIL;
+	}
+
+	if (munmap(addr, ps) != 0) {
+		ksft_test_result_fail("munmap failed: %s\n",
+				strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	ret = nommu_swmmu_load_u64_checked(addr, sizeof(uint64_t), &dummy);
+	if (ret != -EFAULT) {
+		ksft_test_result_fail(
+			"unmapped load returned %ld, expected %d\n",
+			ret, -EFAULT);
+		return KSFT_FAIL;
+	}
+
+	ksft_test_result_pass(
+		"standard mmap acesss control test works\n");
+	return KSFT_PASS;
+}
+
 int main(void)
 {
 	int result = KSFT_PASS;
@@ -1435,7 +1420,7 @@ int main(void)
 	}
 
 	ksft_print_header();
-	ksft_set_plan(17);
+	ksft_set_plan(18);
 
 	if (test_scalar_access() == KSFT_FAIL)
 		result = KSFT_FAIL;
@@ -1482,13 +1467,14 @@ int main(void)
 	if (test_standard_mmap_fixed_noreplace() == KSFT_FAIL)
 		result = KSFT_FAIL;
 
+	if (test_standard_mmap_access() == KSFT_FAIL)
+		result = KSFT_FAIL;
 
 	/* shall be the last test */
 	if (test_standard_mmap_exit_cleanup_churn() == KSFT_FAIL)
 		result = KSFT_FAIL;
 	if (test_standard_mmap_exit_cleanup() == KSFT_FAIL)
 		result = KSFT_FAIL;
-
 
 	if (result == KSFT_PASS)
 		ksft_finished();

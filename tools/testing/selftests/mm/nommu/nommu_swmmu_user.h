@@ -16,9 +16,15 @@ int nommu_swmmu_free(void *address);
 
 uint64_t nommu_swmmu_load_u64(const void *address, size_t size);
 
-void nommu_swmmu_store_u64(void *address,
+long nommu_swmmu_store_u64(void *address,
 			   size_t size,
 			   uint64_t value);
+int nommu_swmmu_load_u64_checked(const void *address,
+				size_t size,
+				uint64_t *result);
+int nommu_swmmu_store_u64_checked(void *address,
+				size_t size,
+				uint64_t value);
 
 void *nommu_swmmu_remap(void *address,
 			size_t old_size,
