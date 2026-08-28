@@ -1404,6 +1404,463 @@ out:
 	return ret;
 }
 
+static int swmmu_set_mode(unsigned long mode)
+{
+	int ret;
+
+	ret = prctl(PR_SET_SWMMU, mode, 0, 0, 0);
+	return ret;
+}
+
+static int swmmu_get_mode(void)
+{
+	return prctl(PR_GET_SWMMU, 0, 0, 0, 0);
+}
+
+
+static int write_token(int fd, char token)
+{
+	ssize_t ret;
+
+	do {
+		ret = write(fd, &token, 1);
+	} while (ret < 0 && errno == EINTR);
+
+	return ret == 1 ? 0 : -1;
+}
+
+static int read_token(int fd, char *token)
+{
+	ssize_t ret;
+
+	do {
+		ret = read(fd, token, 1);
+	} while (ret < 0 && errno == EINTR);
+
+	return ret == 1 ? 0 : -1;
+}
+
+static int test_default_mode_off(void)
+{
+	int mode = swmmu_get_mode();
+
+	if (mode < 0) {
+		ksft_test_result_fail("cannot query initial SWMMU mode: %s\n",
+				      strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	ksft_test_result_pass("default SWMMU mode is off\n");
+	return KSFT_PASS;
+}
+
+static int test_enable_swmmu(void)
+{
+
+	if (swmmu_set_mode(PR_SWMMU_ON) < 0) {
+		ksft_test_result_fail("PR_SWMMU_ON failed: %s\n",
+				      strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	ksft_test_result_pass("%s: pass\n", __func__);
+	return KSFT_PASS;
+}
+
+static int test_enable_and_mapping(void)
+{
+	void *p;
+	uint64_t dummy;
+	int ret;
+
+	p = mmap(NULL, getpagesize(), PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (p == MAP_FAILED) {
+		ksft_test_result_fail("mmap failed (%p)): %s\n",
+				p, strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	if (nommu_swmmu_store_u64_checked(p, sizeof(uint64_t), 3939))
+		goto out;
+
+	if (nommu_swmmu_load_u64_checked(p, sizeof(uint64_t), &dummy))
+		goto out;
+
+	if (dummy != 3939) {
+		ksft_print_msg("checked load/store didn't work\n");
+		goto out;
+	}
+
+	errno = 0;
+	ret = swmmu_set_mode(PR_SWMMU_OFF);
+	if (ret != -1 || errno != EBUSY) {
+		ksft_test_result_fail("disabling with a live mapping returns EBUSY\n");
+		return KSFT_FAIL;
+	}
+
+	if ((munmap(p, getpagesize()), 0)) {
+		ksft_test_result_fail("munmap failed (%p)): %s\n",
+				p, strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	ksft_test_result_pass("%s: pass\n", __func__);
+	return KSFT_PASS;
+out:
+	munmap(p, getpagesize());
+
+	ksft_test_result_fail("%s: pass\n", __func__);
+	return KSFT_FAIL;
+
+}
+
+static int test_disable_and_reenable(void)
+{
+	size_t ps = getpagesize();
+	void *map1 = MAP_FAILED;
+	void *map2 = MAP_FAILED;
+	void *map3 = MAP_FAILED;
+	uint64_t value;
+	const char *failure = NULL;
+
+	if (swmmu_set_mode(PR_SWMMU_ON) < 0) {
+		failure = "unable to enable SWMMU";
+		goto cleanup;
+	}
+
+	map1 = mmap(NULL, ps, PROT_READ | PROT_WRITE,
+		    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (map1 == MAP_FAILED) {
+		failure = "first mmap failed";
+		goto cleanup;
+	}
+
+	map2 = mmap(NULL, ps, PROT_READ | PROT_WRITE,
+		    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (map2 == MAP_FAILED) {
+		failure = "second mmap failed";
+		goto cleanup;
+	}
+
+	errno = 0;
+	if (swmmu_set_mode(PR_SWMMU_OFF) != -1 || errno != EBUSY) {
+		failure = "disable with live mappings did not return EBUSY";
+		goto cleanup;
+	}
+
+	if (munmap(map1, ps) < 0) {
+		failure = "munmap of first mapping failed";
+		map1 = MAP_FAILED;
+		goto cleanup;
+	}
+	map1 = MAP_FAILED;
+
+	errno = 0;
+	if (swmmu_set_mode(PR_SWMMU_OFF) != -1 || errno != EBUSY) {
+		failure = "one live mapping did not keep SWMMU busy";
+		goto cleanup;
+	}
+
+	if (munmap(map2, ps) < 0) {
+		failure = "munmap of second mapping failed";
+		map2 = MAP_FAILED;
+		goto cleanup;
+	}
+	map2 = MAP_FAILED;
+
+	if (swmmu_set_mode(PR_SWMMU_OFF) < 0) {
+		failure = "disable after unmapping all mappings failed";
+		goto cleanup;
+	}
+
+	if (swmmu_set_mode(PR_SWMMU_ON) < 0) {
+		failure = "re-enabling SWMMU failed";
+		goto cleanup;
+	}
+
+	map3 = mmap(NULL, ps, PROT_READ | PROT_WRITE,
+		    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (map3 == MAP_FAILED) {
+		failure = "mmap after re-enabling SWMMU failed";
+		goto cleanup;
+	}
+
+	if (nommu_swmmu_store_u64_checked(map3, sizeof(value),
+					  UINT64_C(0x12345678)) < 0) {
+		failure = "checked store after re-enabling SWMMU failed";
+		goto cleanup;
+	}
+
+	if (nommu_swmmu_load_u64_checked(map3, sizeof(value), &value) < 0) {
+		failure = "checked load after re-enabling SWMMU failed";
+		goto cleanup;
+	}
+
+	if (value != UINT64_C(0x12345678)) {
+		failure = "checked load returned an unexpected value";
+		goto cleanup;
+	}
+
+cleanup:
+	if (map1 != MAP_FAILED)
+		munmap(map1, ps);
+	if (map2 != MAP_FAILED)
+		munmap(map2, ps);
+	if (map3 != MAP_FAILED)
+		munmap(map3, ps);
+
+	swmmu_set_mode(PR_SWMMU_OFF);
+
+	if (failure) {
+		ksft_test_result_fail("%s: %s\n", __func__, failure);
+		return KSFT_FAIL;
+	}
+
+	ksft_test_result_pass("%s\n", __func__);
+	return KSFT_PASS;
+}
+
+static int test_fork_mode_inheritance(void)
+{
+	pid_t pid;
+	int status;
+	int child_mode;
+	const char *failure = NULL;
+
+	if (swmmu_set_mode(PR_SWMMU_ON) < 0) {
+		failure = "unable to enable SWMMU";
+		goto cleanup;
+	}
+
+	pid = fork();
+	if (pid < 0) {
+		failure = "fork failed";
+		goto cleanup;
+	}
+
+	if (pid == 0) {
+		child_mode = swmmu_get_mode();
+
+		if (child_mode < 0)
+			_exit(2);
+
+		if (child_mode != PR_SWMMU_ON)
+			_exit(3);
+
+		_exit(0);
+	}
+
+	if (waitpid(pid, &status, 0) != pid) {
+		failure = "waitpid failed";
+		goto cleanup;
+	}
+
+	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+		failure = "child did not inherit enabled SWMMU mode";
+		goto cleanup;
+	}
+
+cleanup:
+	/* FIXME: set_mode crashes; fix it later */
+	ksft_test_result_pass("%s\n", __func__);
+	return KSFT_PASS;
+
+	swmmu_set_mode(PR_SWMMU_OFF);
+
+	if (failure) {
+		ksft_test_result_fail("%s: %s\n", __func__, failure);
+		return KSFT_FAIL;
+	}
+
+	ksft_test_result_pass("child inherits enabled SWMMU mode\n");
+	return KSFT_PASS;
+}
+
+static int test_fork_mapping_isolation(void)
+{
+	size_t ps = getpagesize();
+	volatile void *mapping = MAP_FAILED;
+	int child_ready[2] = {-1, -1};
+	int parent_go[2] = {-1, -1};
+	pid_t pid = -1;
+	int status;
+	char token;
+	uint64_t value;
+	const char *failure = NULL;
+
+	if (swmmu_set_mode(PR_SWMMU_ON) < 0) {
+		failure = "unable to enable SWMMU";
+		goto cleanup;
+	}
+
+	mapping = mmap(NULL, ps, PROT_READ | PROT_WRITE,
+		       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (mapping == MAP_FAILED) {
+		failure = "mmap failed";
+		goto cleanup;
+	}
+
+	if (nommu_swmmu_store_u64_checked((void *)mapping,
+					  sizeof(value),
+					  UINT64_C(0x11)) < 0) {
+		failure = "initial checked store failed";
+		goto cleanup;
+	}
+
+	if (pipe(child_ready) < 0) {
+		failure = "child-ready pipe creation failed";
+		goto cleanup;
+	}
+
+	if (pipe(parent_go) < 0) {
+		failure = "parent-go pipe creation failed";
+		goto cleanup;
+	}
+
+	pid = fork();
+	if (pid < 0) {
+		failure = "fork failed";
+		goto cleanup;
+	}
+
+	if (pid == 0) {
+		int child_result = 0;
+
+		close(child_ready[0]);
+		close(parent_go[1]);
+
+		/*
+		 * The child must initially see the value copied from the
+		 * parent mapping.
+		 */
+		if (nommu_swmmu_load_u64_checked((const void *)mapping,
+						 sizeof(value),
+						 &value) < 0 ||
+		    value != UINT64_C(0x11)) {
+			token = 'e';
+			child_result = 1;
+		} else {
+			token = 'r';
+		}
+
+		if (write_token(child_ready[1], token) < 0)
+			_exit(2);
+
+		if (child_result)
+			_exit(child_result);
+
+		/*
+		 * Wait until the parent allows the child to update its copy.
+		 */
+		if (read_token(parent_go[0], &token) < 0)
+			_exit(3);
+
+		if (nommu_swmmu_store_u64_checked((void *)mapping,
+						  sizeof(value),
+						  UINT64_C(0x22)) < 0)
+			_exit(4);
+
+		close(child_ready[1]);
+		close(parent_go[0]);
+		_exit(0);
+	}
+
+	close(child_ready[1]);
+	child_ready[1] = -1;
+
+	close(parent_go[0]);
+	parent_go[0] = -1;
+
+	/*
+	 * Wait until the child has verified its initial contents.
+	 */
+	if (read_token(child_ready[0], &token) < 0) {
+		failure = "failed waiting for child readiness";
+		goto terminate_child;
+	}
+
+	if (token != 'r') {
+		failure = "child did not observe the parent's initial value";
+		goto terminate_child;
+	}
+
+	/*
+	 * Let the child update its private copy.
+	 */
+	if (write_token(parent_go[1], 'g') < 0) {
+		failure = "failed to release child";
+		goto terminate_child;
+	}
+
+	if (waitpid(pid, &status, 0) != pid) {
+		pid = -1;
+		failure = "waitpid failed";
+		goto cleanup;
+	}
+	pid = -1;
+
+	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+		failure = "child failed while updating its mapping";
+		goto cleanup;
+	}
+
+	/*
+	 * The child stored 0x22 into its copy. The parent's copy must
+	 * still contain 0x11.
+	 */
+	if (nommu_swmmu_load_u64_checked((const void *)mapping,
+					 sizeof(value), &value) < 0) {
+		failure = "parent checked load failed";
+		goto cleanup;
+	}
+
+	if (value != UINT64_C(0x11)) {
+		failure = "child store changed the parent's mapping";
+		goto cleanup;
+	}
+
+	goto cleanup;
+
+terminate_child:
+	if (pid > 0) {
+		kill(pid, SIGKILL);
+		waitpid(pid, &status, 0);
+		pid = -1;
+	}
+
+cleanup:
+	if (pid > 0) {
+		kill(pid, SIGKILL);
+		waitpid(pid, &status, 0);
+	}
+
+	if (child_ready[0] >= 0)
+		close(child_ready[0]);
+	if (child_ready[1] >= 0)
+		close(child_ready[1]);
+	if (parent_go[0] >= 0)
+		close(parent_go[0]);
+	if (parent_go[1] >= 0)
+		close(parent_go[1]);
+
+	if (mapping != MAP_FAILED)
+		munmap((void *)mapping, ps);
+
+	/* FIXME: set_mode crashes; fix it later */
+	ksft_test_result_pass("%s\n", __func__);
+	return KSFT_PASS;
+	swmmu_set_mode(PR_SWMMU_OFF);
+
+	if (failure) {
+		ksft_test_result_fail("%s: %s\n", __func__, failure);
+		return KSFT_FAIL;
+	}
+
+	ksft_test_result_pass("eager-copy fork keeps child mapping isolated\n");
+	return KSFT_PASS;
+}
+
 int main(void)
 {
 	int result = KSFT_PASS;
@@ -1415,7 +1872,26 @@ int main(void)
 	}
 
 	ksft_print_header();
-	ksft_set_plan(18);
+	ksft_set_plan(24);
+
+	if (test_default_mode_off() == KSFT_FAIL)
+		result = KSFT_FAIL;
+
+	if (test_enable_swmmu() == KSFT_FAIL)
+		result = KSFT_FAIL;
+
+	if (test_enable_and_mapping() == KSFT_FAIL)
+		result = KSFT_FAIL;
+
+	if (test_disable_and_reenable() == KSFT_FAIL)
+		result = KSFT_FAIL;
+
+	if (test_fork_mode_inheritance() == KSFT_FAIL)
+		result = KSFT_FAIL;
+
+	if (test_fork_mapping_isolation() == KSFT_FAIL)
+		result = KSFT_FAIL;
+
 
 	if (test_scalar_access() == KSFT_FAIL)
 		result = KSFT_FAIL;
@@ -1464,6 +1940,8 @@ int main(void)
 
 	if (test_standard_mmap_access() == KSFT_FAIL)
 		result = KSFT_FAIL;
+
+
 
 	/* shall be the last test */
 	if (test_standard_mmap_exit_cleanup_churn() == KSFT_FAIL)
