@@ -150,8 +150,4 @@ obj-$(CONFIG_LAZY_MMU_MODE_KUNIT_TEST) += tests/lazy_mmu_mode_kunit.o
 obj-$(CONFIG_MEM_ALLOC_PROFILING) += alloc_tag.o
 obj-$(CONFIG_NOMMU_SWMMU_KUNIT_TEST) += tests/nommu_swmmu_kunit.o
 
-SWMMU_PLUGIN ?=
-
-ifneq ($(SWMMU_PLUGIN),)
-CFLAGS_tests/nommu_swmmu_kunit.o += -fplugin=$(SWMMU_PLUGIN)
-endif
+CFLAGS_tests/nommu_swmmu_kunit.o += -fplugin=$(objtree)/scripts/gcc-plugins/swmmu_plugin.so

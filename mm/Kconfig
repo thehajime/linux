@@ -1523,6 +1523,7 @@ config NOMMU_SWMMU_KUNIT_TEST
 	depends on NOMMU_SWMMU
 	depends on KUNIT
 	default KUNIT_ALL_TESTS
+	depends on GCC_PLUGIN_SWMMU
 	help
 	  Test the NOMMU software address-space implementation.
 
