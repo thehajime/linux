@@ -16,14 +16,6 @@
 #define SWMMU_CLONE_ZALLOC_POINTS	3
 #define SWMMU_CLONE_TEST_PAGES		4
 
-struct swmmu_test_object {
-	u64 value;
-};
-
-struct nommu_swmmu_test_ctx {
-	struct nommu_swmmu_space *space;
-};
-
 enum test_fail_kind {
 	TEST_FAIL_NONE,
 	TEST_FAIL_ZALLOC,
@@ -134,6 +126,27 @@ static const struct nommu_swmmu_mem_ops test_ops = {
 	.page_copy = test_copy_page,
 };
 
+/* compiler plugin instruments */
+struct swmmu_test_object {
+	u64 value;
+};
+
+struct swmmu_array_object {
+	u32 values[4];
+};
+
+struct swmmu_nested {
+	u32 value;
+};
+
+struct swmmu_object {
+	u32 values[4];
+	struct swmmu_nested nested;
+};
+
+struct nommu_swmmu_test_ctx {
+	struct nommu_swmmu_space *space;
+};
 
 static u64 (* const __used swmmu_load_ref)
 	(const void *, size_t) = nommu_swmmu_load_u64;
@@ -149,6 +162,182 @@ test_swmmu_increment(struct swmmu_test_object *object)
 	return object->value;
 }
 
+/* Constant array indexing */
+__attribute__((swmmu))
+static noinline void
+test_swmmu_array_store_constant(struct swmmu_array_object *object)
+{
+	object->values[2] = 0x11223344;
+}
+
+__attribute__((swmmu))
+static noinline u32 test_swmmu_array_load_constant(
+	struct swmmu_array_object *object)
+{
+	return object->values[2];
+}
+
+/* nested structures; */
+__attribute__((swmmu))
+static noinline void swmmu_access_shapes(struct swmmu_object *object,
+				struct swmmu_object *source)
+{
+	object->values[2] = source->values[1];
+	object->nested.value++;
+	object->values[3] += object->nested.value;
+}
+
+/* Dynamic array indexing */
+#define SWMMU_ARRAY_INDEX 3
+#define SWMMU_ARRAY_VALUE 0xaabbccdd
+
+__attribute__((swmmu))
+static void test_swmmu_array_store_indexed(
+	struct swmmu_array_object *object,
+	size_t index,
+	u32 value)
+{
+	object->values[index] = value;
+}
+
+__attribute__((swmmu))
+static u32 test_swmmu_array_load_indexed(
+	struct swmmu_array_object *object,
+	size_t index)
+{
+	return object->values[index];
+}
+
+/* pointer arithmetic */
+__attribute__((swmmu))
+static void test_swmmu_array_store_pointer_arithmetic(
+	struct swmmu_array_object *object,
+	size_t index,
+	u32 value)
+{
+	u32 *element;
+
+	element = object->values + index;
+	*element = value;
+}
+
+__attribute__((swmmu))
+static u32 test_swmmu_array_load_pointer_arithmetic(
+	struct swmmu_array_object *object,
+	size_t index)
+{
+	u32 *element;
+
+	element = object->values + index;
+	return *element;
+}
+
+struct swmmu_node {
+	u32 value;
+	struct swmmu_node *next;
+};
+
+__attribute__((swmmu))
+static noinline u32
+test_swmmu_two_pointer_hops(struct swmmu_node *node)
+{
+	return node->next->next->value;
+}
+
+__attribute__((swmmu))
+static noinline u32
+test_swmmu_preincrement(struct swmmu_test_object *object)
+{
+	return ++object->value;
+}
+
+__attribute__((swmmu))
+static noinline u64
+test_swmmu_postincrement(struct swmmu_test_object *object)
+{
+	return object->value++;
+}
+
+/*
+ * GCC 13 lowers the two RHS memory accesses into separate GIMPLE
+ * assignments before the SWMMU pass.
+ */
+__attribute__((swmmu))
+static noinline void
+test_swmmu_multiple_rhs(struct swmmu_array_object *object)
+{
+	object->values[0] = object->values[1] + object->values[2];
+}
+
+__attribute__((swmmu))
+static noinline void
+test_swmmu_copy_u32(u32 *dst, const u32 *src)
+{
+	*dst = *src;
+}
+
+__attribute__((swmmu))
+static noinline u32
+test_swmmu_loop_branch(struct swmmu_array_object *object)
+{
+	u32 sum = 0;
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(object->values); i++) {
+		if (object->values[i] & 1)
+			sum += object->values[i];
+	}
+
+	return sum;
+}
+
+struct swmmu_scalar_object {
+	s8  s8_value;
+	u8  u8_value;
+	s16 s16_value;
+	u16 u16_value;
+	s32 s32_value;
+	u32 u32_value;
+	s64 s64_value;
+	u64 u64_value;
+};
+
+__attribute__((swmmu))
+static noinline void
+test_swmmu_scalar_store(struct swmmu_scalar_object *object)
+{
+	object->s8_value = -1;
+	object->u8_value = 0xff;
+	object->s16_value = -2;
+	object->u16_value = 0xfffe;
+	object->s32_value = -3;
+	object->u32_value = 0xfffffffd;
+	object->s64_value = -4;
+	object->u64_value = 0xfffffffffffffffcULL;
+}
+
+struct swmmu_pointer_object {
+	void *value;
+};
+
+__attribute__((swmmu))
+static noinline void
+test_swmmu_pointer_store(struct swmmu_pointer_object *object,
+			 void *value)
+{
+	object->value = value;
+}
+
+__attribute__((swmmu))
+static noinline void *
+test_swmmu_pointer_load(struct swmmu_pointer_object *object)
+{
+	return object->value;
+}
+
+/*
+ * actual tests
+ */
 static void
 nommu_swmmu_increment_test(struct kunit *test)
 {
@@ -174,6 +363,7 @@ nommu_swmmu_increment_test(struct kunit *test)
 
 	KUNIT_EXPECT_EQ(test, value, 42ULL);
 
+	swmmu_free(object);
 	nommu_swmmu_kunit_clear_space();
 	nommu_swmmu_space_put(space);
 }
@@ -203,7 +393,7 @@ nommu_swmmu_clone_test(struct kunit *test)
 	struct swmmu_test_object *child_object3;
 	uintptr_t vaddr1, vaddr2, vaddr3;
 	u64 value;
-	int ret;
+	long ret;
 
 	parent = nommu_swmmu_space_create_with_ops(&test_ops);
 	KUNIT_ASSERT_NOT_NULL(test, parent);
@@ -1649,6 +1839,342 @@ static void nommu_swmmu_simple_map_test(struct kunit *test)
 	KUNIT_ASSERT_EQ(test, ret, -EINVAL);
 }
 
+static void nommu_swmmu_array_index_test(struct kunit *test)
+{
+	struct swmmu_array_object *object;
+	u64 value;
+	long ret;
+
+	ret = swmmu_alloc(sizeof(*object));
+	if (ret <= 0) {
+		KUNIT_FAIL(test, "swmmu_alloc failed: %ld\n", ret);
+		return;
+	}
+
+	object = (void *)(uintptr_t)ret;
+
+	test_swmmu_array_store_constant(object);
+
+	value = nommu_swmmu_load_u64(&object->values[2],
+				     sizeof(object->values[2]));
+	KUNIT_EXPECT_EQ(test, value, (u64)0x11223344);
+
+	test_swmmu_array_store_indexed(object, SWMMU_ARRAY_INDEX,
+				       SWMMU_ARRAY_VALUE);
+
+	value = nommu_swmmu_load_u64(
+		&object->values[SWMMU_ARRAY_INDEX],
+		sizeof(object->values[SWMMU_ARRAY_INDEX]));
+	KUNIT_EXPECT_EQ(test, value, (u64)SWMMU_ARRAY_VALUE);
+
+	value = test_swmmu_array_load_indexed(object,
+					      SWMMU_ARRAY_INDEX);
+	KUNIT_EXPECT_EQ(test, value, (u32)SWMMU_ARRAY_VALUE);
+
+
+	test_swmmu_array_store_pointer_arithmetic(object, 1,
+						0x55667788);
+	value = test_swmmu_array_load_pointer_arithmetic(object, 1);
+	KUNIT_EXPECT_EQ(test, value, (u32)0x55667788);
+
+	value = test_swmmu_array_load_constant(object);
+	KUNIT_EXPECT_EQ(test, value, (u32)0x11223344);
+
+	swmmu_free(object);
+}
+
+static void nommu_swmmu_nested_test(struct kunit *test)
+{
+	struct swmmu_object *object;
+	struct swmmu_object *source;
+	u64 value;
+	long ret;
+
+	ret = swmmu_alloc(sizeof(*object));
+	if (ret <= 0) {
+		KUNIT_FAIL(test, "object allocation failed: %ld\n", ret);
+		return;
+	}
+	object = (void *)(uintptr_t)ret;
+
+	ret = swmmu_alloc(sizeof(*source));
+	if (ret <= 0) {
+		swmmu_free(object);
+		KUNIT_FAIL(test, "source allocation failed: %ld\n", ret);
+		return;
+	}
+	source = (void *)(uintptr_t)ret;
+
+	nommu_swmmu_store_u64(&source->values[1],
+			      sizeof(source->values[1]), 0x12345678);
+	nommu_swmmu_store_u64(&object->nested.value,
+			      sizeof(object->nested.value), 10);
+	nommu_swmmu_store_u64(&object->values[3],
+			      sizeof(object->values[3]), 5);
+
+	swmmu_access_shapes(object, source);
+
+	value = nommu_swmmu_load_u64(&object->values[2],
+				     sizeof(object->values[2]));
+	KUNIT_EXPECT_EQ(test, value, (u64)0x12345678);
+
+	value = nommu_swmmu_load_u64(&object->nested.value,
+				     sizeof(object->nested.value));
+	KUNIT_EXPECT_EQ(test, value, 11ULL);
+
+	value = nommu_swmmu_load_u64(&object->values[3],
+				     sizeof(object->values[3]));
+	KUNIT_EXPECT_EQ(test, value, 16ULL);
+
+	swmmu_free(source);
+	swmmu_free(object);
+}
+
+static void nommu_swmmu_multiple_indirection_test(struct kunit *test)
+{
+	struct swmmu_node *node1;
+	struct swmmu_node *node2;
+	struct swmmu_node *node3;
+	u64 value;
+	long ret;
+
+	ret = swmmu_alloc(sizeof(*node1));
+	KUNIT_ASSERT_GT(test, ret, 0L);
+	node1 = (void *)(uintptr_t)ret;
+
+	ret = swmmu_alloc(sizeof(*node1));
+	if (ret <= 0) {
+		swmmu_free(node1);
+		KUNIT_FAIL(test, "allocation failed: %ld\n", ret);
+		return;
+	}
+	node2 = (void *)(uintptr_t)ret;
+
+	ret = swmmu_alloc(sizeof(*node1));
+	if (ret <= 0) {
+		swmmu_free(node2);
+		swmmu_free(node1);
+		KUNIT_FAIL(test, "allocation failed: %ld\n", ret);
+		return;
+	}
+	node3 = (void *)(uintptr_t)ret;
+
+	nommu_swmmu_store_u64(&node1->next, sizeof(node1->next),
+			(u64)(uintptr_t)node2);
+	nommu_swmmu_store_u64(&node2->next, sizeof(node2->next),
+			(u64)(uintptr_t)node3);
+	nommu_swmmu_store_u64(&node3->value, sizeof(node3->value),
+			0xabcdef01);
+
+	value = test_swmmu_two_pointer_hops(node1);
+	KUNIT_EXPECT_EQ(test, value, (u32)0xabcdef01);
+
+	swmmu_free(node3);
+	swmmu_free(node2);
+	swmmu_free(node1);
+}
+
+static void nommu_swmmu_read_modify_write_order_test(struct kunit *test)
+{
+	struct swmmu_test_object *object;
+	u64 value;
+	long ret;
+
+	ret = swmmu_alloc(sizeof(*object));
+	KUNIT_ASSERT_GT(test, ret, 0L);
+	object = (void *)(uintptr_t)ret;
+
+	nommu_swmmu_store_u64(&object->value,
+			sizeof(object->value), 10);
+
+	value = test_swmmu_preincrement(object);
+	KUNIT_EXPECT_EQ(test, value, 11ULL);
+
+	value = nommu_swmmu_load_u64(&object->value,
+				sizeof(object->value));
+	KUNIT_EXPECT_EQ(test, value, 11ULL);
+
+	value = test_swmmu_postincrement(object);
+	KUNIT_EXPECT_EQ(test, value, 11ULL);
+
+	value = nommu_swmmu_load_u64(&object->value,
+				sizeof(object->value));
+	KUNIT_EXPECT_EQ(test, value, 12ULL);
+
+	swmmu_free(object);
+}
+
+static void nommu_swmmu_multi_access_test(struct kunit *test)
+{
+	struct swmmu_array_object *object;
+	u32 *src;
+	u32 *dst;
+	u64 value;
+	long src_ret;
+	long dst_ret;
+	long ret;
+
+	ret = swmmu_alloc(sizeof(*object));
+	if (ret <= 0) {
+		KUNIT_FAIL(test, "swmmu_alloc failed: %ld\n", ret);
+		return;
+	}
+	object = (void *)(uintptr_t)ret;
+
+	src_ret = swmmu_alloc(sizeof(*src));
+	if (src_ret <= 0) {
+		swmmu_free(object);
+		KUNIT_FAIL(test, "source allocation failed: %ld\n", src_ret);
+		return;
+	}
+	src = (void *)(uintptr_t)src_ret;
+
+	dst_ret = swmmu_alloc(sizeof(*dst));
+	if (dst_ret <= 0) {
+		swmmu_free(object);
+		swmmu_free(src);
+		KUNIT_FAIL(test, "destination allocation failed: %ld\n", dst_ret);
+		return;
+	}
+	dst = (void *)(uintptr_t)dst_ret;
+
+	nommu_swmmu_store_u64(src, sizeof(*src), 3939);
+	nommu_swmmu_store_u64(dst, sizeof(*dst), 0);
+
+	test_swmmu_copy_u32(dst, src);
+
+	value = nommu_swmmu_load_u64(dst, sizeof(*dst));
+	KUNIT_EXPECT_EQ(test, value, 3939ULL);
+
+	/* multi rhs test */
+	nommu_swmmu_store_u64(&object->values[1],
+			      sizeof(object->values[1]), 10);
+	nommu_swmmu_store_u64(&object->values[2],
+			      sizeof(object->values[2]), 32);
+
+	test_swmmu_multiple_rhs(object);
+
+	value = nommu_swmmu_load_u64(&object->values[0],
+				     sizeof(object->values[0]));
+	KUNIT_EXPECT_EQ(test, value, 42ULL);
+
+	swmmu_free(object);
+	swmmu_free(dst);
+	swmmu_free(src);
+}
+
+static void nommu_swmmu_loop_branch_test(struct kunit *test)
+{
+	struct swmmu_array_object *object;
+	u32 value;
+	long ret;
+
+	ret = swmmu_alloc(sizeof(*object));
+	if (ret <= 0) {
+		KUNIT_FAIL(test, "swmmu_alloc failed: %ld\n", ret);
+		return;
+	}
+	object = (void *)(uintptr_t)ret;
+
+	nommu_swmmu_store_u64(&object->values[0],
+			      sizeof(object->values[0]), 11);
+	nommu_swmmu_store_u64(&object->values[1],
+			      sizeof(object->values[1]), 11);
+	nommu_swmmu_store_u64(&object->values[2],
+			      sizeof(object->values[2]), 11);
+	nommu_swmmu_store_u64(&object->values[3],
+			      sizeof(object->values[3]), 10);
+	value = test_swmmu_loop_branch(object);
+
+	KUNIT_EXPECT_EQ(test, value, 33ULL);
+
+	swmmu_free(object);
+}
+
+static void nommu_swmmu_signed_unsigned_scalar_test(struct kunit *test)
+{
+	struct swmmu_scalar_object *object;
+	long ret;
+
+	ret = swmmu_alloc(sizeof(*object));
+	KUNIT_ASSERT_GT(test, ret, 0L);
+	object = (void *)(uintptr_t)ret;
+
+	test_swmmu_scalar_store(object);
+
+	KUNIT_EXPECT_EQ(test,
+			nommu_swmmu_load_u64(&object->s8_value,
+					sizeof(object->s8_value)),
+			0xffULL);
+
+	KUNIT_EXPECT_EQ(test,
+			nommu_swmmu_load_u64(&object->u8_value,
+					sizeof(object->u8_value)),
+			0xffULL);
+
+	KUNIT_EXPECT_EQ(test,
+			nommu_swmmu_load_u64(&object->s16_value,
+					sizeof(object->s16_value)),
+			0xfffeULL);
+
+	KUNIT_EXPECT_EQ(test,
+			nommu_swmmu_load_u64(&object->u16_value,
+					sizeof(object->u16_value)),
+			0xfffeULL);
+
+	KUNIT_EXPECT_EQ(test,
+			nommu_swmmu_load_u64(&object->s32_value,
+					sizeof(object->s32_value)),
+			0xfffffffdULL);
+
+	KUNIT_EXPECT_EQ(test,
+			nommu_swmmu_load_u64(&object->u32_value,
+					sizeof(object->u32_value)),
+			0xfffffffdULL);
+
+	KUNIT_EXPECT_EQ(test,
+			nommu_swmmu_load_u64(&object->s64_value,
+					sizeof(object->s64_value)),
+			0xfffffffffffffffcULL);
+
+	KUNIT_EXPECT_EQ(test,
+			nommu_swmmu_load_u64(&object->u64_value,
+					sizeof(object->u64_value)),
+			0xfffffffffffffffcULL);
+
+	swmmu_free(object);
+}
+
+static void nommu_swmmu_pointer_sized_value_test(struct kunit *test)
+{
+	struct swmmu_pointer_object *object;
+	u64 *value, *dst;
+	long ret;
+
+	ret = swmmu_alloc(sizeof(*object));
+	KUNIT_ASSERT_GT(test, ret, 0L);
+	object = (void *)(uintptr_t)ret;
+
+	ret = swmmu_alloc(sizeof(*value));
+	if (ret <= 0) {
+		swmmu_free(object);
+		KUNIT_FAIL(test, "value allocation failed: %ld\n", ret);
+		return;
+	}
+	value = (void *)(uintptr_t)ret;
+
+	nommu_swmmu_store_u64(value, sizeof(*value), 59ULL);
+	test_swmmu_pointer_store(object, value);
+
+	dst = test_swmmu_pointer_load(object);
+
+	KUNIT_EXPECT_PTR_EQ(test, dst, value);
+
+	swmmu_free(value);
+	swmmu_free(object);
+}
+
+
 /* init/exit */
 static int nommu_swmmu_test_init(struct kunit *test)
 {
@@ -1673,10 +2199,12 @@ static void nommu_swmmu_test_exit(struct kunit *test)
 	struct nommu_swmmu_test_ctx *ctx = test->priv;
 
 	test_alloc_reset();
+	if (!ctx)
+		return;
 
 	nommu_swmmu_kunit_clear_space();
 
-	if (ctx && ctx->space)
+	if (ctx->space)
 		nommu_swmmu_space_put(ctx->space);
 }
 
@@ -1718,6 +2246,14 @@ static struct kunit_case nommu_swmmu_test_cases[] = {
 	KUNIT_CASE(nommu_swmmu_invalid_map_mode_test),
 	KUNIT_CASE(nommu_swmmu_access_test),
 	KUNIT_CASE(nommu_swmmu_simple_map_test),
+	KUNIT_CASE(nommu_swmmu_array_index_test),
+	KUNIT_CASE(nommu_swmmu_nested_test),
+	KUNIT_CASE(nommu_swmmu_multiple_indirection_test),
+	KUNIT_CASE(nommu_swmmu_read_modify_write_order_test),
+	KUNIT_CASE(nommu_swmmu_multi_access_test),
+	KUNIT_CASE(nommu_swmmu_loop_branch_test),
+	KUNIT_CASE(nommu_swmmu_signed_unsigned_scalar_test),
+	KUNIT_CASE(nommu_swmmu_pointer_sized_value_test),
 	{}
 };
 
