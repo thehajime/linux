@@ -103,6 +103,20 @@ long nommu_swmmu_remap(struct nommu_swmmu_space *space,
 int nommu_swmmu_dup_mmap(struct mm_struct *dst,
 			struct mm_struct *src);
 
+#ifdef CONFIG_DEBUG_VM_MAPLE_TREE
+/*
+ * Validate the committed SWMMU/VMA state.
+ *
+ * The caller must hold mmap_lock. The SWMMU space read lock
+ * is acquired internally.
+ */
+void nommu_swmmu_validate(struct mm_struct *mm);
+#else
+static inline void nommu_swmmu_validate(struct mm_struct *mm)
+{
+}
+#endif
+
 /* prctl API */
 long nommu_swmmu_get_mode(struct mm_struct *mm);
 int nommu_swmmu_set_mode(struct mm_struct *mm,

@@ -465,6 +465,167 @@ swmmu_erase(struct nommu_swmmu_space *space,
 	return entry;
 }
 
+#ifdef CONFIG_DEBUG_VM_MAPLE_TREE
+#define SWMMU_VALIDATE_FAIL(fmt, ...)				\
+	do {							\
+		pr_err("SWMMU validation failed: " fmt,		\
+		       ##__VA_ARGS__);				\
+		return -EINVAL;					\
+	} while (0)
+
+static int
+swmmu_validate_vma_links(struct mm_struct *mm,
+			 struct nommu_swmmu_space *space)
+{
+	VMA_ITERATOR(vmi, mm, 0);
+	struct swmmu_mapping *mapping;
+	struct vm_area_struct *vma;
+	unsigned int mapping_count = 0;
+	unsigned int vma_count = 0;
+	unsigned long index = 0;
+
+	mmap_assert_locked(mm);
+	lockdep_assert_held(&space->lock);
+
+	/* First validate every SWMMU mapping against the VMA tree. */
+	mt_for_each(&space->mappings, mapping, index, ULONG_MAX) {
+		unsigned long start;
+		unsigned long end;
+
+		if (!mapping)
+			SWMMU_VALIDATE_FAIL("NULL mapping\n");
+
+		if (!mapping->length)
+			SWMMU_VALIDATE_FAIL("zero-length mapping=%px\n",
+					mapping);
+
+		start = mapping->base;
+		end = mapping->base + mapping->length;
+
+		if (end <= start)
+			SWMMU_VALIDATE_FAIL(
+				"mapping overflow mapping=%px base=%#lx length=%#zx\n",
+				mapping, mapping->base, mapping->length);
+
+		vma = find_vma(mm, start);
+		if (!vma)
+			SWMMU_VALIDATE_FAIL(
+				"no VMA for mapping=[%#lx,%#lx)\n",
+				start, end);
+
+		if (vma->vm_start != start ||
+			vma->vm_end != end ||
+			!vma->vm_swmmu)
+			SWMMU_VALIDATE_FAIL(
+				"VMA mismatch mapping=[%#lx,%#lx) "
+				"vma=[%#lx,%#lx) vm_swmmu=%d\n",
+				start, end,
+				vma->vm_start, vma->vm_end,
+				vma->vm_swmmu);
+
+		mapping_count++;
+	}
+
+	/* Then validate every SWMMU VMA against the SWMMU tree */
+	for_each_vma(vmi, vma) {
+		struct swmmu_mapping *mapping;
+		unsigned long index;
+
+		if (!vma->vm_swmmu)
+			continue;
+
+		vma_count++;
+		index = vma->vm_start;
+		mapping = mt_find(&space->mappings, &index, vma->vm_start);
+
+		if (!mapping)
+			SWMMU_VALIDATE_FAIL(
+				"no mapping for VMA=[%#lx,%#lx)\n",
+				vma->vm_start, vma->vm_end);
+
+		if (mapping->base != vma->vm_start ||
+			mapping->length != vma->vm_end - vma->vm_start)
+			SWMMU_VALIDATE_FAIL(
+				"reverse mismatch mapping=[%#lx,%#lx) "
+				"VMA=[%#lx,%#lx), next_index=%#lx\n",
+				mapping->base,
+				mapping->base + mapping->length,
+				vma->vm_start,
+				vma->vm_end,
+				index);
+	}
+
+	if (mapping_count != vma_count)
+		SWMMU_VALIDATE_FAIL(
+			"mapping/VMA count mismatch: mappings=%u vmas=%u\n",
+			mapping_count, vma_count);
+
+	return 0;
+}
+
+/*
+ * Validate the committed SWMMU/VMA state.
+ *
+ * The caller must hold mmap_lock and space->lock.
+ */
+static int __nommu_swmmu_validate(struct mm_struct *mm)
+{
+	struct nommu_swmmu_space *space;
+
+	if (!mm)
+		return -EINVAL;
+
+	space = mm->swmmu_space;
+	if (!space)
+		return 0;
+
+	mmap_assert_locked(mm);
+	lockdep_assert_held(&space->lock);
+
+	mt_validate(&space->mappings);
+
+	return swmmu_validate_vma_links(mm, space);
+}
+
+/*
+ * Validate the committed SWMMU/VMA state.
+ *
+ * The caller must hold mmap_lock. This function acquires
+ * the SWMMU space read lock.
+ */
+void nommu_swmmu_validate(struct mm_struct *mm)
+{
+	struct nommu_swmmu_space *space;
+	int ret;
+
+	if (!mm)
+		return;
+
+	space = mm->swmmu_space;
+	if (!space)
+		return;
+
+	mmap_assert_locked(mm);
+
+	/*
+	 * mmap_lock is held by the caller. Acquire the SWMMU
+	 * space lock after it.
+	 */
+	down_read(&space->lock);
+	ret = __nommu_swmmu_validate(mm);
+	up_read(&space->lock);
+
+	VM_BUG_ON_MM(ret, mm);
+}
+
+#else
+static inline int __nommu_swmmu_validate(struct mm_struct *mm)
+{
+	return 0;
+}
+
+#endif
+
 long swmmu_alloc(size_t size)
 {
 	struct nommu_swmmu_space *space;
@@ -1444,6 +1605,8 @@ static unsigned long do_mmap_swmmu(struct file *file,
 	vma_iter_store_new(&vmi, vma);
 
 	current->mm->map_count++;
+	nommu_swmmu_validate(mm);
+
 	return swmmu_addr;
 }
 
@@ -1550,6 +1713,8 @@ int do_munmap(struct mm_struct *mm,
 		vma->vm_mm->map_count--;
 		vma_close(vma);
 		vm_area_free(vma);
+
+		nommu_swmmu_validate(mm);
 		return 0;
 	}
 
@@ -1639,6 +1804,7 @@ unsigned long do_mremap(unsigned long addr,
 	unsigned long end;
 	long ret;
 	uintptr_t base = (uintptr_t)addr;
+	int validate_ret;
 
 	/* not implemented yet */
 	if (new_addr)
@@ -1725,6 +1891,13 @@ unsigned long do_mremap(unsigned long addr,
 			goto out_space_unlock;
 		}
 		swmmu_remap_commit(&swmmu_tx);
+
+		/*
+		 * Both the VMA tree and SWMMU mapping tree now describe
+		 * the new committed state.
+		 */
+		validate_ret = __nommu_swmmu_validate(mm);
+		VM_BUG_ON_MM(validate_ret, mm);
 
 		ret = vma->vm_start;
 		goto out_space_unlock;
