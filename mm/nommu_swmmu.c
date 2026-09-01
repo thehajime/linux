@@ -35,6 +35,13 @@ struct nommu_swmmu_remap_tx {
 	bool committed;
 };
 
+struct nommu_swmmu_shrink_tx {
+	struct nommu_swmmu_vma *vma_data;
+	struct nommu_swmmu_backing *backing;
+	size_t old_page_count;
+	size_t new_page_count;
+};
+
 struct nommu_swmmu_vma_tx {
 	struct vma_iterator clear_vmi;
 
@@ -1085,6 +1092,7 @@ int do_munmap(struct mm_struct *mm,
 		vma_close(vma);
 		vm_area_free(vma);
 
+		validate_mm(mm);
 		nommu_swmmu_validate(mm);
 		return 0;
 	}
@@ -1092,77 +1100,62 @@ int do_munmap(struct mm_struct *mm,
 	return do_munmap_nommu(mm, start, len, uf);
 }
 
-static int nommu_swmmu_vma_prepare(struct vm_area_struct *vma,
-				unsigned long new_end,
-				struct nommu_swmmu_vma_tx *vma_tx)
+static int prepare_backing_shrink(struct nommu_swmmu_vma *vma_data,
+				size_t new_size,
+				struct nommu_swmmu_shrink_tx *tx)
 {
-	int ret;
+	struct nommu_swmmu_backing *backing;
+	size_t new_page_count;
 
-	vma_tx->old_start = vma->vm_start;
-	vma_tx->old_end = vma->vm_end;
-	vma_tx->new_end = new_end;
-	vma_tx->clear_prepared = false;
+	if (!vma_data || !vma_data->backing || !new_size)
+		return -EINVAL;
 
-	vma_iter_config(&vma_tx->clear_vmi,
-			vma_tx->old_start,
-			vma_tx->old_end);
+	if (!IS_ALIGNED(new_size, SWMMU_PAGE_SIZE))
+		return -EINVAL;
 
-	ret = vma_iter_prealloc(&vma_tx->clear_vmi, NULL);
-	if (ret)
-		return ret;
+	backing = vma_data->backing;
+	new_page_count = new_size / SWMMU_PAGE_SIZE;
 
-	vma_tx->clear_prepared = true;
+	if (!new_page_count ||
+	    new_page_count >= vma_data->page_count)
+		return -EINVAL;
+
+	/*
+	 * A shared backing cannot be truncated in place. Until shared
+	 * backing/split handling exists, require unique ownership.
+	 */
+	if (refcount_read(&backing->refs) != 1)
+		return -EBUSY;
+
+	if (backing->page_count != vma_data->page_count)
+		return -EINVAL;
+
+	tx->vma_data = vma_data;
+	tx->backing = backing;
+	tx->old_page_count = vma_data->page_count;
+	tx->new_page_count = new_page_count;
+
 	return 0;
 }
 
-static int nommu_swmmu_vma_commit(struct nommu_swmmu_vma_tx *vma_tx,
-				struct vm_area_struct *vma)
+static void commit_backing_shrink(struct nommu_swmmu_space *space,
+				struct nommu_swmmu_shrink_tx *tx)
 {
-	VMA_ITERATOR(store_vmi, vma->vm_mm, vma->vm_start);
-	int ret;
+	struct nommu_swmmu_backing *backing = tx->backing;
+	size_t i;
 
-	vma_iter_clear(&vma_tx->clear_vmi);
-	vma_iter_free(&vma_tx->clear_vmi);
-	vma_tx->clear_prepared = false;
+	lockdep_assert_held(&space->lock);
 
-	vma->vm_end = vma_tx->new_end;
+	for (i = tx->new_page_count; i < tx->old_page_count; i++) {
+		struct page *page = backing->pages[i];
 
-	/*
-	 * do not use the previously preallocated store_vmi after the
-	 * old range has been cleared.
-	 */
-	vma_iter_config(&store_vmi,
-			vma->vm_start,
-			vma->vm_end);
-
-	ret = vma_iter_prealloc(&store_vmi, vma);
-	if (ret) {
-		vma->vm_end = vma_tx->old_end;
-
-		/*
-		 * Restore the old range. If restoration fails,
-		 * the mm is inconsistent and should be treated as fatal.
-		 */
-		VMA_ITERATOR(restore_vmi, vma->vm_mm,
-			     vma_tx->old_start);
-
-		vma_iter_config(&restore_vmi,
-				vma_tx->old_start,
-				vma_tx->old_end);
-
-		if (vma_iter_prealloc(&restore_vmi, vma))
-			return -ENOMEM;
-
-		vma_iter_store_overwrite(&restore_vmi, vma);
-		vma_iter_free(&restore_vmi);
-
-		return ret;
+		backing->pages[i] = NULL;
+		if (page)
+			space->ops->page_free(page);
 	}
 
-	vma_iter_store_overwrite(&store_vmi, vma);
-	vma_iter_free(&store_vmi);
-
-	return 0;
+	backing->page_count = tx->new_page_count;
+	tx->vma_data->page_count = tx->new_page_count;
 }
 
 unsigned long do_mremap(unsigned long addr,
@@ -1173,9 +1166,6 @@ unsigned long do_mremap(unsigned long addr,
 	VMA_ITERATOR(vmi, mm, addr);
 	struct vm_area_struct *vma;
 	unsigned long end;
-	long ret;
-	uintptr_t base = (uintptr_t)addr;
-	int validate_ret;
 
 	/* not implemented yet */
 	if (new_addr)
@@ -1191,7 +1181,50 @@ unsigned long do_mremap(unsigned long addr,
 	end = addr + old_len;
 	vma = vma_find(&vmi, end);
 	if (vma && vma->vm_swmmu_data) {
-		return -EINVAL;
+		struct nommu_swmmu_shrink_tx shrink_tx;
+		unsigned long new_end;
+		int ret;
+
+		new_len = PAGE_ALIGN(new_len);
+		if (!new_len)
+			return -EINVAL;
+
+		if (new_len == old_len)
+			return vma->vm_start;
+
+		new_end = vma->vm_start + new_len;
+		if (new_len < old_len) {
+			/* shrink */
+
+			ret = prepare_backing_shrink(vma->vm_swmmu_data,
+						new_len,
+						&shrink_tx);
+			if (ret)
+				return ret;
+
+			/*
+			 * mmap_write_lock(mm) is already held here.
+			 * vma_shrink() prepares and commits the VMA range update.
+			 */
+			ret = vma_shrink(&vmi, vma, new_end);
+			if (ret)
+				return ret;
+
+			/*
+			 * The VMA now has the new range. Release the backing tail
+			 * and update the VMA-private metadata.
+			 */
+			down_write(&mm->swmmu_space->lock);
+			commit_backing_shrink(mm->swmmu_space, &shrink_tx);
+			up_write(&mm->swmmu_space->lock);
+
+			validate_mm(mm);
+			nommu_swmmu_validate(mm);
+			return vma->vm_start;
+		} else {
+			/* growth */
+			return -EOPNOTSUPP;
+		}
 	}
 	return do_mremap_nommu(addr, old_len, new_len, flags, new_addr);
 }

@@ -460,6 +460,54 @@ end:
 	return ret;
 }
 
+static int test_standard_mmap_shrink(void)
+{
+	size_t ps = sysconf(_SC_PAGESIZE);
+	void *base;
+	void *shrunk;
+	uint64_t value;
+	int ret = KSFT_PASS;
+
+	base = mmap(NULL, ps * 2,
+		    PROT_READ | PROT_WRITE,
+		    MAP_PRIVATE | MAP_ANONYMOUS,
+		    -1, 0);
+	if (base == MAP_FAILED)
+		return KSFT_FAIL;
+
+	nommu_swmmu_store_u64(base, sizeof(value), 100);
+
+	shrunk = mremap(base, ps * 2, ps, 0);
+	if (shrunk == MAP_FAILED) {
+		ksft_test_result_fail("SWMMU shrink failed: %s\n",
+				      strerror(errno));
+		ret = KSFT_FAIL;
+		goto out;
+	}
+
+	if (shrunk != base) {
+		ksft_test_result_fail(
+			"shrink unexpectedly moved mapping: %p\n",
+			shrunk);
+		ret = KSFT_FAIL;
+		goto out;
+	}
+
+	value = nommu_swmmu_load_u64(shrunk, sizeof(value));
+	if (value != 100) {
+		ksft_test_result_fail(
+			"value was not preserved after shrink\n");
+		ret = KSFT_FAIL;
+		goto out;
+	}
+
+	ksft_test_result_pass("SWMMU mremap shrink works\n");
+
+out:
+	munmap(shrunk == MAP_FAILED ? base : shrunk, ps);
+	return ret;
+}
+
 static int test_standard_mmap_fork(void)
 {
 	void *base;
@@ -1872,7 +1920,7 @@ int main(void)
 	}
 
 	ksft_print_header();
-	ksft_set_plan(24);
+	ksft_set_plan(25);
 
 	if (test_default_mode_off() == KSFT_FAIL)
 		result = KSFT_FAIL;
@@ -1906,6 +1954,9 @@ int main(void)
 		result = KSFT_FAIL;
 
 	if (test_standard_mmap() == KSFT_FAIL)
+		result = KSFT_FAIL;
+
+	if (test_standard_mmap_shrink() == KSFT_FAIL)
 		result = KSFT_FAIL;
 
 	if (test_standard_mmap_fork() == KSFT_FAIL)
