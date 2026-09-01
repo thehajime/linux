@@ -837,6 +837,118 @@ int swmmu_clone_space(struct nommu_swmmu_space *parent,
 	return -EOPNOTSUPP;
 }
 
+static int swmmu_resize_prepare(struct nommu_swmmu_space *space,
+				struct nommu_swmmu_vma *vma_data,
+				size_t new_size,
+				struct nommu_swmmu_resize_tx *tx)
+{
+	struct nommu_swmmu_backing *old_backing;
+	struct nommu_swmmu_backing *new_backing;
+	size_t new_page_count;
+	size_t i;
+
+	if (!space || !vma_data || !vma_data->backing ||
+	    !new_size || !IS_ALIGNED(new_size, SWMMU_PAGE_SIZE))
+		return -EINVAL;
+
+	old_backing = vma_data->backing;
+	new_page_count = new_size / SWMMU_PAGE_SIZE;
+
+	if (!new_page_count ||
+	    new_page_count == vma_data->page_count)
+		return -EINVAL;
+
+	if (refcount_read(&old_backing->refs) != 1)
+		return -EBUSY;
+
+	if (old_backing->page_count != vma_data->page_count)
+		return -EINVAL;
+
+	memset(tx, 0, sizeof(*tx));
+
+	tx->vma_data = vma_data;
+	tx->old_backing = old_backing;
+	tx->old_page_count = vma_data->page_count;
+	tx->new_page_count = new_page_count;
+
+	if (new_page_count < tx->old_page_count)
+		return 0;
+
+	/*
+	 * Growth: allocate a new backing and copy the existing pages.
+	 * Newly allocated pages remain zero-filled.
+	 */
+	new_backing = swmmu_backing_alloc(space, new_size);
+	if (!new_backing)
+		return -ENOMEM;
+
+	for (i = 0; i < tx->old_page_count; i++) {
+		int ret;
+
+		ret = space->ops->page_copy(
+			new_backing->pages[i],
+			old_backing->pages[vma_data->page_offset + i]);
+		if (ret) {
+			swmmu_backing_release(space, new_backing);
+			return ret;
+		}
+	}
+
+	tx->new_backing = new_backing;
+	return 0;
+}
+
+static void swmmu_resize_abort(struct nommu_swmmu_space *space,
+			struct nommu_swmmu_resize_tx *tx)
+{
+	if (!tx || !tx->new_backing)
+		return;
+
+	swmmu_backing_release(space, tx->new_backing);
+	tx->new_backing = NULL;
+}
+
+static void swmmu_resize_commit(struct nommu_swmmu_space *space,
+				struct nommu_swmmu_resize_tx *tx)
+{
+	struct nommu_swmmu_backing *old_backing;
+	size_t i;
+
+	old_backing = tx->old_backing;
+
+	if (tx->new_page_count < tx->old_page_count) {
+		/*
+		 * Shrink in place: release the tail pages.
+		 */
+		for (i = tx->new_page_count;
+		     i < tx->old_page_count; i++) {
+			struct page *page = old_backing->pages[
+				tx->vma_data->page_offset + i];
+
+			old_backing->pages[
+				tx->vma_data->page_offset + i] = NULL;
+
+			if (page)
+				space->ops->page_free(page);
+		}
+
+		old_backing->page_count = tx->new_page_count;
+		tx->vma_data->page_count = tx->new_page_count;
+		return;
+	}
+
+	/*
+	 * Growth: publish the new backing only after the VMA
+	 * expansion has succeeded.
+	 */
+	tx->vma_data->backing = tx->new_backing;
+	tx->vma_data->page_offset = 0;
+	tx->vma_data->page_count = tx->new_page_count;
+	tx->new_backing = NULL;
+
+	swmmu_backing_release(space, old_backing);
+}
+
 
 /*
  * currently, file, prot, populate, uf are not used and ignored.
@@ -1035,6 +1147,7 @@ int do_munmap(struct mm_struct *mm,
 	VMA_ITERATOR(vmi, mm, start);
 	struct vm_area_struct *vma;
 	unsigned long end;
+	int ret;
 
 	len = PAGE_ALIGN(len);
 	if (len == 0)
@@ -1047,144 +1160,65 @@ int do_munmap(struct mm_struct *mm,
 
 	vma = vma_find(&vmi, end);
 	if (vma && vma->vm_swmmu_data) {
-		/* FIXME: until split is implemented*/
-		if (start != vma->vm_start ||
-			end != vma->vm_end)
+		/* FIXME: until split is implemented */
+		if (start < vma->vm_start ||
+			end > vma->vm_end)
 			return -EINVAL;
 
-		vma_iter_config(&vmi, vma->vm_start, vma->vm_end);
-		if (vma_iter_prealloc(&vmi, NULL)) {
-			pr_warn("Allocation of vma tree for process %d failed\n",
-				current->pid);
-			return -ENOMEM;
+		/* tail removal */
+		if (start > vma->vm_start && end == vma->vm_end) {
+			struct nommu_swmmu_resize_tx resize_tx;
+			unsigned long new_len;
+
+			new_len = start - vma->vm_start;
+			ret = swmmu_resize_prepare(mm->swmmu_space,
+						vma->vm_swmmu_data,
+						new_len,
+						&resize_tx);
+			if (ret)
+				return ret;
+
+			ret = vma_shrink(&vmi, vma, start);
+			if (ret) {
+				swmmu_resize_abort(mm->swmmu_space, &resize_tx);
+				return ret;
+			}
+
+			swmmu_resize_commit(mm->swmmu_space, &resize_tx);
+
+			validate_mm(mm);
+			nommu_swmmu_validate(mm);
+			return 0;
 		}
 
-		/* remove from the MM's tree and list */
-		vma_iter_clear(&vmi);
-		vma->vm_mm->map_count--;
+		/* complete removal */
+		if (start == vma->vm_start &&
+			end == vma->vm_end) {
+			vma_iter_config(&vmi, vma->vm_start, vma->vm_end);
+			if (vma_iter_prealloc(&vmi, NULL)) {
+				pr_warn("Allocation of vma tree for process %d failed\n",
+					current->pid);
+				return -ENOMEM;
+			}
 
-		nommu_swmmu_vma_close(mm, vma);
-		vma_close(vma);
-		vm_area_free(vma);
+			/* remove from the MM's tree and list */
+			vma_iter_clear(&vmi);
+			vma->vm_mm->map_count--;
 
-		validate_mm(mm);
-		nommu_swmmu_validate(mm);
-		return 0;
+			nommu_swmmu_vma_close(mm, vma);
+			vma_close(vma);
+			vm_area_free(vma);
+
+			validate_mm(mm);
+			nommu_swmmu_validate(mm);
+			return 0;
+		}
+
+		/* head removal and middle removal require descriptor splitting */
+		return -EOPNOTSUPP;
 	}
 
 	return do_munmap_nommu(mm, start, len, uf);
-}
-
-static int swmmu_resize_prepare(struct nommu_swmmu_space *space,
-				struct nommu_swmmu_vma *vma_data,
-				size_t new_size,
-				struct nommu_swmmu_resize_tx *tx)
-{
-	struct nommu_swmmu_backing *old_backing;
-	struct nommu_swmmu_backing *new_backing;
-	size_t new_page_count;
-	size_t i;
-
-	if (!space || !vma_data || !vma_data->backing ||
-	    !new_size || !IS_ALIGNED(new_size, SWMMU_PAGE_SIZE))
-		return -EINVAL;
-
-	old_backing = vma_data->backing;
-	new_page_count = new_size / SWMMU_PAGE_SIZE;
-
-	if (!new_page_count ||
-	    new_page_count == vma_data->page_count)
-		return -EINVAL;
-
-	if (refcount_read(&old_backing->refs) != 1)
-		return -EBUSY;
-
-	if (old_backing->page_count != vma_data->page_count)
-		return -EINVAL;
-
-	memset(tx, 0, sizeof(*tx));
-
-	tx->vma_data = vma_data;
-	tx->old_backing = old_backing;
-	tx->old_page_count = vma_data->page_count;
-	tx->new_page_count = new_page_count;
-
-	if (new_page_count < tx->old_page_count)
-		return 0;
-
-	/*
-	 * Growth: allocate a new backing and copy the existing pages.
-	 * Newly allocated pages remain zero-filled.
-	 */
-	new_backing = swmmu_backing_alloc(space, new_size);
-	if (!new_backing)
-		return -ENOMEM;
-
-	for (i = 0; i < tx->old_page_count; i++) {
-		int ret;
-
-		ret = space->ops->page_copy(
-			new_backing->pages[i],
-			old_backing->pages[vma_data->page_offset + i]);
-		if (ret) {
-			swmmu_backing_release(space, new_backing);
-			return ret;
-		}
-	}
-
-	tx->new_backing = new_backing;
-	return 0;
-}
-
-static void swmmu_resize_abort(struct nommu_swmmu_space *space,
-			struct nommu_swmmu_resize_tx *tx)
-{
-	if (!tx || !tx->new_backing)
-		return;
-
-	swmmu_backing_release(space, tx->new_backing);
-	tx->new_backing = NULL;
-}
-
-static void swmmu_resize_commit(struct nommu_swmmu_space *space,
-				struct nommu_swmmu_resize_tx *tx)
-{
-	struct nommu_swmmu_backing *old_backing;
-	size_t i;
-
-	old_backing = tx->old_backing;
-
-	if (tx->new_page_count < tx->old_page_count) {
-		/*
-		 * Shrink in place: release the tail pages.
-		 */
-		for (i = tx->new_page_count;
-		     i < tx->old_page_count; i++) {
-			struct page *page = old_backing->pages[
-				tx->vma_data->page_offset + i];
-
-			old_backing->pages[
-				tx->vma_data->page_offset + i] = NULL;
-
-			if (page)
-				space->ops->page_free(page);
-		}
-
-		old_backing->page_count = tx->new_page_count;
-		tx->vma_data->page_count = tx->new_page_count;
-		return;
-	}
-
-	/*
-	 * Growth: publish the new backing only after the VMA
-	 * expansion has succeeded.
-	 */
-	tx->vma_data->backing = tx->new_backing;
-	tx->vma_data->page_offset = 0;
-	tx->vma_data->page_count = tx->new_page_count;
-	tx->new_backing = NULL;
-
-	swmmu_backing_release(space, old_backing);
 }
 
 unsigned long do_mremap(unsigned long addr,

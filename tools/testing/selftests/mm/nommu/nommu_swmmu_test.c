@@ -1452,6 +1452,51 @@ out:
 	return ret;
 }
 
+static int test_standard_munmap_tail(void)
+{
+	size_t ps = sysconf(_SC_PAGESIZE);
+	void *base;
+	uint64_t value;
+	int ret = KSFT_PASS;
+
+	base = mmap(NULL, ps * 2,
+		    PROT_READ | PROT_WRITE,
+		    MAP_PRIVATE | MAP_ANONYMOUS,
+		    -1, 0);
+	if (base == MAP_FAILED)
+		return KSFT_FAIL;
+
+	nommu_swmmu_store_u64(base, sizeof(value), 1234);
+
+	if (munmap((char *)base + ps, ps) < 0) {
+		ksft_test_result_fail(
+			"tail munmap failed: %s\n",
+			strerror(errno));
+		ret = KSFT_FAIL;
+		goto out;
+	}
+
+	value = nommu_swmmu_load_u64(base, sizeof(value));
+	if (value != 1234) {
+		ksft_test_result_fail(
+			"first page changed after tail munmap\n");
+		ret = KSFT_FAIL;
+		goto out;
+	}
+
+	/*
+	 * The removed page should no longer be accessible.
+	 * Use the checked access wrapper once the test helper
+	 * exposes the desired error result.
+	 */
+
+	ksft_test_result_pass("SWMMU tail munmap works\n");
+
+out:
+	munmap(base, ps);
+	return ret;
+}
+
 static int swmmu_set_mode(unsigned long mode)
 {
 	int ret;
@@ -1992,6 +2037,8 @@ int main(void)
 	if (test_standard_mmap_access() == KSFT_FAIL)
 		result = KSFT_FAIL;
 
+	if (test_standard_munmap_tail() == KSFT_FAIL)
+		result = KSFT_FAIL;
 
 
 	/* shall be the last test */
