@@ -34,12 +34,12 @@ KCOV_INSTRUMENT_failslab.o := n
 CFLAGS_init-mm.o += -Wno-override-init
 
 mmu-y			:= nommu.o
-mmu-$(CONFIG_NOMMU_SWMMU) += nommu_swmmu.o vma_range.o
+mmu-$(CONFIG_NOMMU_SWMMU) += nommu_swmmu.o vma_range.o vma_validate.o
 mmu-$(CONFIG_MMU)	:= highmem.o memory.o mincore.o \
 			   mlock.o mmap.o mmu_gather.o mprotect.o mremap.o \
 			   msync.o page_vma_mapped.o pagewalk.o \
 			   pgtable-generic.o rmap.o vmalloc.o vma.o vma_exec.o \
-			   vma_range.o
+			   vma_range.o vma_validate.o
 
 ifdef CONFIG_CROSS_MEMORY_ATTACH
 mmu-$(CONFIG_MMU)	+= process_vm_access.o

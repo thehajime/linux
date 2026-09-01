@@ -854,4 +854,15 @@ struct vm_area_struct *__install_special_mapping(struct mm_struct *mm,
 		vm_flags_t vm_flags, void *priv,
 		const struct vm_operations_struct *ops);
 
+void vma_backend_prepare(struct vma_prepare *vp,
+			 struct vm_area_struct *vma);
+
+void vma_backend_adjust_range(struct vm_area_struct *vma,
+			      unsigned long start,
+			      unsigned long end);
+
+void vma_backend_complete(struct vma_prepare *vp,
+			  struct vma_iterator *vmi,
+			  struct mm_struct *mm);
+
 #endif	/* __MM_VMA_H */

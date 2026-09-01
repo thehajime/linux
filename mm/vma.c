@@ -615,6 +615,27 @@ out_free_vma:
 	return err;
 }
 
+void vma_backend_prepare(struct vma_prepare *vp,
+			 struct vm_area_struct *vma)
+{
+	init_vma_prep(vp, vma);
+	vma_prepare(vp);
+}
+
+void vma_backend_adjust_range(struct vm_area_struct *vma,
+			      unsigned long start,
+			      unsigned long end)
+{
+	vma_adjust_trans_huge(vma, start, end, NULL);
+}
+
+void vma_backend_complete(struct vma_prepare *vp,
+			  struct vma_iterator *vmi,
+			  struct mm_struct *mm)
+{
+	vma_complete(vp, vmi, mm);
+}
+
 /*
  * Split a vma into two pieces at address 'addr', a new vma is allocated
  * either for the first part or the tail.
@@ -669,62 +690,6 @@ static int dup_anon_vma(struct vm_area_struct *dst,
 
 	return 0;
 }
-
-#ifdef CONFIG_DEBUG_VM_MAPLE_TREE
-void validate_mm(struct mm_struct *mm)
-{
-	int bug = 0;
-	int i = 0;
-	struct vm_area_struct *vma;
-	VMA_ITERATOR(vmi, mm, 0);
-
-	mt_validate(&mm->mm_mt);
-	for_each_vma(vmi, vma) {
-#ifdef CONFIG_DEBUG_VM_RB
-		struct anon_vma *anon_vma = vma->anon_vma;
-		struct anon_vma_chain *avc;
-#endif
-		unsigned long vmi_start, vmi_end;
-		bool warn = 0;
-
-		vmi_start = vma_iter_addr(&vmi);
-		vmi_end = vma_iter_end(&vmi);
-		if (VM_WARN_ON_ONCE_MM(vma->vm_end != vmi_end, mm))
-			warn = 1;
-
-		if (VM_WARN_ON_ONCE_MM(vma->vm_start != vmi_start, mm))
-			warn = 1;
-
-		if (warn) {
-			pr_emerg("issue in %s\n", current->comm);
-			dump_stack();
-			dump_vma(vma);
-			pr_emerg("tree range: %px start %lx end %lx\n", vma,
-				 vmi_start, vmi_end - 1);
-			vma_iter_dump_tree(&vmi);
-		}
-
-#ifdef CONFIG_DEBUG_VM_RB
-		if (anon_vma) {
-			anon_vma_lock_read(anon_vma);
-			list_for_each_entry(avc, &vma->anon_vma_chain, same_vma)
-				anon_rmap_tree_verify(avc);
-			anon_vma_unlock_read(anon_vma);
-		}
-#endif
-		/* Check for a infinite loop */
-		if (++i > mm->map_count + 10) {
-			i = -1;
-			break;
-		}
-	}
-	if (i != mm->map_count) {
-		pr_emerg("map_count %d vma iterator %d\n", mm->map_count, i);
-		bug = 1;
-	}
-	VM_BUG_ON_MM(bug, mm);
-}
-#endif /* CONFIG_DEBUG_VM_MAPLE_TREE */
 
 /*
  * Based on the vmg flag indicating whether we need to adjust the vm_start field
@@ -1301,40 +1266,6 @@ nomem:
 	if (!vmg->give_up_on_oom)
 		vmg->state = VMA_MERGE_ERROR_NOMEM;
 	return -ENOMEM;
-}
-
-/**
- * vma_shrink() - Shrink the end of a VMA
- * @vmi: The vma iterator
- * @vma: The VMA to modify
- * @end: The new end
- *
- * Note that the caller may only shrink the end of the VMA.
- *
- * Returns: 0 on success, -ENOMEM otherwise
- */
-int vma_shrink(struct vma_iterator *vmi, struct vm_area_struct *vma,
-	       unsigned long end)
-{
-	struct vma_prepare vp;
-
-	VM_WARN_ON_ONCE(end > vma->vm_end);
-
-	vma_iter_config(vmi, end, vma->vm_end);
-	if (vma_iter_prealloc(vmi, NULL))
-		return -ENOMEM;
-
-	vma_start_write(vma);
-
-	init_vma_prep(&vp, vma);
-	vma_prepare(&vp);
-	vma_adjust_trans_huge(vma, vma->vm_start, end, NULL);
-
-	vma_iter_clear(vmi);
-	__vma_set_range(vma, vma->vm_start, end);
-	vma_complete(&vp, vmi, vma->vm_mm);
-	validate_mm(vma->vm_mm);
-	return 0;
 }
 
 static inline void vms_clear_ptes(struct vma_munmap_struct *vms,
