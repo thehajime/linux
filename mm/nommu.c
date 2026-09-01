@@ -670,11 +670,22 @@ static int delete_vma_from_mm(struct vm_area_struct *vma)
  */
 static void delete_vma(struct mm_struct *mm, struct vm_area_struct *vma)
 {
+#ifdef CONFIG_NOMMU_SWMMU
+	bool swmmu = vma->vm_swmmu_data != NULL;
+
+	if (swmmu)
+		nommu_swmmu_vma_close(mm, vma);
+#endif
+
 	vma_close(vma);
 	if (vma->vm_file)
 		fput(vma->vm_file);
-	if (!vma->vm_swmmu)
+#ifdef CONFIG_NOMMU_SWMMU
+	if (!swmmu)
 		put_nommu_region(vma->vm_region);
+#else
+	put_nommu_region(vma->vm_region);
+#endif
 	vm_area_free(vma);
 }
 
@@ -1684,7 +1695,6 @@ void exit_mmap(struct mm_struct *mm)
 {
 	VMA_ITERATOR(vmi, mm, 0);
 	struct vm_area_struct *vma;
-	int ret;
 
 	if (!mm)
 		return;
@@ -1697,16 +1707,6 @@ void exit_mmap(struct mm_struct *mm)
 	 */
 	mmap_write_lock(mm);
 	for_each_vma(vmi, vma) {
-		if (vma->vm_swmmu) {
-			ret = nommu_swmmu_unmap(mm->swmmu_space,
-						vma->vm_start,
-						vma->vm_end - vma->vm_start);
-			pr_debug("SWMMU exit cleanup: pid=%d mm=%px space=%px "
-				"vma=%px ret=%d range=[%lx-%lx)\n",
-				current->pid, mm, mm->swmmu_space, vma, ret,
-				vma->vm_start, vma->vm_end);
-			WARN_ON_ONCE(ret);
-		}
 		cleanup_vma_from_mm(vma);
 		delete_vma(mm, vma);
 		cond_resched();

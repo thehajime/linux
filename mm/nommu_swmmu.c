@@ -10,22 +10,10 @@
 
 #define SWMMU_VA_BASE ((uintptr_t)0x1000000000ULL)
 
-struct swmmu_mapping {
-	uintptr_t base;
-	size_t length;
-	size_t page_count;
-	unsigned int access;
-	struct page **pages;
-};
-
 struct nommu_swmmu_space {
-	struct maple_tree mappings;
 	struct rw_semaphore lock;
-
-	unsigned long next_address;
 	struct mm_struct *mm;
 	refcount_t users;
-
 	const struct nommu_swmmu_mem_ops *ops;
 };
 
@@ -98,145 +86,241 @@ static size_t page_align(size_t size)
 	       ~(SWMMU_PAGE_SIZE - 1);
 }
 
-#ifdef CONFIG_NOMMU_SWMMU_DEBUG
-static void
-dump_mappings(struct nommu_swmmu_space *space)
+/* helper functions for maple tree */
+static struct nommu_swmmu_backing *swmmu_backing_alloc(struct nommu_swmmu_space *space,
+						unsigned long length)
 {
-	struct swmmu_mapping *mapping;
+	struct nommu_swmmu_backing *backing;
+	size_t i;
+	size_t allocated = 0;
 
-	MA_STATE(mas, &space->mappings, 0, 0);
+	length = PAGE_ALIGN(length);
+	if (!length)
+		return NULL;
 
-	mas_for_each(&mas, mapping, ULONG_MAX) {
-		unsigned long start = mas.index;
-		unsigned long last = mas.last;
+	backing = space->ops->zalloc(sizeof(*backing), GFP_KERNEL);
+	if (!backing)
+		return NULL;
 
-		pr_debug("SWMMU mapping: [%lx-%lx] %p\n",
-			 start, last, mapping);
+	refcount_set(&backing->refs, 1);
+	backing->page_count = length / SWMMU_PAGE_SIZE;
+
+	backing->pages = space->ops->zalloc(
+		backing->page_count * sizeof(*backing->pages),
+		GFP_KERNEL);
+	if (!backing->pages) {
+		space->ops->dealloc(backing);
+		return NULL;
 	}
-}
 
-static void
-dump_mapping_range(struct nommu_swmmu_space *space,
-		   unsigned long start,
-		   unsigned long end)
-{
-	struct swmmu_mapping *mapping;
-
-	MA_STATE(mas, &space->mappings, start, end);
-
-	mas_for_each(&mas, mapping, end) {
-		pr_debug("mapping: [%lx-%lx] %p\n",
-			 mas.index, mas.last, mapping);
+	for (i = 0; i < backing->page_count; i++) {
+		backing->pages[i] = space->ops->page_alloc(GFP_KERNEL);
+		if (!backing->pages[i])
+			goto fail_pages;
+		allocated++;
 	}
-}
-#endif /* CONFIG_NOMMU_SWMMU_DEBUG */
 
-static struct swmmu_mapping *
-find_mapping(struct nommu_swmmu_space *space,
-	     uintptr_t address,
-	     size_t size)
-{
-	struct swmmu_mapping *mapping;
-	unsigned long last;
+	return backing;
 
-	if (!space || size == 0)
-		return NULL;
+fail_pages:
+	while (allocated)
+		space->ops->page_free(backing->pages[--allocated]);
 
-	lockdep_assert_held(&space->lock);
-
-	if (address > ULONG_MAX - (size - 1))
-		return NULL;
-
-	last = address + size - 1;
-
-	MA_STATE(mas, &space->mappings, address, last);
-
-	mapping = mas_walk(&mas);
-	if (!mapping)
-		return NULL;
-
-	/*
-	 * mas.index and mas.last describe the range containing
-	 * the returned entry.
-	 */
-	if (address < mas.index || last > mas.last)
-		return NULL;
-
-	/*
-	 * Equivalent check using the mapping metadata itself.
-	 */
-	if (address < mapping->base ||
-	    last >= mapping->base + mapping->length)
-		return NULL;
-
-	return mapping;
+	space->ops->dealloc(backing->pages);
+	space->ops->dealloc(backing);
+	return NULL;
 }
 
-static struct swmmu_mapping *
-__swmmu_find_overlap(struct nommu_swmmu_space *space,
-		unsigned long first,
-		unsigned long last)
-{
-	MA_STATE(mas, &space->mappings, first, last);
-	void *entry;
-
-	lockdep_assert_held_write(&space->lock);
-
-	entry = mas_find(&mas, last);
-	mas_destroy(&mas);
-
-	return entry;
-}
-
-static bool
-swmmu_find_overlap(struct nommu_swmmu_space *space,
-		unsigned long first,
-		unsigned long last)
-{
-	return __swmmu_find_overlap(space, first, last) ? true : false;
-}
-
-static unsigned long
-swmmu_find_free_range(struct nommu_swmmu_space *space,
-		      unsigned long start,
-		      size_t length)
-{
-	unsigned long base = page_align(start);
-	unsigned long end;
-	struct swmmu_mapping *mapping;
-
-	for (;;) {
-		if (base > ULONG_MAX - length)
-			return 0;
-
-		end = base + length - 1;
-		mapping = __swmmu_find_overlap(space, base, end);
-		if (!mapping)
-			return base;
-
-		base = page_align(mapping->base + mapping->length);
-	}
-}
-
-static void
-release_mapping(struct nommu_swmmu_space *space,
-		struct swmmu_mapping *mapping,
-		size_t allocated_pages)
+static void swmmu_backing_release(struct nommu_swmmu_space *space,
+				struct nommu_swmmu_backing *backing)
 {
 	size_t i;
 
-	if (!space || !mapping)
+	if (!space || !backing)
 		return;
 
-	for (i = 0; i < allocated_pages; i++) {
-		space->ops->page_free(mapping->pages[i]);
+	if (!refcount_dec_and_test(&backing->refs))
+		return;
+
+	for (i = 0; i < backing->page_count; i++)
+		space->ops->page_free(backing->pages[i]);
+
+	space->ops->dealloc(backing->pages);
+	space->ops->dealloc(backing);
+}
+
+static struct nommu_swmmu_vma *swmmu_vma_data_create(struct nommu_swmmu_space *space,
+						struct nommu_swmmu_backing *backing)
+{
+	struct nommu_swmmu_vma *vma_data;
+
+	vma_data = space->ops->zalloc(sizeof(*vma_data), GFP_KERNEL);
+	if (!vma_data)
+		return NULL;
+
+	vma_data->backing = backing;
+	vma_data->page_count = backing->page_count;
+
+	return vma_data;
+}
+
+static struct nommu_swmmu_vma *swmmu_vma_data_dup(struct nommu_swmmu_space *dst_space,
+						const struct nommu_swmmu_vma *src)
+{
+	struct nommu_swmmu_vma *dst;
+	size_t i;
+
+	dst = dst_space->ops->zalloc(sizeof(*dst), GFP_KERNEL);
+	if (!dst)
+		return NULL;
+
+	dst->backing = swmmu_backing_alloc(dst_space,
+					   src->page_count *
+					   SWMMU_PAGE_SIZE);
+	if (!dst->backing) {
+		dst_space->ops->dealloc(dst);
+		return NULL;
 	}
 
-	if (mapping->pages)
-		space->ops->dealloc(mapping->pages);
+	dst->page_offset = src->page_offset;
+	dst->page_count = src->page_count;
+	dst->access = src->access;
 
-	space->ops->dealloc(mapping);
+	for (i = 0; i < src->page_count; i++) {
+		if (dst_space->ops->page_copy(
+			    dst->backing->pages[i],
+			    src->backing->pages[
+				src->page_offset + i])) {
+			/* release the partial destination backing */
+			swmmu_backing_release(dst_space, dst->backing);
+			return NULL;
+		}
+	}
+
+	return dst;
 }
+
+static void swmmu_vma_data_free(struct nommu_swmmu_space *space,
+				struct nommu_swmmu_vma *data)
+{
+	if (!space || !data)
+		return;
+
+	space->ops->dealloc(data);
+}
+
+void nommu_swmmu_vma_close(struct mm_struct *mm,
+			   struct vm_area_struct *vma)
+{
+	struct nommu_swmmu_space *space;
+	struct nommu_swmmu_vma *data;
+	struct nommu_swmmu_backing *backing;
+
+	if (!mm || !vma)
+		return;
+
+	data = vma->vm_swmmu_data;
+	if (!data)
+		return;
+
+	space = mm->swmmu_space;
+	backing = data->backing;
+
+	vma->vm_swmmu_data = NULL;
+	if (backing)
+		swmmu_backing_release(space, backing);
+
+	swmmu_vma_data_free(space, data);
+}
+
+static struct nommu_swmmu_vma *find_swmmu_vma(struct mm_struct *mm,
+					unsigned long address,
+					size_t size)
+{
+	struct vm_area_struct *vma;
+	unsigned long end;
+
+	if (!size || address > ULONG_MAX - (size - 1))
+		return NULL;
+
+	end = address + size;
+
+	vma = find_vma(mm, address);
+	if (!vma ||
+		!vma->vm_swmmu_data ||
+		address < vma->vm_start ||
+		end > vma->vm_end)
+		return NULL;
+
+	return vma->vm_swmmu_data;
+}
+
+static struct vm_area_struct *find_swmmu_vma_exact(struct mm_struct *mm,
+						unsigned long start,
+						size_t length)
+{
+	struct vm_area_struct *vma;
+	unsigned long end;
+
+	if (!length || start > ULONG_MAX - length)
+		return NULL;
+
+	end = start + length;
+
+	vma = find_vma(mm, start);
+	if (!vma ||
+	    vma->vm_start != start ||
+	    vma->vm_end != end ||
+	    !vma->vm_swmmu_data)
+		return NULL;
+
+	return vma;
+}
+
+static struct vm_area_struct *find_swmmu_vma_covering(struct mm_struct *mm,
+						unsigned long address,
+						size_t size)
+{
+	struct vm_area_struct *vma;
+
+	if (!size || address > ULONG_MAX - (size - 1))
+		return NULL;
+
+	vma = find_vma(mm, address);
+	if (!vma ||
+	    !vma->vm_swmmu_data ||
+	    address < vma->vm_start ||
+	    size > vma->vm_end - address)
+		return NULL;
+
+	return vma;
+}
+
+static int swmmu_find_free_range(struct mm_struct *mm,
+				unsigned long min,
+				size_t length,
+				unsigned long *start)
+{
+	VMA_ITERATOR(vmi, mm, 0);
+	int ret;
+
+	mmap_assert_write_locked(mm);
+
+	if (!length || length > ULONG_MAX - min)
+		return -EINVAL;
+
+	if (min >= TASK_SIZE ||
+		length > TASK_SIZE - min)
+		return -ENOMEM;
+
+	ret = vma_iter_area_lowest(&vmi, min, TASK_SIZE, length);
+	if (ret)
+		return ret;
+
+	*start = vma_iter_addr(&vmi);
+	return 0;
+}
+
 
 /*
  * Create a space using @mem_ops.
@@ -258,11 +342,6 @@ __nommu_swmmu_space_create(
 	space->ops = mem_ops;
 	refcount_set(&space->users, 1);
 	init_rwsem(&space->lock);
-	mt_init_flags(&space->mappings,
-		MT_FLAGS_LOCK_EXTERN);
-	mt_set_external_lock(&space->mappings,
-			&space->lock);
-	space->next_address = SWMMU_VA_BASE;
 	space->mm = NULL;
 
 	return space;
@@ -297,31 +376,12 @@ nommu_swmmu_space_create_with_ops(
 static void swmmu_space_destroy_final(struct nommu_swmmu_space *space)
 {
 	const struct nommu_swmmu_mem_ops *mem_ops;
-	struct swmmu_mapping *mapping;
-	int i;
 
 	if (!space)
 		return;
 
-	down_write(&space->lock);
-
 	mem_ops = space->ops;
-
-	MA_STATE(mas, &space->mappings, 0, 0);
-	mas_for_each(&mas, mapping, ULONG_MAX) {
-		for (i = 0; i < mapping->page_count; i++)
-			mem_ops->page_free(mapping->pages[i]);
-
-		mem_ops->dealloc(mapping->pages);
-		mem_ops->dealloc(mapping);
-	}
-
-	if (space->mm && space->mm->swmmu_space == space)
-		space->mm->swmmu_space = NULL;
-	space->mm = NULL;
-	__mt_destroy(&space->mappings);
-
-	up_write(&space->lock);
+	WARN_ON_ONCE(space->mm);
 
 	mem_ops->dealloc(space);
 }
@@ -385,15 +445,18 @@ void nommu_swmmu_space_put(struct nommu_swmmu_space *space)
 static bool
 nommu_swmmu_space_empty(struct nommu_swmmu_space *space)
 {
-	MA_STATE(mas, &space->mappings, 0, ULONG_MAX);
-	void *entry;
+	struct mm_struct *mm = space->mm;
+	VMA_ITERATOR(vmi, mm, 0);
+	struct vm_area_struct *vma;
 
-	lockdep_assert_held(&space->lock);
+	mmap_assert_locked(mm);
 
-	entry = mas_find(&mas, ULONG_MAX);
-	mas_destroy(&mas);
+	for_each_vma(vmi, vma) {
+		if (vma->vm_swmmu_data)
+			return false;
+	}
 
-	return !entry;
+	return true;
 }
 
 #if IS_ENABLED(CONFIG_NOMMU_SWMMU_KUNIT_TEST)
@@ -431,39 +494,6 @@ void nommu_swmmu_kunit_clear_space(void)
 }
 #endif
 
-/* helper functions for maple tree */
-static int
-swmmu_store_range(struct nommu_swmmu_space *space,
-			 unsigned long first,
-			 unsigned long last,
-			 void *entry,
-			 gfp_t gfp)
-{
-	MA_STATE(mas, &space->mappings, first, last);
-	int ret;
-
-	lockdep_assert_held_write(&space->lock);
-
-	ret = mas_store_gfp(&mas, entry, gfp);
-	mas_destroy(&mas);
-
-	return ret;
-}
-
-static void *
-swmmu_erase(struct nommu_swmmu_space *space,
-		   unsigned long index)
-{
-	MA_STATE(mas, &space->mappings, index, index);
-	void *entry;
-
-	lockdep_assert_held_write(&space->lock);
-
-	entry = mas_erase(&mas);
-	mas_destroy(&mas);
-
-	return entry;
-}
 
 #ifdef CONFIG_DEBUG_VM_MAPLE_TREE
 #define SWMMU_VALIDATE_FAIL(fmt, ...)				\
@@ -473,96 +503,6 @@ swmmu_erase(struct nommu_swmmu_space *space,
 		return -EINVAL;					\
 	} while (0)
 
-static int
-swmmu_validate_vma_links(struct mm_struct *mm,
-			 struct nommu_swmmu_space *space)
-{
-	VMA_ITERATOR(vmi, mm, 0);
-	struct swmmu_mapping *mapping;
-	struct vm_area_struct *vma;
-	unsigned int mapping_count = 0;
-	unsigned int vma_count = 0;
-	unsigned long index = 0;
-
-	mmap_assert_locked(mm);
-	lockdep_assert_held(&space->lock);
-
-	/* First validate every SWMMU mapping against the VMA tree. */
-	mt_for_each(&space->mappings, mapping, index, ULONG_MAX) {
-		unsigned long start;
-		unsigned long end;
-
-		if (!mapping)
-			SWMMU_VALIDATE_FAIL("NULL mapping\n");
-
-		if (!mapping->length)
-			SWMMU_VALIDATE_FAIL("zero-length mapping=%px\n",
-					mapping);
-
-		start = mapping->base;
-		end = mapping->base + mapping->length;
-
-		if (end <= start)
-			SWMMU_VALIDATE_FAIL(
-				"mapping overflow mapping=%px base=%#lx length=%#zx\n",
-				mapping, mapping->base, mapping->length);
-
-		vma = find_vma(mm, start);
-		if (!vma)
-			SWMMU_VALIDATE_FAIL(
-				"no VMA for mapping=[%#lx,%#lx)\n",
-				start, end);
-
-		if (vma->vm_start != start ||
-			vma->vm_end != end ||
-			!vma->vm_swmmu)
-			SWMMU_VALIDATE_FAIL(
-				"VMA mismatch mapping=[%#lx,%#lx) "
-				"vma=[%#lx,%#lx) vm_swmmu=%d\n",
-				start, end,
-				vma->vm_start, vma->vm_end,
-				vma->vm_swmmu);
-
-		mapping_count++;
-	}
-
-	/* Then validate every SWMMU VMA against the SWMMU tree */
-	for_each_vma(vmi, vma) {
-		struct swmmu_mapping *mapping;
-		unsigned long index;
-
-		if (!vma->vm_swmmu)
-			continue;
-
-		vma_count++;
-		index = vma->vm_start;
-		mapping = mt_find(&space->mappings, &index, vma->vm_start);
-
-		if (!mapping)
-			SWMMU_VALIDATE_FAIL(
-				"no mapping for VMA=[%#lx,%#lx)\n",
-				vma->vm_start, vma->vm_end);
-
-		if (mapping->base != vma->vm_start ||
-			mapping->length != vma->vm_end - vma->vm_start)
-			SWMMU_VALIDATE_FAIL(
-				"reverse mismatch mapping=[%#lx,%#lx) "
-				"VMA=[%#lx,%#lx), next_index=%#lx\n",
-				mapping->base,
-				mapping->base + mapping->length,
-				vma->vm_start,
-				vma->vm_end,
-				index);
-	}
-
-	if (mapping_count != vma_count)
-		SWMMU_VALIDATE_FAIL(
-			"mapping/VMA count mismatch: mappings=%u vmas=%u\n",
-			mapping_count, vma_count);
-
-	return 0;
-}
-
 /*
  * Validate the committed SWMMU/VMA state.
  *
@@ -570,21 +510,26 @@ swmmu_validate_vma_links(struct mm_struct *mm,
  */
 static int __nommu_swmmu_validate(struct mm_struct *mm)
 {
-	struct nommu_swmmu_space *space;
+	VMA_ITERATOR(vmi, mm, 0);
+	struct vm_area_struct *vma;
 
-	if (!mm)
-		return -EINVAL;
+	for_each_vma(vmi, vma) {
+		struct nommu_swmmu_vma *data;
 
-	space = mm->swmmu_space;
-	if (!space)
-		return 0;
+		if (!vma->vm_swmmu_data)
+			continue;
 
-	mmap_assert_locked(mm);
-	lockdep_assert_held(&space->lock);
+		data = vma->vm_swmmu_data;
 
-	mt_validate(&space->mappings);
+		VM_BUG_ON_MM(!data->backing, mm);
+		VM_BUG_ON_MM(!data->page_count, mm);
+		VM_BUG_ON_MM(
+			vma->vm_end - vma->vm_start !=
+			data->page_count * SWMMU_PAGE_SIZE,
+			mm);
+	}
 
-	return swmmu_validate_vma_links(mm, space);
+	return 0;
 }
 
 /*
@@ -626,101 +571,146 @@ static inline int __nommu_swmmu_validate(struct mm_struct *mm)
 
 #endif
 
-long swmmu_alloc(size_t size)
+
+static void *__swmmu_translate_mm(struct mm_struct *mm,
+				unsigned long address,
+				size_t size,
+				int *status,
+				int write)
 {
-	struct nommu_swmmu_space *space;
-
-	space = nommu_swmmu_current();
-	if (!space)
-		return -EINVAL;
-
-	return nommu_swmmu_map(space, size);
-}
-
-int swmmu_free(void *address)
-{
-	struct nommu_swmmu_space *space;
-
-	space = nommu_swmmu_current();
-	if (!space || !address)
-		return -EINVAL;
-
-	return nommu_swmmu_unmap(space,
-				 (unsigned long)address,
-				 0);
-}
-
-static void *__swmmu_translate(struct nommu_swmmu_space *space,
-			uintptr_t address,
-			size_t size,
-			int *status,
-			int write)
-{
-	struct swmmu_mapping *mapping;
+	struct vm_area_struct *vma;
+	struct nommu_swmmu_vma *swmmu_vma;
+	struct nommu_swmmu_backing *backing;
 	size_t offset;
 	size_t page_index;
 
-	(void)write;
+	mmap_assert_locked(mm);
 
-	lockdep_assert_held(&space->lock);
-
-	mapping = find_mapping(space, address, size);
-	if (!mapping) {
+	if (!size || address > ULONG_MAX - (size - 1)) {
 		*status = -EFAULT;
 		return NULL;
 	}
 
-	if (write) {
-		if (!(mapping->access & NOMMU_SWMMU_WRITE)) {
-			*status = -EACCES;
-			return NULL;
-		}
-	} else {
-		if (!(mapping->access & NOMMU_SWMMU_READ)) {
-			*status = -EACCES;
-			return NULL;
-		}
+	vma = find_vma(mm, address);
+	if (!vma ||
+		!vma->vm_swmmu_data ||
+		address < vma->vm_start ||
+		size > vma->vm_end - address) {
+		*status = -EFAULT;
+		return NULL;
 	}
 
-	offset = address - mapping->base;
+	swmmu_vma = vma->vm_swmmu_data;
+	backing = swmmu_vma->backing;
+
+	if (write) {
+		if (!(swmmu_vma->access & NOMMU_SWMMU_WRITE)) {
+			*status = -EACCES;
+			return NULL;
+		}
+	} else if (!(swmmu_vma->access & NOMMU_SWMMU_READ)) {
+		*status = -EACCES;
+		return NULL;
+	}
+
+	offset = swmmu_vma->page_offset +
+		(address - vma->vm_start);
+
 	page_index = offset / SWMMU_PAGE_SIZE;
 	offset %= SWMMU_PAGE_SIZE;
 
-	/*
-	 * This function returns a contiguous pointer from one page only.
-	 * Multi-page copies are handled by swmmu_load_u64/store_u64.
-	 */
-	if (offset + size > SWMMU_PAGE_SIZE) {
+	if (page_index >= backing->page_count ||
+		offset + size > SWMMU_PAGE_SIZE) {
 		*status = -EINVAL;
 		return NULL;
 	}
 
-	return page_address(mapping->pages[page_index]) + offset;
+	return page_address(backing->pages[page_index]) + offset;
 }
 
-static int
-__swmmu_check_access(struct nommu_swmmu_space *space,
-		     uintptr_t address,
-		     size_t size,
-		     int write)
+static int swmmu_copy_from_mm(struct mm_struct *mm,
+			      unsigned long address,
+			      void *destination,
+			      size_t size)
 {
-	int ret;
+	int ret = 0;
 
-	lockdep_assert_held(&space->lock);
+	mmap_read_lock(mm);
 
 	while (size) {
-		size_t page_offset;
-		size_t chunk;
+		size_t offset = address & (SWMMU_PAGE_SIZE - 1);
+		size_t chunk = SWMMU_PAGE_SIZE - offset;
+		void *source;
 
-		if (address > ULONG_MAX - (size - 1))
-			return -EFAULT;
-
-		page_offset = address & (SWMMU_PAGE_SIZE - 1);
-		chunk = SWMMU_PAGE_SIZE - page_offset;
 		if (chunk > size)
 			chunk = size;
 
-		if (!__swmmu_translate(space, address, chunk, &ret, write))
+		source = __swmmu_translate_mm(mm, address, chunk,
+					      &ret, false);
+		if (!source)
+			break;
+
+		memcpy(destination, source, chunk);
+
+		address += chunk;
+		destination = (unsigned char *)destination + chunk;
+		size -= chunk;
+	}
+
+	mmap_read_unlock(mm);
+	return ret;
+}
+
+static int swmmu_copy_to_mm(struct mm_struct *mm,
+			uintptr_t address, const void *source,
+			size_t size)
+{
+	int ret = 0;
+
+	mmap_read_lock(mm);
+
+	while (size) {
+		size_t page_offset = address & (SWMMU_PAGE_SIZE - 1);
+		size_t chunk = SWMMU_PAGE_SIZE - page_offset;
+		void *destination;
+
+		if (chunk > size)
+			chunk = size;
+
+		destination = __swmmu_translate_mm(mm, address, chunk, &ret, 1);
+		if (!destination)
+			goto out;
+
+		memcpy(destination, source, chunk);
+
+		address += chunk;
+		source = (const unsigned char *)source + chunk;
+		size -= chunk;
+	}
+
+out:
+	mmap_read_unlock(mm);
+	return ret;
+}
+
+static int __swmmu_check_access_mm(struct mm_struct *mm,
+				   unsigned long address,
+				   size_t size,
+				   int write)
+{
+	int ret = 0;
+
+	mmap_assert_locked(mm);
+
+	while (size) {
+		size_t offset = address & (SWMMU_PAGE_SIZE - 1);
+		size_t chunk = SWMMU_PAGE_SIZE - offset;
+
+		if (chunk > size)
+			chunk = size;
+
+		if (!__swmmu_translate_mm(mm, address, chunk,
+					  &ret, write))
 			return ret;
 
 		address += chunk;
@@ -735,204 +725,23 @@ int nommu_swmmu_check_access(struct nommu_swmmu_space *space,
 			size_t size,
 			int write)
 {
+	struct mm_struct *mm;
 	int ret;
 
 	if (!space || !size)
 		return -EINVAL;
 
-	down_read(&space->lock);
-	ret = __swmmu_check_access(space, address, size, write);
-	up_read(&space->lock);
+	mm = space->mm;
+	if (!mm)
+		return -ENODEV;
+
+	mmap_read_lock(mm);
+	ret = __swmmu_check_access_mm(mm, address, size, write);
+	mmap_read_unlock(mm);
 
 	return ret;
 }
 
-static int swmmu_copy_from_space(struct nommu_swmmu_space *space,
-				  uintptr_t address,
-				  void *destination,
-				  size_t size)
-{
-	int ret = 0;
-
-	down_read(&space->lock);
-
-	while (size) {
-		size_t page_offset = address & (SWMMU_PAGE_SIZE - 1);
-		size_t chunk = SWMMU_PAGE_SIZE - page_offset;
-		void *source;
-
-		if (chunk > size)
-			chunk = size;
-
-		source = __swmmu_translate(space, address, chunk, &ret, 0);
-		if (!source)
-			goto out;
-
-		memcpy(destination, source, chunk);
-
-		address += chunk;
-		destination = (unsigned char *)destination + chunk;
-		size -= chunk;
-	}
-
-out:
-	up_read(&space->lock);
-	return ret;
-}
-
-static int swmmu_copy_to_space(struct nommu_swmmu_space *space,
-				uintptr_t address,
-				const void *source,
-				size_t size)
-{
-	int ret = 0;
-
-	down_read(&space->lock);
-
-	while (size) {
-		size_t page_offset = address & (SWMMU_PAGE_SIZE - 1);
-		size_t chunk = SWMMU_PAGE_SIZE - page_offset;
-		void *destination;
-
-		if (chunk > size)
-			chunk = size;
-
-		destination = __swmmu_translate(space, address, chunk, &ret, 1);
-		if (!destination)
-			goto out;
-
-		memcpy(destination, source, chunk);
-
-		address += chunk;
-		source = (const unsigned char *)source + chunk;
-		size -= chunk;
-	}
-
-out:
-	up_read(&space->lock);
-	return ret;
-}
-
-
-static int
-clone_one_mapping(struct nommu_swmmu_space *child,
-		  const struct swmmu_mapping *source)
-{
-	struct swmmu_mapping *copy;
-	size_t i;
-	int ret;
-
-	copy = child->ops->zalloc(sizeof(*copy), GFP_KERNEL);
-	if (!copy) {
-		pr_debug("%s: page metadata allocation failure", __func__);
-		return -ENOMEM;
-	}
-
-	copy->access = source->access;
-	copy->base = source->base;
-	copy->length = source->length;
-	copy->page_count = source->page_count;
-
-	copy->pages = child->ops->zalloc(copy->page_count * sizeof(*copy->pages),
-				GFP_KERNEL);
-	if (!copy->pages) {
-		child->ops->dealloc(copy);
-		pr_debug("%s: page array allocation failure", __func__);
-		return -ENOMEM;
-	}
-
-	for (i = 0; i < copy->page_count; i++) {
-		copy->pages[i] = child->ops->page_alloc(GFP_KERNEL);
-		if (!copy->pages[i]) {
-			release_mapping(child, copy, i);
-			pr_debug("%s: page allocation failure at [%lu]", __func__, i);
-			return -ENOMEM;
-		}
-
-		ret = child->ops->page_copy(copy->pages[i],
-					source->pages[i]);
-		if (ret) {
-			release_mapping(child, copy, i + 1);
-			pr_debug("%s: page copy failure at [%lu]", __func__, i);
-			return ret;
-		}
-	}
-
-	ret = swmmu_store_range(child,
-				copy->base,
-				copy->base + copy->length - 1,
-				copy,
-				GFP_KERNEL);
-	if (ret) {
-		release_mapping(child, copy, copy->page_count);
-		pr_debug("%s: mtree_store_range failure: %d", __func__, ret);
-		return ret;
-	}
-
-	return 0;
-}
-
-/*
- * Clone @parent into a new software address space.
- *
- * @parent is not modified, but must be protected by the caller's
- * read-side mapping lock while this function executes.
- */
-int swmmu_clone_space(struct nommu_swmmu_space *parent,
-		      struct nommu_swmmu_space **child_out)
-{
-	struct nommu_swmmu_space *child;
-	struct swmmu_mapping *source;
-	int ret;
-	bool parent_locked = false;
-	bool child_locked = false;
-
-	if (!parent || !child_out)
-		return -EINVAL;
-
-	*child_out = NULL;
-
-	child = __nommu_swmmu_space_create(parent->ops);
-	if (!child) {
-		pr_debug("%s: page metadata allocation failure", __func__);
-		return -ENOMEM;
-	}
-
-	down_read(&parent->lock);
-	parent_locked = true;
-	down_write_nested(&child->lock, SINGLE_DEPTH_NESTING);
-	child_locked = true;
-
-	/*
-	 * Preserve the allocator position so future allocations also
-	 * remain deterministic.
-	 */
-	child->next_address = parent->next_address;
-
-	MA_STATE(mas, &parent->mappings, 0, 0);
-	mas_for_each(&mas, source, ULONG_MAX) {
-		ret = clone_one_mapping(child, source);
-		if (ret)
-			goto error;
-	}
-
-	up_write(&child->lock);
-	child_locked = false;
-	up_read(&parent->lock);
-	parent_locked = false;
-
-	*child_out = child;
-	return 0;
-
-error:
-	if (child_locked)
-		up_write(&child->lock);
-	if (parent_locked)
-		up_read(&parent->lock);
-	nommu_swmmu_space_put(child);
-	*child_out = NULL;
-	return ret;
-}
 
 
 int
@@ -940,26 +749,18 @@ nommu_swmmu_load_u64_checked(const void *address,
 			     size_t size,
 			     u64 *value)
 {
-	int ret;
-	struct nommu_swmmu_space *space;
+	struct mm_struct *mm = current->mm;
 
-	space = nommu_swmmu_current();
-
-	if (size != 1 && size != 2 && size != 4 && size != 8)
-		return -EINVAL;
-
-	if (!space)
+	if (!mm || mm->swmmu_mode != NOMMU_SWMMU_ON)
 		return -EFAULT;
 
-	if (!value)
+	if (!value ||
+	    (size != 1 && size != 2 && size != 4 && size != 8))
 		return -EINVAL;
 
-	ret = swmmu_copy_from_space(space,
-				    (uintptr_t)address,
-				    value,
-				    size);
+	return swmmu_copy_from_mm(mm, (unsigned long)address,
+				  value, size);
 
-	return ret;
 }
 
 int
@@ -968,20 +769,18 @@ nommu_swmmu_store_u64_checked(void *address,
 			      u64 value)
 {
 	int ret;
-	struct nommu_swmmu_space *space;
+	struct mm_struct *mm = current->mm;
 
-	space = nommu_swmmu_current();
+	if (!mm || mm->swmmu_mode != NOMMU_SWMMU_ON)
+		return -EFAULT;
 
 	if (size != 1 && size != 2 && size != 4 && size != 8)
 		return -EINVAL;
 
-	if (!space)
-		return -EFAULT;
-
-	ret = swmmu_copy_to_space(space,
-				  (uintptr_t)address,
-				  &value,
-				  size);
+	ret = swmmu_copy_to_mm(mm,
+			(uintptr_t)address,
+			&value,
+			size);
 
 	return ret;
 }
@@ -990,17 +789,15 @@ uint64_t nommu_swmmu_load_u64(const void *address, size_t size)
 {
 	uint64_t value = 0;
 	int ret;
-	struct nommu_swmmu_space *space;
-
-	space = nommu_swmmu_current();
+	struct mm_struct *mm = current->mm;
 
 	if (size != 1 && size != 2 && size != 4 && size != 8)
 		BUG();
 
-	if (!space)
+	if (!mm || mm->swmmu_mode != NOMMU_SWMMU_ON)
 		BUG();
 
-	ret = swmmu_copy_from_space(space,
+	ret = swmmu_copy_from_mm(mm,
 				    (uintptr_t)address,
 				    &value,
 				    size);
@@ -1013,515 +810,51 @@ uint64_t nommu_swmmu_load_u64(const void *address, size_t size)
 long nommu_swmmu_store_u64(void *address, size_t size, uint64_t value)
 {
 	int ret;
-	struct nommu_swmmu_space *space;
-
-	space = nommu_swmmu_current();
+	struct mm_struct *mm = current->mm;
 
 	if (size != 1 && size != 2 && size != 4 && size != 8)
 		BUG();
 
-	if (!space)
+	if (!mm || mm->swmmu_mode != NOMMU_SWMMU_ON)
 		BUG();
 
-	ret = swmmu_copy_to_space(space,
-				  (uintptr_t)address,
-				  &value,
-				  size);
+	ret = swmmu_copy_to_mm(mm,
+			(uintptr_t)address,
+			&value,
+			size);
 	if (ret)
 		BUG();
 
 	return ret;
 }
 
-long nommu_swmmu_map_at(struct nommu_swmmu_space *space,
-			unsigned long address,
-			size_t size,
-			unsigned int access,
-			enum nommu_swmmu_map_mode mode)
-{
-	struct swmmu_mapping *mapping;
-	size_t length;
-	size_t i;
-	uintptr_t base;
-	long ret;
-
-	if (!space || !size)
-		return -EINVAL;
-
-	length = page_align(size);
-	if (length < size)
-		return -EINVAL;
-
-	if (access & ~(NOMMU_SWMMU_READ |
-			NOMMU_SWMMU_WRITE |
-			NOMMU_SWMMU_EXEC))
-		return -EINVAL;
-
-	down_write(&space->lock);
-
-	/*
-	 * currently partially implemented:
-	 *
-	 * address == 0, no fixed flag:
-	 *     allocate at next_address
-	 *
-	 * nonzero address, no fixed flag:
-	 *     reject with -EINVAL
-	 *
-	 * MAP_FIXED:
-	 *     exact address, but reject overlap for now
-	 *
-	 * MAP_FIXED_NOREPLACE:
-	 *     exact address, reject overlap
-	 */
-	switch (mode) {
-	case NOMMU_SWMMU_MAP_AUTO:
-		if (address) {
-			ret = -EINVAL;
-			goto out_unlock;
-		}
-		base = swmmu_find_free_range(space, space->next_address, length);
-		if (!base) {
-			ret = -ENOMEM;
-			goto out_unlock;
-		}
-		break;
-
-	case NOMMU_SWMMU_MAP_HINT:
-		if (!address) {
-			ret = -EINVAL;
-			goto out_unlock;
-		}
-		base = swmmu_find_free_range(space, page_align(address), length);
-		if (!base)
-			base = swmmu_find_free_range(space, space->next_address,
-						length);
-		if (!base) {
-			ret = -ENOMEM;
-			goto out_unlock;
-		}
-		break;
-	case NOMMU_SWMMU_MAP_FIXED:
-	case NOMMU_SWMMU_MAP_FIXED_NOREPLACE:
-		if (!address || !PAGE_ALIGNED(address)) {
-			ret = -EINVAL;
-			goto out_unlock;
-		}
-		base = address;
-		break;
-
-	default:
-		ret = -EINVAL;
-		goto out_unlock;
-	}
-
-	/* range overflow ? */
-	if (base > UINTPTR_MAX - length) {
-		ret = -EINVAL;
-		goto out_unlock;
-	}
-
-	if (base > LONG_MAX) {
-		ret = -EOVERFLOW;
-		goto out_unlock;
-	}
-
-	/* overlap check */
-	/* FIXME: MAP_FIXED replacement is not yet implemented */
-	if (swmmu_find_overlap(space, base, base + length - 1) &&
-		(mode == NOMMU_SWMMU_MAP_FIXED ||
-			mode == NOMMU_SWMMU_MAP_FIXED_NOREPLACE)) {
-		ret = -EEXIST;
-		goto out_unlock;
-	}
-
-	mapping = space->ops->zalloc(sizeof(*mapping), GFP_KERNEL);
-	if (!mapping) {
-		ret = -ENOMEM;
-		goto out_unlock;
-	}
-
-	mapping->access = access;
-	mapping->base = base;
-	mapping->length = length;
-
-	mapping->page_count = length / SWMMU_PAGE_SIZE;
-
-	mapping->pages = space->ops->zalloc(mapping->page_count *
-					sizeof(*mapping->pages),
-					GFP_KERNEL);
-	if (!mapping->pages) {
-		ret = -ENOMEM;
-		goto free_mapping;
-	}
-
-	for (i = 0; i < mapping->page_count; i++) {
-		mapping->pages[i] = space->ops->page_alloc(GFP_KERNEL);
-		if (!mapping->pages[i]) {
-			ret = -ENOMEM;
-			goto free_pages;
-		}
-	}
-
-	ret = swmmu_store_range(space,
-				base,
-				base + length - 1,
-				mapping,
-				GFP_KERNEL);
-	if (ret) {
-		pr_warn("%s: mtree_store_range failure: %ld", __func__, ret);
-		goto free_pages;
-	}
-
-	space->next_address = base + length;
-	ret = (long)base;
-	goto out_unlock;
-
-free_pages:
-	while (i > 0)
-		space->ops->page_free(mapping->pages[--i]);
-
-	space->ops->dealloc(mapping->pages);
-free_mapping:
-	space->ops->dealloc(mapping);
-
-out_unlock:
-	up_write(&space->lock);
-	return ret;
-}
-
-long nommu_swmmu_map(struct nommu_swmmu_space *space,
-		     size_t size)
-{
-	/*
-	 *  EXEC permission is recorded for future instruction-fetch handling;
-	 * the current compiler/runtime ABI only validates data reads and writes.
-	 */
-	return nommu_swmmu_map_at(space, 0, size,
-				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
-				NOMMU_SWMMU_MAP_AUTO);
-}
-
 int nommu_swmmu_unmap(struct nommu_swmmu_space *space,
 		      unsigned long address,
 		      size_t size)
 {
-	struct swmmu_mapping *mapping;
-	uintptr_t base = (uintptr_t)address;
-	void *entry;
-	int ret = 0;
+	return -EOPNOTSUPP;
 
-	if (!space)
-		return -EINVAL;
-
-	down_write(&space->lock);
-	mapping = find_mapping(space, base, 1);
-	if (!mapping || mapping->base != address) {
-		ret = -EINVAL;
-		goto out;
-	}
-
-	if (size && size != mapping->length) {
-		ret =  -EINVAL;
-		goto out;
-	}
-
-	entry = swmmu_erase(space, mapping->base);
-	if (entry != mapping) {
-		pr_warn("%s: maple tree inconsistency", __func__);
-		ret = -EINVAL;
-		goto out;
-	}
-
-	release_mapping(space, mapping, mapping->page_count);
-
-out:
-	up_write(&space->lock);
-	return ret;
 }
-
-static void swmmu_remap_abort(struct nommu_swmmu_remap_tx *tx)
-{
-	size_t i;
-
-	lockdep_assert_held(&tx->space->lock);
-
-	if (tx->committed)
-		return;
-
-	if (tx->mas_prepared) {
-		mas_destroy(&tx->mas);
-		tx->mas_prepared = false;
-	}
-
-	if (!tx->new_pages)
-		return;
-
-	for (i = tx->old_page_count; i < tx->new_page_count; i++) {
-		if (tx->new_pages[i])
-			tx->space->ops->page_free(tx->new_pages[i]);
-	}
-
-	tx->space->ops->dealloc(tx->new_pages);
-	tx->new_pages = NULL;
-}
-
-static int
-swmmu_remap_prepare(struct nommu_swmmu_space *space,
-		struct swmmu_mapping *mapping,
-		size_t new_size,
-		struct nommu_swmmu_remap_tx *tx)
-{
-	int ret = 0;
-
-	lockdep_assert_held(&space->lock);
-
-	tx->committed = false;
-
-	/* validate new size */
-	if (tx->new_end < tx->old_end) {
-		/* shrink */
-		/* remove tail from maple tree */
-		MA_STATE(mas, &space->mappings,
-			tx->new_end, /* remove start */
-			tx->old_end - 1); /* remove end */
-
-		tx->mas = mas;
-		ret = mas_preallocate(&tx->mas, NULL, GFP_KERNEL);
-		if (ret) {
-			mas_destroy(&tx->mas);
-			pr_warn("maple tree preallocate shrink");
-			goto out;
-		}
-		tx->mas_prepared = true;
-
-	} else {
-		/* growth */
-		/* check overlap */
-		if (swmmu_find_overlap(space, tx->old_end, /* grow_start */
-						tx->new_end - 1 /* grow_end */
-						)) {
-			ret = -EEXIST;
-			goto out;
-		}
-		/* allocate new page array */
-		tx->new_pages = space->ops->zalloc(
-			tx->new_page_count * sizeof(*tx->new_pages),
-			GFP_KERNEL);
-		if (!tx->new_pages) {
-			ret = -ENOMEM;
-			goto out;
-		}
-		tx->old_pages = mapping->pages;
-
-		memcpy(tx->new_pages,
-			tx->old_pages,
-			tx->old_page_count * sizeof(*tx->new_pages));
-
-		for (int i = tx->old_page_count; i < tx->new_page_count; i++) {
-			tx->new_pages[i] = space->ops->page_alloc(GFP_KERNEL);
-			if (!tx->new_pages[i]) {
-				while (i > tx->old_page_count) {
-					space->ops->page_free(tx->new_pages[--i]);
-					tx->new_pages[i] = NULL;
-				}
-
-				space->ops->dealloc(tx->new_pages);
-				tx->new_pages = NULL;
-				ret = -ENOMEM;
-				goto out;
-			}
-			/* zero-fill new pages */
-			clear_highpage(tx->new_pages[i]);
-		}
-
-		/* allocate new backing pages */
-		MA_STATE(mas, &space->mappings,
-			mapping->base,
-			mapping->base + new_size - 1);
-		tx->mas = mas;
-		/* preallocate SWMMU Maple Tree nodes */
-		ret = mas_preallocate(&tx->mas, mapping, GFP_KERNEL);
-		if (ret) {
-			mas_destroy(&tx->mas);
-
-			for (int i = tx->old_page_count; i < tx->new_page_count; i++) {
-				space->ops->page_free(tx->new_pages[i]);
-				tx->new_pages[i] = NULL;
-			}
-
-			space->ops->dealloc(tx->new_pages);
-			tx->new_pages = NULL;
-			goto out;
-		}
-		tx->mas_prepared = true;
-	}
-
-out:
-	return ret;
-}
-
-static void
-swmmu_remap_commit(struct nommu_swmmu_remap_tx *tx)
-{
-	lockdep_assert_held(&tx->space->lock);
-
-	if (tx->new_end < tx->old_end) {
-		/* shrink */
-		/* preallocate removal of the tail */
-		/* clear the tail with mas_store_prealloc(NULL) */
-		mas_store_prealloc(&tx->mas, NULL);
-
-		/* Returns any unused preallocated nodes. */
-		mas_destroy(&tx->mas);
-		tx->mas_prepared = false;
-
-		/* free obsolete page array/pages */
-		for (int i = tx->old_page_count; i > tx->new_page_count;) {
-			i--;
-			tx->space->ops->page_free(tx->mapping->pages[i]);
-			tx->mapping->pages[i] = NULL;
-		}
-
-		/* publish new mapping metadata */
-		tx->mapping->page_count = tx->new_page_count;
-		tx->mapping->length = tx->new_end - tx->mapping->base;
-	} else {
-		/* growth */
-		mas_store_prealloc(&tx->mas, tx->mapping);
-		mas_destroy(&tx->mas);
-		tx->mas_prepared = false;
-
-		tx->space->ops->dealloc(tx->old_pages);
-		tx->old_pages = NULL;
-
-		/* publish new mapping metadata */
-		tx->mapping->pages = tx->new_pages;
-		tx->new_pages = NULL;
-
-		tx->mapping->page_count = tx->new_page_count;
-		tx->mapping->length = tx->new_page_count * SWMMU_PAGE_SIZE;
-	}
-
-	tx->committed = true;
-}
-
-
 long nommu_swmmu_remap(struct nommu_swmmu_space *space,
 			unsigned long address,
 			size_t old_size,
 			size_t new_size)
 {
-	uintptr_t base = (uintptr_t)address;
-	long ret;
-	struct nommu_swmmu_remap_tx tx = {
-		.space = space,
-	};
-
-	if (!space)
-		return -EINVAL;
-
-	/* insanity checks first */
-	if (old_size > SIZE_MAX - (PAGE_SIZE - 1) ||
-		new_size > SIZE_MAX - (PAGE_SIZE - 1))
-		return -EINVAL;
-
-	old_size = PAGE_ALIGN(old_size);
-	new_size = PAGE_ALIGN(new_size);
-	if (!old_size || !new_size)
-		return -EINVAL;
-
-	if (base > ULONG_MAX - (old_size - 1) ||
-		base > ULONG_MAX - (new_size - 1))
-		return -EINVAL;
-
-	down_write(&space->lock);
-	tx.mapping = find_mapping(space, base, 1);
-	if (!tx.mapping || tx.mapping->base != base) {
-		ret = -EINVAL;
-		goto out;
-	}
-
-	if (tx.mapping->length != old_size) {
-		ret = -EINVAL;
-		goto out;
-	}
-
-	if (old_size == new_size) {
-		ret = address;
-		goto out;
-	}
-
-	tx.old_page_count = old_size / SWMMU_PAGE_SIZE;
-	tx.new_page_count = new_size / SWMMU_PAGE_SIZE;
-	tx.old_end = base + old_size;
-	tx.new_end = base + new_size;
-
-	ret = swmmu_remap_prepare(space, tx.mapping, new_size, &tx);
-	if (ret) {
-		swmmu_remap_abort(&tx);
-		goto out;
-	}
-
-	/* commit must not fail */
-	swmmu_remap_commit(&tx);
-	ret = address;
-
-out:
-	up_write(&space->lock);
-	return ret;
+	return -EOPNOTSUPP;
 }
 
 int nommu_swmmu_dup_mmap(struct mm_struct *dst,
 			 struct mm_struct *src)
 {
-	VMA_ITERATOR(src_vmi, src, 0);
-	VMA_ITERATOR(dst_vmi, dst, 0);
-	struct vm_area_struct *src_vma;
-	struct vm_area_struct *dst_vma;
-	int ret;
-
-	/*
-	 * The caller must hold the appropriate mmap locks for src
-	 * and dst. Follow the lock ordering used by the surrounding
-	 * dup_mmap() implementation.
-	 */
-	for_each_vma(src_vmi, src_vma) {
-		if (!src_vma->vm_swmmu)
-			continue;
-
-		dst_vma = vm_area_dup(src_vma);
-		if (!dst_vma)
-			return -ENOMEM;
-
-		dst_vma->vm_mm = dst;
-		dst_vma->vm_swmmu = true;
-
-		if (WARN_ON_ONCE(dst_vma->vm_start >= dst_vma->vm_end)) {
-			vm_area_free(dst_vma);
-			return -EINVAL;
-		}
-
-		/*
-		 * use mas_set_range() instead of vma_iter_config(),
-		 * which assumes the new range is a subrange of the
-		 * iterator's current cached slot.
-		 */
-		mas_set_range(&dst_vmi.mas, dst_vma->vm_start,
-			dst_vma->vm_end - 1);
-
-		ret = vma_iter_prealloc(&dst_vmi, dst_vma);
-		if (ret) {
-			vm_area_free(dst_vma);
-			return ret;
-		}
-
-		vma_iter_store_new(&dst_vmi, dst_vma);
-		dst->map_count++;
-	}
-
-	return 0;
+	return -EOPNOTSUPP;
 }
+
+int swmmu_clone_space(struct nommu_swmmu_space *parent,
+		struct nommu_swmmu_space **child_out)
+{
+	return -EOPNOTSUPP;
+}
+
 
 /*
  * currently, file, prot, populate, uf are not used and ignored.
@@ -1538,23 +871,73 @@ static unsigned long do_mmap_swmmu(struct file *file,
 			struct list_head *uf)
 {
 	struct mm_struct *mm = current->mm;
-	vm_flags_t vm_flags = vma_flags_to_legacy(vma_flags);
+	struct nommu_swmmu_space *space = mm->swmmu_space;
+	struct nommu_swmmu_backing *backing;
+	struct nommu_swmmu_vma *swmmu_vma;
 	struct vm_area_struct *vma;
-	unsigned long swmmu_addr;
+	VMA_ITERATOR(vmi, mm, 0);
+	unsigned long start;
+	unsigned long end;
 	int ret;
 	unsigned int access;
-	enum nommu_swmmu_map_mode mode;
-	VMA_ITERATOR(vmi, mm, 0);
 
-	/* common validation/address selection */
-	if (populate)
-		*populate = 0;
+	mmap_assert_write_locked(mm);
 
-	if (current->mm->map_count >= get_sysctl_max_map_count())
-		return -ENOMEM;
+	/*
+	 * Select start/end using VMA/range management.
+	 * This replaces swmmu_find_free_range().
+	 */
+	/*
+	 * currently partially implemented:
+	 *
+	 * address == 0, no fixed flag:
+	 *     allocate at next_address
+	 *
+	 * nonzero address, no fixed flag:
+	 *     reject with -EINVAL
+	 *
+	 * MAP_FIXED:
+	 *     exact address, but reject overlap for now
+	 *
+	 * MAP_FIXED_NOREPLACE:
+	 *     exact address, reject overlap
+	 */
+	if (flags & MAP_FIXED || flags & MAP_FIXED_NOREPLACE) {
+		if (!addr || !PAGE_ALIGNED(addr)) {
+			return -EINVAL;
+		}
+
+		len = PAGE_ALIGN(len);
+		if (!len || addr > ULONG_MAX - len)
+			return -EINVAL;
+		end = addr + len;
+
+		vma = find_vma(mm, addr);
+		if (vma && vma->vm_start < end) {
+			if (flags & MAP_FIXED_NOREPLACE)
+				return -EEXIST;
+
+			/* MAP_FIXED replacement is not implemented yet. */
+			return -EEXIST;
+		}
+
+		start = addr;
+	}
+	else if (addr != 0) {
+		ret = swmmu_find_free_range(mm, page_align(addr), len, &start);
+		if (ret)
+			ret = swmmu_find_free_range(mm, SWMMU_VA_BASE, len, &start);
+		if (ret)
+			return ret;
+	}
+	else {
+		ret = swmmu_find_free_range(mm, SWMMU_VA_BASE, len, &start);
+		if (ret)
+			return ret;
+	}
+	end = start + PAGE_ALIGN(len);
 
 	access = 0;
-
 	if (prot & PROT_READ)
 		access |= NOMMU_SWMMU_READ;
 	if (prot & PROT_WRITE)
@@ -1562,52 +945,47 @@ static unsigned long do_mmap_swmmu(struct file *file,
 	if (prot & PROT_EXEC)
 		access |= NOMMU_SWMMU_EXEC;
 
-	if (flags & MAP_FIXED)
-		mode = NOMMU_SWMMU_MAP_FIXED;
-	else if (flags & MAP_FIXED_NOREPLACE)
-		mode = NOMMU_SWMMU_MAP_FIXED_NOREPLACE;
-	else if (addr != 0)
-		mode = NOMMU_SWMMU_MAP_HINT;
-	else
-		mode = NOMMU_SWMMU_MAP_AUTO;
 
-	swmmu_addr = nommu_swmmu_map_at(mm->swmmu_space,
-					addr, len, access, mode);
-	if (IS_ERR_VALUE(swmmu_addr))
-		return swmmu_addr;
+	backing = swmmu_backing_alloc(space, end - start);
+	if (!backing)
+		return -ENOMEM;
 
-	/* create and initialize VMA for swmmu_addr..swmmu_addr + len */
-	vma = vm_area_alloc(current->mm);
+	vma = vm_area_alloc(mm);
 	if (!vma) {
-		nommu_swmmu_unmap(mm->swmmu_space,
-				swmmu_addr,
-				0);
+		swmmu_backing_release(space, backing);
 		return -ENOMEM;
 	}
 
-
-	vm_flags_init(vma, vm_flags);
+	vm_flags_init(vma, vma_flags_to_legacy(vma_flags));
 	vma_set_pgoff(vma, pgoff);
 
-	vma->vm_start = swmmu_addr;
-	vma->vm_end = swmmu_addr + PAGE_ALIGN(len);
-	vma->vm_swmmu = true;
+	vma->vm_start = start;
+	vma->vm_end = end;
 
-	vma_iter_config(&vmi, vma->vm_start, vma->vm_end);
+	swmmu_vma = swmmu_vma_data_create(space, backing);
+	if (!swmmu_vma) {
+		vm_area_free(vma);
+		swmmu_backing_release(space, backing);
+		return -ENOMEM;
+	}
+
+	swmmu_vma->access = access;
+	vma->vm_swmmu_data = swmmu_vma;
+
+	vma_iter_config(&vmi, start, end);
 	ret = vma_iter_prealloc(&vmi, vma);
 	if (ret) {
-		nommu_swmmu_unmap(mm->swmmu_space,
-				  swmmu_addr,
-				  0);
+		vma->vm_swmmu_data = NULL;
+		swmmu_vma_data_free(space, swmmu_vma);
 		vm_area_free(vma);
+		swmmu_backing_release(space, backing);
 		return ret;
 	}
+
 	vma_iter_store_new(&vmi, vma);
+	mm->map_count++;
 
-	current->mm->map_count++;
-	nommu_swmmu_validate(mm);
-
-	return swmmu_addr;
+	return start;
 }
 
 static int
@@ -1675,7 +1053,6 @@ int do_munmap(struct mm_struct *mm,
 	VMA_ITERATOR(vmi, mm, start);
 	struct vm_area_struct *vma;
 	unsigned long end;
-	int ret;
 
 	len = PAGE_ALIGN(len);
 	if (len == 0)
@@ -1687,7 +1064,7 @@ int do_munmap(struct mm_struct *mm,
 	end = start + len;
 
 	vma = vma_find(&vmi, end);
-	if (vma && vma->vm_swmmu) {
+	if (vma && vma->vm_swmmu_data) {
 		/* FIXME: until split is implemented*/
 		if (start != vma->vm_start ||
 			end != vma->vm_end)
@@ -1700,17 +1077,11 @@ int do_munmap(struct mm_struct *mm,
 			return -ENOMEM;
 		}
 
-		ret = nommu_swmmu_unmap(mm->swmmu_space,
-					vma->vm_start,
-					vma->vm_end - vma->vm_start);
-		if (ret) {
-			vma_iter_free(&vmi);
-			return ret;
-		}
-
 		/* remove from the MM's tree and list */
 		vma_iter_clear(&vmi);
 		vma->vm_mm->map_count--;
+
+		nommu_swmmu_vma_close(mm, vma);
 		vma_close(vma);
 		vm_area_free(vma);
 
@@ -1818,95 +1189,10 @@ unsigned long do_mremap(unsigned long addr,
 		return -EINVAL;
 
 	end = addr + old_len;
-
 	vma = vma_find(&vmi, end);
-	if (vma && vma->vm_swmmu) {
-		struct nommu_swmmu_remap_tx swmmu_tx = {
-			.space = mm->swmmu_space,
-		};
-		struct nommu_swmmu_vma_tx vma_tx;
-
-		if (flags & (MREMAP_MAYMOVE | MREMAP_FIXED))
-			return -EINVAL;
-
-		if (addr != vma->vm_start ||
-			old_len != vma->vm_end - vma->vm_start)
-			return -EINVAL;
-
-
-		down_write(&mm->swmmu_space->lock);
-		swmmu_tx.mapping = find_mapping(mm->swmmu_space, base, 1);
-		if (!swmmu_tx.mapping || swmmu_tx.mapping->base != base) {
-			ret = -EINVAL;
-			goto out_space_unlock;
-		}
-
-		if (swmmu_tx.mapping->length != old_len) {
-			ret = -EINVAL;
-			goto out_space_unlock;
-		}
-
-		if (new_len > ULONG_MAX - (PAGE_SIZE - 1)) {
-			ret = -EINVAL;
-			goto out_space_unlock;
-		}
-
-		new_len = PAGE_ALIGN(new_len);
-		if (!new_len) {
-			ret = -EINVAL;
-			goto out_space_unlock;
-		}
-
-		if (old_len == new_len) {
-			ret = addr;
-			goto out_space_unlock;
-		}
-
-		swmmu_tx.old_page_count = old_len / SWMMU_PAGE_SIZE;
-		swmmu_tx.new_page_count = new_len / SWMMU_PAGE_SIZE;
-		swmmu_tx.old_end = base + old_len;
-		swmmu_tx.new_end = base + new_len;
-
-		ret = swmmu_remap_prepare(mm->swmmu_space,
-			swmmu_tx.mapping, new_len, &swmmu_tx);
-		if (ret) {
-			swmmu_remap_abort(&swmmu_tx);
-			goto out_space_unlock;
-		}
-
-		VMA_ITERATOR(vmi1, mm, addr);
-		vma_tx.clear_vmi = vmi1;
-
-		ret = nommu_swmmu_vma_prepare(vma,
-					vma->vm_start + new_len,
-					&vma_tx);
-		if (ret) {
-			swmmu_remap_abort(&swmmu_tx);
-			goto out_space_unlock;
-		}
-
-		ret = nommu_swmmu_vma_commit(&vma_tx, vma);
-		if (ret) {
-			swmmu_remap_abort(&swmmu_tx);
-			goto out_space_unlock;
-		}
-		swmmu_remap_commit(&swmmu_tx);
-
-		/*
-		 * Both the VMA tree and SWMMU mapping tree now describe
-		 * the new committed state.
-		 */
-		validate_ret = __nommu_swmmu_validate(mm);
-		VM_BUG_ON_MM(validate_ret, mm);
-
-		ret = vma->vm_start;
-		goto out_space_unlock;
-
-out_space_unlock:
-		up_write(&mm->swmmu_space->lock);
-		return ret;
+	if (vma && vma->vm_swmmu_data) {
+		return -EINVAL;
 	}
-
 	return do_mremap_nommu(addr, old_len, new_len, flags, new_addr);
 }
 
@@ -1919,6 +1205,9 @@ int nommu_swmmu_set_mode(struct mm_struct *mm,
 
 	if (!mm)
 		return -EINVAL;
+
+	if (SWMMU_VA_BASE >= TASK_SIZE)
+		BUG();
 
 	if (mode != NOMMU_SWMMU_OFF &&
 	    mode != NOMMU_SWMMU_ON)
@@ -1961,18 +1250,44 @@ long nommu_swmmu_get_mode(struct mm_struct *mm)
 
 SYSCALL_DEFINE1(nommu_swmmu_alloc, size_t, size)
 {
-	long address;
+	struct mm_struct *mm = current->mm;
 
-	address = swmmu_alloc(size);
-	if (address < 0)
-		return address;
+	if (!mm || mm->swmmu_mode != NOMMU_SWMMU_ON)
+		return -EOPNOTSUPP;
 
-	return (unsigned long)address;
+	return vm_mmap(NULL, 0, size,
+		       PROT_READ | PROT_WRITE,
+		       MAP_PRIVATE | MAP_ANONYMOUS,
+		       0);
 }
 
 SYSCALL_DEFINE1(nommu_swmmu_free, void __user *, address)
 {
-	return swmmu_free(address);
+	struct mm_struct *mm = current->mm;
+	struct vm_area_struct *vma;
+	unsigned long start = (unsigned long)address;
+	unsigned long length;
+	int ret;
+
+	if (!mm || mm->swmmu_mode != NOMMU_SWMMU_ON)
+		return -EOPNOTSUPP;
+
+	mmap_write_lock(mm);
+
+	vma = find_vma(mm, start);
+	if (!vma ||
+		vma->vm_start != start ||
+		!vma->vm_swmmu_data) {
+		ret = -EINVAL;
+		goto out;
+	}
+
+	length = vma->vm_end - vma->vm_start;
+	ret = do_munmap(mm, start, length, NULL);
+
+out:
+	mmap_write_unlock(mm);
+	return ret;
 }
 
 SYSCALL_DEFINE3(nommu_swmmu_load,

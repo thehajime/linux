@@ -1076,7 +1076,7 @@ struct vm_area_struct {
 	struct pfnmap_track_ctx *pfnmap_track_ctx;
 #endif
 #ifdef CONFIG_NOMMU_SWMMU
-	bool vm_swmmu;
+	struct nommu_swmmu_vma *vm_swmmu_data;
 #endif
 } __randomize_layout;
 

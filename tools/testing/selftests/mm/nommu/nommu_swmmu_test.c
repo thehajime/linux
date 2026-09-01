@@ -1261,7 +1261,7 @@ static int test_standard_mmap_nonzero_hint(void)
 	ps = sysconf(_SC_PAGESIZE);
 
 	/* returned address is the hint when it is free */
-	base = mmap((void *)0x1000000000UL, ps, PROT_READ,
+	base = mmap((void *)0x3000000000UL, ps, PROT_READ,
 		    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (base == MAP_FAILED) {
 		ksft_test_result_fail("mmap failed: %s\n",
@@ -1269,7 +1269,7 @@ static int test_standard_mmap_nonzero_hint(void)
 		return KSFT_FAIL;
 	}
 
-	if (base != (void *)0x1000000000UL) {
+	if (base != (void *)0x3000000000UL) {
 		ksft_test_result_fail("mmap returns non-hinted address %p: %s\n",
 				base, strerror(errno));
 		return KSFT_FAIL;

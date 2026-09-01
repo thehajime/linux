@@ -23,6 +23,19 @@ enum nommu_swmmu_map_mode {
 	NOMMU_SWMMU_MAP_FIXED_NOREPLACE,
 };
 
+struct nommu_swmmu_backing {
+	refcount_t refs;
+	struct page **pages;
+	size_t page_count;
+};
+
+struct nommu_swmmu_vma {
+	struct nommu_swmmu_backing *backing;
+	unsigned long page_offset;
+	size_t page_count;
+	unsigned int access;
+};
+
 struct nommu_swmmu_space;
 struct page;
 
@@ -53,10 +66,6 @@ nommu_swmmu_space_create_with_ops(
 
 struct nommu_swmmu_space *nommu_swmmu_current(void);
 
-/* Allocate a synthetic virtual-address range in the current space. */
-long swmmu_alloc(size_t size);
-int swmmu_free(void *address);
-
 /*
  * Check whether a range is accessible in the current SWMMU space.
  */
@@ -83,14 +92,6 @@ long nommu_swmmu_store_u64(void *address,
 			uint64_t value);
 
 /* mapping API */
-long nommu_swmmu_map(struct nommu_swmmu_space *space,
-		     size_t size);
-long nommu_swmmu_map_at(struct nommu_swmmu_space *space,
-			unsigned long address,
-			size_t size,
-			unsigned int access,
-			enum nommu_swmmu_map_mode mode);
-
 int nommu_swmmu_unmap(struct nommu_swmmu_space *space,
 		      unsigned long address,
 		      size_t size);
@@ -102,6 +103,10 @@ long nommu_swmmu_remap(struct nommu_swmmu_space *space,
 
 int nommu_swmmu_dup_mmap(struct mm_struct *dst,
 			struct mm_struct *src);
+
+struct vm_area_struct;
+void nommu_swmmu_vma_close(struct mm_struct *mm,
+			struct vm_area_struct *vma);
 
 #ifdef CONFIG_DEBUG_VM_MAPLE_TREE
 /*
