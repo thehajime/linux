@@ -77,21 +77,6 @@ struct mmap_state {
 		.state = VMA_MERGE_START,				\
 	}
 
-static void __vma_set_range(struct vm_area_struct *vma, unsigned long start,
-			    unsigned long end)
-{
-	vma->vm_start = start;
-	vma->vm_end = end;
-}
-
-static void vma_set_range(struct vm_area_struct *vma, unsigned long start,
-			  unsigned long end, pgoff_t pgoff, pgoff_t anon_pgoff)
-{
-	__vma_set_range(vma, start, end);
-	vma_set_pgoff(vma, pgoff);
-	vma_set_anon_pgoff(vma, anon_pgoff);
-}
-
 /* Was this VMA ever forked from a parent, i.e. maybe contains CoW mappings? */
 static bool vma_is_fork_child(struct vm_area_struct *vma)
 {

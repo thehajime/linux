@@ -526,6 +526,14 @@ __must_check struct vm_area_struct *vma_merge_new_range(struct vma_merge_struct 
 __must_check struct vm_area_struct *vma_merge_extend(struct vma_iterator *vmi,
 		  struct vm_area_struct *vma, unsigned long delta);
 
+void __vma_set_range(struct vm_area_struct *vma, unsigned long start,
+		unsigned long end);
+void vma_set_range(struct vm_area_struct *vma,
+		   unsigned long start,
+		   unsigned long end,
+		   pgoff_t pgoff,
+		   pgoff_t anon_pgoff);
+
 void unlink_file_vma_batch_init(struct unlink_vma_file_batch *vb);
 
 void unlink_file_vma_batch_final(struct unlink_vma_file_batch *vb);
