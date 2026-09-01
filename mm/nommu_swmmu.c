@@ -113,6 +113,7 @@ fail_pages:
 	return NULL;
 }
 
+/* XXX: correct only for whole-backing ownership */
 static void swmmu_backing_release(struct nommu_swmmu_space *space,
 				struct nommu_swmmu_backing *backing)
 {
@@ -494,6 +495,8 @@ static int __nommu_swmmu_validate(struct mm_struct *mm)
 {
 	VMA_ITERATOR(vmi, mm, 0);
 	struct vm_area_struct *vma;
+
+	mmap_assert_locked(mm);
 
 	for_each_vma(vmi, vma) {
 		struct nommu_swmmu_vma *data;
