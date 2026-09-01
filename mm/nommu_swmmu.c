@@ -17,39 +17,14 @@ struct nommu_swmmu_space {
 	const struct nommu_swmmu_mem_ops *ops;
 };
 
-struct nommu_swmmu_remap_tx {
-	struct nommu_swmmu_space *space;
-	struct swmmu_mapping *mapping;
-
-	struct page **old_pages;
-	struct page **new_pages;
-
-	size_t old_page_count;
-	size_t new_page_count;
-
-	unsigned long old_end;
-	unsigned long new_end;
-
-	struct ma_state mas;
-	bool mas_prepared;
-	bool committed;
-};
-
-struct nommu_swmmu_shrink_tx {
+struct nommu_swmmu_resize_tx {
 	struct nommu_swmmu_vma *vma_data;
-	struct nommu_swmmu_backing *backing;
+
+	struct nommu_swmmu_backing *old_backing;
+	struct nommu_swmmu_backing *new_backing;
+
 	size_t old_page_count;
 	size_t new_page_count;
-};
-
-struct nommu_swmmu_vma_tx {
-	struct vma_iterator clear_vmi;
-
-	unsigned long old_start;
-	unsigned long old_end;
-	unsigned long new_end;
-
-	bool clear_prepared;
 };
 
 static inline void *default_kzalloc(size_t size, gfp_t gfp)
@@ -1100,62 +1075,116 @@ int do_munmap(struct mm_struct *mm,
 	return do_munmap_nommu(mm, start, len, uf);
 }
 
-static int prepare_backing_shrink(struct nommu_swmmu_vma *vma_data,
+static int swmmu_resize_prepare(struct nommu_swmmu_space *space,
+				struct nommu_swmmu_vma *vma_data,
 				size_t new_size,
-				struct nommu_swmmu_shrink_tx *tx)
+				struct nommu_swmmu_resize_tx *tx)
 {
-	struct nommu_swmmu_backing *backing;
+	struct nommu_swmmu_backing *old_backing;
+	struct nommu_swmmu_backing *new_backing;
 	size_t new_page_count;
+	size_t i;
 
-	if (!vma_data || !vma_data->backing || !new_size)
+	if (!space || !vma_data || !vma_data->backing ||
+	    !new_size || !IS_ALIGNED(new_size, SWMMU_PAGE_SIZE))
 		return -EINVAL;
 
-	if (!IS_ALIGNED(new_size, SWMMU_PAGE_SIZE))
-		return -EINVAL;
-
-	backing = vma_data->backing;
+	old_backing = vma_data->backing;
 	new_page_count = new_size / SWMMU_PAGE_SIZE;
 
 	if (!new_page_count ||
-	    new_page_count >= vma_data->page_count)
+	    new_page_count == vma_data->page_count)
 		return -EINVAL;
 
-	/*
-	 * A shared backing cannot be truncated in place. Until shared
-	 * backing/split handling exists, require unique ownership.
-	 */
-	if (refcount_read(&backing->refs) != 1)
+	if (refcount_read(&old_backing->refs) != 1)
 		return -EBUSY;
 
-	if (backing->page_count != vma_data->page_count)
+	if (old_backing->page_count != vma_data->page_count)
 		return -EINVAL;
 
+	memset(tx, 0, sizeof(*tx));
+
 	tx->vma_data = vma_data;
-	tx->backing = backing;
+	tx->old_backing = old_backing;
 	tx->old_page_count = vma_data->page_count;
 	tx->new_page_count = new_page_count;
 
+	if (new_page_count < tx->old_page_count)
+		return 0;
+
+	/*
+	 * Growth: allocate a new backing and copy the existing pages.
+	 * Newly allocated pages remain zero-filled.
+	 */
+	new_backing = swmmu_backing_alloc(space, new_size);
+	if (!new_backing)
+		return -ENOMEM;
+
+	for (i = 0; i < tx->old_page_count; i++) {
+		int ret;
+
+		ret = space->ops->page_copy(
+			new_backing->pages[i],
+			old_backing->pages[vma_data->page_offset + i]);
+		if (ret) {
+			swmmu_backing_release(space, new_backing);
+			return ret;
+		}
+	}
+
+	tx->new_backing = new_backing;
 	return 0;
 }
 
-static void commit_backing_shrink(struct nommu_swmmu_space *space,
-				struct nommu_swmmu_shrink_tx *tx)
+static void swmmu_resize_abort(struct nommu_swmmu_space *space,
+			struct nommu_swmmu_resize_tx *tx)
 {
-	struct nommu_swmmu_backing *backing = tx->backing;
+	if (!tx || !tx->new_backing)
+		return;
+
+	swmmu_backing_release(space, tx->new_backing);
+	tx->new_backing = NULL;
+}
+
+static void swmmu_resize_commit(struct nommu_swmmu_space *space,
+				struct nommu_swmmu_resize_tx *tx)
+{
+	struct nommu_swmmu_backing *old_backing;
 	size_t i;
 
-	lockdep_assert_held(&space->lock);
+	old_backing = tx->old_backing;
 
-	for (i = tx->new_page_count; i < tx->old_page_count; i++) {
-		struct page *page = backing->pages[i];
+	if (tx->new_page_count < tx->old_page_count) {
+		/*
+		 * Shrink in place: release the tail pages.
+		 */
+		for (i = tx->new_page_count;
+		     i < tx->old_page_count; i++) {
+			struct page *page = old_backing->pages[
+				tx->vma_data->page_offset + i];
 
-		backing->pages[i] = NULL;
-		if (page)
-			space->ops->page_free(page);
+			old_backing->pages[
+				tx->vma_data->page_offset + i] = NULL;
+
+			if (page)
+				space->ops->page_free(page);
+		}
+
+		old_backing->page_count = tx->new_page_count;
+		tx->vma_data->page_count = tx->new_page_count;
+		return;
 	}
 
-	backing->page_count = tx->new_page_count;
+	/*
+	 * Growth: publish the new backing only after the VMA
+	 * expansion has succeeded.
+	 */
+	tx->vma_data->backing = tx->new_backing;
+	tx->vma_data->page_offset = 0;
 	tx->vma_data->page_count = tx->new_page_count;
+	tx->new_backing = NULL;
+
+	swmmu_backing_release(space, old_backing);
 }
 
 unsigned long do_mremap(unsigned long addr,
@@ -1166,7 +1195,6 @@ unsigned long do_mremap(unsigned long addr,
 	VMA_ITERATOR(vmi, mm, addr);
 	struct vm_area_struct *vma;
 	unsigned long end;
-
 	/* not implemented yet */
 	if (new_addr)
 		return -EINVAL;
@@ -1181,9 +1209,14 @@ unsigned long do_mremap(unsigned long addr,
 	end = addr + old_len;
 	vma = vma_find(&vmi, end);
 	if (vma && vma->vm_swmmu_data) {
-		struct nommu_swmmu_shrink_tx shrink_tx;
-		unsigned long new_end;
+		struct nommu_swmmu_resize_tx resize_tx;
+		struct nommu_swmmu_vma *vma_data;
 		int ret;
+
+		vma_data = vma->vm_swmmu_data;
+
+		if (flags & (MREMAP_MAYMOVE | MREMAP_FIXED))
+			return -EINVAL;
 
 		new_len = PAGE_ALIGN(new_len);
 		if (!new_len)
@@ -1192,39 +1225,44 @@ unsigned long do_mremap(unsigned long addr,
 		if (new_len == old_len)
 			return vma->vm_start;
 
-		new_end = vma->vm_start + new_len;
+		ret = swmmu_resize_prepare(mm->swmmu_space,
+					vma_data,
+					new_len,
+					&resize_tx);
+
+		if (ret)
+			return ret;
+
 		if (new_len < old_len) {
 			/* shrink */
-
-			ret = prepare_backing_shrink(vma->vm_swmmu_data,
-						new_len,
-						&shrink_tx);
-			if (ret)
-				return ret;
-
-			/*
-			 * mmap_write_lock(mm) is already held here.
-			 * vma_shrink() prepares and commits the VMA range update.
-			 */
-			ret = vma_shrink(&vmi, vma, new_end);
-			if (ret)
-				return ret;
-
-			/*
-			 * The VMA now has the new range. Release the backing tail
-			 * and update the VMA-private metadata.
-			 */
-			down_write(&mm->swmmu_space->lock);
-			commit_backing_shrink(mm->swmmu_space, &shrink_tx);
-			up_write(&mm->swmmu_space->lock);
-
-			validate_mm(mm);
-			nommu_swmmu_validate(mm);
-			return vma->vm_start;
+			ret = vma_shrink(&vmi, vma, vma->vm_start + new_len);
 		} else {
-			/* growth */
-			return -EOPNOTSUPP;
+			struct vma_merge_struct vmg = {
+				.mm = mm,
+				.vmi = &vmi,
+				.start = vma->vm_start,
+				.end = vma->vm_start + new_len,
+				.target = vma,
+				.next = NULL,
+				.just_expand = true,
+			};
+
+			ret = vma_expand(&vmg);
 		}
+
+		if (ret) {
+			swmmu_resize_abort(mm->swmmu_space, &resize_tx);
+			return ret;
+		}
+
+		down_write(&mm->swmmu_space->lock);
+		swmmu_resize_commit(mm->swmmu_space, &resize_tx);
+		up_write(&mm->swmmu_space->lock);
+
+		validate_mm(mm);
+		nommu_swmmu_validate(mm);
+
+		return vma->vm_start;
 	}
 	return do_mremap_nommu(addr, old_len, new_len, flags, new_addr);
 }

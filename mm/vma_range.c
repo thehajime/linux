@@ -94,3 +94,50 @@ int vma_shrink(struct vma_iterator *vmi, struct vm_area_struct *vma,
 
 	return 0;
 }
+
+#ifndef CONFIG_MMU
+int vma_expand(struct vma_merge_struct *vmg)
+{
+	struct vm_area_struct *vma;
+	struct vma_iterator *vmi;
+
+	if (!vmg || !vmg->mm || !vmg->vmi)
+		return -EINVAL;
+
+	mmap_assert_write_locked(vmg->mm);
+
+	vma = vmg->target;
+	vmi = vmg->vmi;
+
+	if (!vma)
+		return -EINVAL;
+
+	/*
+	 * The first SWMMU implementation supports only expansion
+	 * of the existing VMA at its end.
+	 */
+	if (vmg->start != vma->vm_start ||
+	    vmg->end <= vma->vm_end)
+		return -EINVAL;
+
+	/*
+	 * Do not merge or remove adjacent VMAs yet.
+	 */
+	if (vmg->next && vmg->next != vma)
+		return -EOPNOTSUPP;
+
+	vma_iter_config(vmi, vma->vm_start, vmg->end);
+	if (vma_iter_prealloc(vmi, vma))
+		return -ENOMEM;
+
+	/*
+	 * The old VMA is already attached. Replace its Maple Tree
+	 * range with the expanded range.
+	 */
+	vma->vm_end = vmg->end;
+	vma_iter_store_overwrite(vmi, vma);
+
+	validate_mm(vmg->mm);
+	return 0;
+}
+#endif /* !CONFIG_MMU */
