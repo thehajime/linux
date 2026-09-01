@@ -99,6 +99,8 @@ static struct nommu_swmmu_backing *swmmu_backing_alloc(struct nommu_swmmu_space 
 		backing->pages[i] = space->ops->page_alloc(GFP_KERNEL);
 		if (!backing->pages[i])
 			goto fail_pages;
+
+		clear_highpage(backing->pages[i]);
 		allocated++;
 	}
 
@@ -142,7 +144,9 @@ static struct nommu_swmmu_vma *swmmu_vma_data_create(struct nommu_swmmu_space *s
 		return NULL;
 
 	vma_data->backing = backing;
+	vma_data->page_offset = 0;
 	vma_data->page_count = backing->page_count;
+	vma_data->access = NOMMU_SWMMU_NONE;
 
 	return vma_data;
 }
@@ -847,47 +851,59 @@ static int swmmu_resize_prepare(struct nommu_swmmu_space *space,
 {
 	struct nommu_swmmu_backing *old_backing;
 	struct nommu_swmmu_backing *new_backing;
+	size_t old_page_count;
 	size_t new_page_count;
+	size_t copy_count;
 	size_t i;
+	int ret;
 
-	if (!space || !vma_data || !vma_data->backing ||
-	    !new_size || !IS_ALIGNED(new_size, SWMMU_PAGE_SIZE))
+	if (!space || !vma_data || !vma_data->backing || !new_size)
+		return -EINVAL;
+
+	if (!IS_ALIGNED(new_size, SWMMU_PAGE_SIZE))
 		return -EINVAL;
 
 	old_backing = vma_data->backing;
+	old_page_count = vma_data->page_count;
 	new_page_count = new_size / SWMMU_PAGE_SIZE;
 
-	if (!new_page_count ||
-	    new_page_count == vma_data->page_count)
+	if (!old_page_count || !new_page_count)
 		return -EINVAL;
 
-	if (refcount_read(&old_backing->refs) != 1)
-		return -EBUSY;
+	if (vma_data->page_offset > old_backing->page_count ||
+	    old_page_count >
+		old_backing->page_count - vma_data->page_offset)
+		return -EINVAL;
 
-	if (old_backing->page_count != vma_data->page_count)
+	if (new_page_count > SIZE_MAX / SWMMU_PAGE_SIZE)
+		return -EOVERFLOW;
+
+	/*
+	 * The caller normally handles equal-size remaps before reaching
+	 * this function.
+	 */
+	if (new_page_count == old_page_count)
 		return -EINVAL;
 
 	memset(tx, 0, sizeof(*tx));
 
 	tx->vma_data = vma_data;
 	tx->old_backing = old_backing;
-	tx->old_page_count = vma_data->page_count;
+	tx->old_page_count = old_page_count;
 	tx->new_page_count = new_page_count;
 
-	if (new_page_count < tx->old_page_count)
-		return 0;
-
 	/*
-	 * Growth: allocate a new backing and copy the existing pages.
-	 * Newly allocated pages remain zero-filled.
+	 * Allocate a new backing for the resized VMA view.
+	 * The new backing starts at page offset zero.
 	 */
-	new_backing = swmmu_backing_alloc(space, new_size);
+	new_backing = swmmu_backing_alloc(space,
+					  new_page_count * SWMMU_PAGE_SIZE);
 	if (!new_backing)
 		return -ENOMEM;
 
-	for (i = 0; i < tx->old_page_count; i++) {
-		int ret;
+	copy_count = min(old_page_count, new_page_count);
 
+	for (i = 0; i < copy_count; i++) {
 		ret = space->ops->page_copy(
 			new_backing->pages[i],
 			old_backing->pages[vma_data->page_offset + i]);
@@ -897,6 +913,10 @@ static int swmmu_resize_prepare(struct nommu_swmmu_space *space,
 		}
 	}
 
+	/*
+	 * Pages beyond copy_count remain zero-filled as prepared by
+	 * swmmu_backing_alloc().
+	 */
 	tx->new_backing = new_backing;
 	return 0;
 }
@@ -904,7 +924,7 @@ static int swmmu_resize_prepare(struct nommu_swmmu_space *space,
 static void swmmu_resize_abort(struct nommu_swmmu_space *space,
 			struct nommu_swmmu_resize_tx *tx)
 {
-	if (!tx || !tx->new_backing)
+	if (!space || !tx || !tx->new_backing)
 		return;
 
 	swmmu_backing_release(space, tx->new_backing);
@@ -915,43 +935,24 @@ static void swmmu_resize_commit(struct nommu_swmmu_space *space,
 				struct nommu_swmmu_resize_tx *tx)
 {
 	struct nommu_swmmu_backing *old_backing;
-	size_t i;
 
-	old_backing = tx->old_backing;
-
-	if (tx->new_page_count < tx->old_page_count) {
-		/*
-		 * Shrink in place: release the tail pages.
-		 */
-		for (i = tx->new_page_count;
-		     i < tx->old_page_count; i++) {
-			struct page *page = old_backing->pages[
-				tx->vma_data->page_offset + i];
-
-			old_backing->pages[
-				tx->vma_data->page_offset + i] = NULL;
-
-			if (page)
-				space->ops->page_free(page);
-		}
-
-		old_backing->page_count = tx->new_page_count;
-		tx->vma_data->page_count = tx->new_page_count;
+	if (!space || !tx || !tx->vma_data || !tx->new_backing)
 		return;
-	}
+
+	old_backing = tx->vma_data->backing;
 
 	/*
-	 * Growth: publish the new backing only after the VMA
-	 * expansion has succeeded.
+	 * The new backing represents exactly the VMA's new view and
+	 * always starts at page zero.
 	 */
 	tx->vma_data->backing = tx->new_backing;
 	tx->vma_data->page_offset = 0;
 	tx->vma_data->page_count = tx->new_page_count;
+
 	tx->new_backing = NULL;
 
 	swmmu_backing_release(space, old_backing);
 }
-
 
 /*
  * currently, file, prot, populate, uf are not used and ignored.
