@@ -616,9 +616,11 @@ out_free_vma:
 }
 
 void vma_backend_prepare(struct vma_prepare *vp,
-			 struct vm_area_struct *vma)
+			 struct vm_area_struct *vma,
+			 struct vm_area_struct *insert)
 {
 	init_vma_prep(vp, vma);
+	vp->insert = insert;
 	vma_prepare(vp);
 }
 
@@ -634,6 +636,33 @@ void vma_backend_complete(struct vma_prepare *vp,
 			  struct mm_struct *mm)
 {
 	vma_complete(vp, vmi, mm);
+}
+
+int vma_backend_dup(struct vm_area_struct *src,
+		    struct vm_area_struct *dst)
+{
+	int ret;
+
+	ret = vma_dup_policy(src, dst);
+	if (ret)
+		return ret;
+
+	ret = anon_vma_clone(dst, src, VMA_OP_SPLIT);
+	if (ret) {
+		mpol_put(vma_policy(dst));
+		return ret;
+	}
+
+	return 0;
+}
+
+void vma_backend_split_adjust(struct vm_area_struct *vma,
+			      unsigned long addr)
+{
+	vma_adjust_trans_huge(vma, vma->vm_start, addr, NULL);
+
+	if (is_vm_hugetlb_page(vma))
+		hugetlb_split(vma, addr);
 }
 
 /*

@@ -855,7 +855,8 @@ struct vm_area_struct *__install_special_mapping(struct mm_struct *mm,
 		const struct vm_operations_struct *ops);
 
 void vma_backend_prepare(struct vma_prepare *vp,
-			 struct vm_area_struct *vma);
+			struct vm_area_struct *vma,
+			struct vm_area_struct *insert);
 
 void vma_backend_adjust_range(struct vm_area_struct *vma,
 			      unsigned long start,
@@ -864,5 +865,35 @@ void vma_backend_adjust_range(struct vm_area_struct *vma,
 void vma_backend_complete(struct vma_prepare *vp,
 			  struct vma_iterator *vmi,
 			  struct mm_struct *mm);
+
+int vma_backend_dup(struct vm_area_struct *src,
+		    struct vm_area_struct *dst);
+
+void vma_backend_split_adjust(struct vm_area_struct *vma,
+			      unsigned long addr);
+
+struct vma_backend_ops {
+	int (*split_prepare)(struct vm_area_struct *vma,
+			     struct vm_area_struct *new,
+			     unsigned long addr,
+			     bool new_below,
+			     void **state);
+
+	void (*split_commit)(struct vm_area_struct *vma,
+			     struct vm_area_struct *new,
+			     unsigned long addr,
+			     bool new_below,
+			     void *state);
+
+	void (*split_abort)(struct vm_area_struct *vma,
+			    struct vm_area_struct *new,
+			    void *state);
+};
+
+int vma_split_backend(struct vma_iterator *vmi,
+		      struct vm_area_struct *vma,
+		      unsigned long addr,
+		      int new_below,
+		      const struct vma_backend_ops *backend);
 
 #endif	/* __MM_VMA_H */
