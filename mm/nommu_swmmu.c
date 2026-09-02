@@ -17,14 +17,27 @@ struct nommu_swmmu_space {
 	const struct nommu_swmmu_mem_ops *ops;
 };
 
-struct nommu_swmmu_resize_tx {
+enum nommu_swmmu_vma_tx_type {
+	NOMMU_SWMMU_VMA_TX_RESIZE,
+	NOMMU_SWMMU_VMA_TX_SPLIT,
+};
+
+struct nommu_swmmu_vma_tx {
+	enum nommu_swmmu_vma_tx_type type;
+
 	struct nommu_swmmu_vma *vma_data;
+	struct nommu_swmmu_vma *new_vma_data;
 
 	struct nommu_swmmu_backing *old_backing;
 	struct nommu_swmmu_backing *new_backing;
 
 	size_t old_page_count;
 	size_t new_page_count;
+
+	unsigned long old_page_offset;
+	size_t split_page_count;
+
+	bool backing_ref_held;
 };
 
 static inline void *default_kzalloc(size_t size, gfp_t gfp)
@@ -847,7 +860,7 @@ int swmmu_clone_space(struct nommu_swmmu_space *parent,
 static int swmmu_resize_prepare(struct nommu_swmmu_space *space,
 				struct nommu_swmmu_vma *vma_data,
 				size_t new_size,
-				struct nommu_swmmu_resize_tx *tx)
+				struct nommu_swmmu_vma_tx *tx)
 {
 	struct nommu_swmmu_backing *old_backing;
 	struct nommu_swmmu_backing *new_backing;
@@ -922,7 +935,7 @@ static int swmmu_resize_prepare(struct nommu_swmmu_space *space,
 }
 
 static void swmmu_resize_abort(struct nommu_swmmu_space *space,
-			struct nommu_swmmu_resize_tx *tx)
+			struct nommu_swmmu_vma_tx *tx)
 {
 	if (!space || !tx || !tx->new_backing)
 		return;
@@ -932,7 +945,7 @@ static void swmmu_resize_abort(struct nommu_swmmu_space *space,
 }
 
 static void swmmu_resize_commit(struct nommu_swmmu_space *space,
-				struct nommu_swmmu_resize_tx *tx)
+				struct nommu_swmmu_vma_tx *tx)
 {
 	struct nommu_swmmu_backing *old_backing;
 
@@ -952,6 +965,115 @@ static void swmmu_resize_commit(struct nommu_swmmu_space *space,
 	tx->new_backing = NULL;
 
 	swmmu_backing_release(space, old_backing);
+}
+
+static int swmmu_split_prepare(struct vm_area_struct *vma,
+			struct vm_area_struct *new,
+			unsigned long addr,
+			bool new_below,
+			void **state)
+{
+	struct nommu_swmmu_space *space = vma->vm_mm->swmmu_space;
+	struct nommu_swmmu_vma *old_data;
+	struct nommu_swmmu_vma *new_data;
+	struct nommu_swmmu_vma_tx *tx;
+	unsigned long split_pages;
+
+	old_data = vma->vm_swmmu_data;
+	if (!old_data || !old_data->backing)
+		return -EINVAL;
+
+	if (addr <= vma->vm_start || addr >= vma->vm_end)
+		return -EINVAL;
+
+	if (!IS_ALIGNED(addr - vma->vm_start, SWMMU_PAGE_SIZE))
+		return -EINVAL;
+
+	split_pages = (addr - vma->vm_start) / SWMMU_PAGE_SIZE;
+
+	if (!split_pages || split_pages >= old_data->page_count)
+		return -EINVAL;
+
+	if (old_data->page_offset >
+	    old_data->backing->page_count)
+		return -EINVAL;
+
+	if (old_data->page_count >
+	    old_data->backing->page_count - old_data->page_offset)
+		return -EINVAL;
+
+	if (new_below) {
+		if (new->vm_start != vma->vm_start ||
+			new->vm_end != addr)
+			return -EINVAL;
+	} else {
+		if (new->vm_start != addr ||
+			new->vm_end != vma->vm_end)
+			return -EINVAL;
+	}
+
+	tx = space->ops->zalloc(sizeof(*tx), GFP_KERNEL);
+	if (!tx)
+		return -ENOMEM;
+
+	new_data = space->ops->zalloc(sizeof(*new_data), GFP_KERNEL);
+	if (!new_data) {
+		space->ops->dealloc(tx);
+		return -ENOMEM;
+	}
+
+	tx->type = NOMMU_SWMMU_VMA_TX_SPLIT;
+	tx->vma_data = old_data;
+	tx->new_vma_data = new_data;
+	tx->old_backing = old_data->backing;
+	tx->old_page_count = old_data->page_count;
+	tx->old_page_offset = old_data->page_offset;
+	tx->split_page_count = split_pages;
+
+	/*
+	 * Both VMAs refer to the same immutable backing object.
+	 */
+	refcount_inc(&tx->old_backing->refs);
+	tx->backing_ref_held = true;
+
+	new_data->backing = tx->old_backing;
+	new_data->access = old_data->access;
+
+	if (new_below) {
+		new_data->page_offset = old_data->page_offset;
+		new_data->page_count = split_pages;
+	} else {
+		new_data->page_offset =
+			old_data->page_offset + split_pages;
+		new_data->page_count =
+			old_data->page_count - split_pages;
+	}
+
+	*state = tx;
+	return 0;
+}
+
+static void swmmu_split_commit(struct vm_area_struct *vma,
+			       struct vm_area_struct *new,
+			       unsigned long addr,
+			       bool new_below,
+			       void *state)
+{
+	struct nommu_swmmu_space *space = vma->vm_mm->swmmu_space;
+	struct nommu_swmmu_vma_tx *tx = state;
+
+	if (new_below) {
+		tx->vma_data->page_offset += tx->split_page_count;
+		tx->vma_data->page_count -= tx->split_page_count;
+	} else {
+		tx->vma_data->page_count = tx->split_page_count;
+	}
+
+	new->vm_swmmu_data = tx->new_vma_data;
+	tx->new_vma_data = NULL;
+	tx->backing_ref_held = false;
+
+	space->ops->dealloc(tx);
 }
 
 /*
@@ -1086,6 +1208,31 @@ static unsigned long do_mmap_swmmu(struct file *file,
 	return start;
 }
 
+static void swmmu_split_abort(struct vm_area_struct *vma,
+			struct vm_area_struct *new,
+			void *state)
+{
+	struct nommu_swmmu_space *space = vma->vm_mm->swmmu_space;
+	struct nommu_swmmu_vma_tx *tx = state;
+
+	if (!tx)
+		return;
+
+	if (tx->new_vma_data)
+		space->ops->dealloc(tx->new_vma_data);
+
+	if (tx->backing_ref_held)
+		swmmu_backing_release(space, tx->old_backing);
+
+	space->ops->dealloc(tx);
+}
+
+static const struct vma_backend_ops nommu_swmmu_vma_backend_ops = {
+	.split_prepare = swmmu_split_prepare,
+	.split_commit = swmmu_split_commit,
+	.split_abort = swmmu_split_abort,
+};
+
 static int
 nommu_swmmu_validate_mmap_request(struct file *file,
 				  unsigned long addr,
@@ -1145,6 +1292,49 @@ unsigned long do_mmap(struct file *file,
 			     vma_flags, pgoff, populate, uf);
 }
 
+static int nommu_swmmu_remove_vma(struct mm_struct *mm,
+				   struct vma_iterator *vmi,
+				   struct vm_area_struct *vma)
+{
+	struct vm_area_struct *tree_vma;
+	unsigned long start;
+	unsigned long end;
+	int ret;
+
+	if (!vma || !vma->vm_swmmu_data)
+		return -EINVAL;
+
+	tree_vma = vma_iter_load(vmi);
+	if (tree_vma != vma ||
+	    vma_iter_addr(vmi) != vma->vm_start ||
+	    vma_iter_end(vmi) != vma->vm_end)
+		return -EINVAL;
+
+	start = vma->vm_start;
+	end = vma->vm_end;
+
+	vma_iter_reset(vmi);
+	vma_iter_config(vmi, start, end);
+
+	ret = vma_iter_prealloc(vmi, NULL);
+	if (ret)
+		return ret;
+
+	vma_iter_clear(vmi);
+	mm->map_count--;
+
+	/*
+	 * This releases SWMMU backing metadata only. It does not
+	 * remove the VMA from the Maple Tree.
+	 */
+	nommu_swmmu_vma_close(mm, vma);
+
+	vma_close(vma);
+	vm_area_free(vma);
+
+	return 0;
+}
+
 int do_munmap(struct mm_struct *mm,
 	unsigned long start, size_t len, struct list_head *uf)
 {
@@ -1169,26 +1359,107 @@ int do_munmap(struct mm_struct *mm,
 			end > vma->vm_end)
 			return -EINVAL;
 
+		/* head removal */
+		if (start == vma->vm_start && end < vma->vm_end) {
+			struct vm_area_struct *remove_vma;
+
+			ret = vma_split_backend(&vmi, vma, end, true,
+						&nommu_swmmu_vma_backend_ops);
+			if (ret)
+				return ret;
+
+			VMA_ITERATOR(split_vmi, mm, start);
+			remove_vma = vma_iter_load(&split_vmi);
+			if (WARN_ON_ONCE(!remove_vma ||
+						remove_vma == vma ||
+						remove_vma->vm_start != start ||
+						remove_vma->vm_end != end))
+				return -EFAULT;
+
+			ret = nommu_swmmu_remove_vma(mm, &split_vmi, remove_vma);
+			if (ret)
+				return ret;
+
+			validate_mm(mm);
+			nommu_swmmu_validate(mm);
+			return 0;
+		}
+
 		/* tail removal */
 		if (start > vma->vm_start && end == vma->vm_end) {
-			struct nommu_swmmu_resize_tx resize_tx;
+			struct nommu_swmmu_vma_tx vma_tx;
 			unsigned long new_len;
 
 			new_len = start - vma->vm_start;
 			ret = swmmu_resize_prepare(mm->swmmu_space,
 						vma->vm_swmmu_data,
 						new_len,
-						&resize_tx);
+						&vma_tx);
 			if (ret)
 				return ret;
 
 			ret = vma_shrink(&vmi, vma, start);
 			if (ret) {
-				swmmu_resize_abort(mm->swmmu_space, &resize_tx);
+				swmmu_resize_abort(mm->swmmu_space, &vma_tx);
 				return ret;
 			}
 
-			swmmu_resize_commit(mm->swmmu_space, &resize_tx);
+			swmmu_resize_commit(mm->swmmu_space, &vma_tx);
+
+			validate_mm(mm);
+			nommu_swmmu_validate(mm);
+			return 0;
+		}
+
+		/* middle removal */
+		if (start > vma->vm_start && end < vma->vm_end) {
+			struct vm_area_struct *right;
+			struct vm_area_struct *middle;
+			unsigned long old_end = vma->vm_end;
+
+			VMA_ITERATOR(first_vmi, mm, start);
+			ret = vma_split_backend(&first_vmi, vma, start, false,
+						&nommu_swmmu_vma_backend_ops);
+			if (ret)
+				return ret;
+
+			VMA_ITERATOR(right_vmi, mm, start);
+			/*
+			 * Find the right-hand VMA created by the first split.
+			 */
+			right = vma_iter_load(&right_vmi);
+			if (WARN_ON_ONCE(!right ||
+						right == vma ||
+						right->vm_start != start ||
+						right->vm_end != old_end))
+				return -EFAULT;
+
+			VMA_ITERATOR(second_vmi, mm, start);
+			ret = vma_split_backend(&second_vmi, right, end, true,
+						&nommu_swmmu_vma_backend_ops);
+			if (ret)
+				return ret;
+
+			VMA_ITERATOR(remove_vmi, mm, start);
+			/*
+			 * Rediscover the middle VMA created by the second split.
+			 */
+			middle = vma_iter_load(&remove_vmi);
+			if (!middle ||
+				middle == right ||
+				vma_iter_addr(&remove_vmi) != start ||
+				vma_iter_end(&remove_vmi) != end)
+				return -EFAULT;
+
+			if (WARN_ON_ONCE(!middle ||
+						middle == right ||
+						middle->vm_start != start ||
+						middle->vm_end != end))
+				return -EFAULT;
+
+			ret = nommu_swmmu_remove_vma(mm, &remove_vmi, middle);
+			if (ret)
+				return ret;
 
 			validate_mm(mm);
 			nommu_swmmu_validate(mm);
@@ -1198,6 +1469,7 @@ int do_munmap(struct mm_struct *mm,
 		/* complete removal */
 		if (start == vma->vm_start &&
 			end == vma->vm_end) {
+			vma_iter_reset(&vmi);
 			vma_iter_config(&vmi, vma->vm_start, vma->vm_end);
 			if (vma_iter_prealloc(&vmi, NULL)) {
 				pr_warn("Allocation of vma tree for process %d failed\n",
@@ -1247,7 +1519,7 @@ unsigned long do_mremap(unsigned long addr,
 	end = addr + old_len;
 	vma = vma_find(&vmi, end);
 	if (vma && vma->vm_swmmu_data) {
-		struct nommu_swmmu_resize_tx resize_tx;
+		struct nommu_swmmu_vma_tx vma_tx;
 		struct nommu_swmmu_vma *vma_data;
 		int ret;
 
@@ -1266,7 +1538,7 @@ unsigned long do_mremap(unsigned long addr,
 		ret = swmmu_resize_prepare(mm->swmmu_space,
 					vma_data,
 					new_len,
-					&resize_tx);
+					&vma_tx);
 
 		if (ret)
 			return ret;
@@ -1289,12 +1561,12 @@ unsigned long do_mremap(unsigned long addr,
 		}
 
 		if (ret) {
-			swmmu_resize_abort(mm->swmmu_space, &resize_tx);
+			swmmu_resize_abort(mm->swmmu_space, &vma_tx);
 			return ret;
 		}
 
 		down_write(&mm->swmmu_space->lock);
-		swmmu_resize_commit(mm->swmmu_space, &resize_tx);
+		swmmu_resize_commit(mm->swmmu_space, &vma_tx);
 		up_write(&mm->swmmu_space->lock);
 
 		validate_mm(mm);
