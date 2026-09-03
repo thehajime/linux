@@ -1710,19 +1710,19 @@ static int test_standard_mmap_overlap_expand(void)
 	void *large_base;
 
 	large_base = mmap(NULL, ps * 16,
-		    PROT_READ | PROT_WRITE,
-		    MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE,
-		    -1, 0);
+			PROT_READ | PROT_WRITE,
+			MAP_PRIVATE | MAP_ANONYMOUS,
+			-1, 0);
 	if (large_base == MAP_FAILED) {
-		ksft_test_result_fail("pre: mmap failed: %s\n",
-				      strerror(errno));
+		ksft_test_result_fail("initial large mmap failed: %s\n",
+				strerror(errno));
 		return KSFT_FAIL;
 	}
 
 	if (munmap(large_base, ps) != 0) {
 		ksft_test_result_fail("head munmap failed: %s\n",
 				strerror(errno));
-		munmap(large_base, ps * 16);
+		munmap((char *)large_base, ps * 16);
 		return KSFT_FAIL;
 	}
 
@@ -1731,33 +1731,35 @@ static int test_standard_mmap_overlap_expand(void)
 			0xfeedface);
 
 	base = mmap(large_base, ps,
-		    PROT_READ | PROT_WRITE,
-		    MAP_PRIVATE | MAP_ANONYMOUS,
-		    -1, 0);
+		PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS |
+		MAP_FIXED_NOREPLACE,
+		-1, 0);
 	if (base == MAP_FAILED) {
-		ksft_test_result_fail("mmap failed: %s\n",
-				      strerror(errno));
-		munmap(large_base + ps, ps * 16);
+		ksft_test_result_fail("fixed head mmap failed: %s\n",
+				strerror(errno));
+		munmap((char *)large_base + ps, ps * 15);
 		return KSFT_FAIL;
 	}
 
 	if (base != large_base) {
-		ksft_test_result_fail("failed to reuse the trimmed head address\n");
-		/* cleanup */
+		ksft_test_result_fail(
+			"replacement mapping was not placed at the trimmed address\n");
+		munmap((char *)large_base + ps, ps * 15);
+		munmap((char *)base, ps);
 		return KSFT_FAIL;
 	}
-	nommu_swmmu_store_u64(base, sizeof(value), 1234);
 
 	expanded = mremap(base, ps, ps * 3, 0);
 	if (expanded != MAP_FAILED) {
 		ksft_test_result_fail("overlapping expansion unexpectedly succeeded\n");
-		munmap(base, ps * 3);
+		munmap((char *)base, ps * 3);
 		return KSFT_FAIL;
 	}
 
 	if (errno != ENOMEM && errno != EEXIST) {
 		ksft_print_msg("unexpected errno: %s\n", strerror(errno));
-		munmap(base, ps);
+		munmap((char *)base, ps);
 		return KSFT_FAIL;
 	}
 
@@ -1769,7 +1771,7 @@ static int test_standard_mmap_overlap_expand(void)
 		goto out_fail;
 	}
 
-	if (munmap(base, ps) != 0)
+	if (munmap((char *)base, ps) != 0)
 		ksft_print_msg("cleanup: base munmap failed: %s\n",
 			strerror(errno));
 
@@ -1782,7 +1784,7 @@ static int test_standard_mmap_overlap_expand(void)
 	return KSFT_PASS;
 
 out_fail:
-	munmap(base, ps);
+	munmap((char *)base, ps);
 	munmap((char *)large_base + ps, ps * 15);
 	return KSFT_FAIL;
 }

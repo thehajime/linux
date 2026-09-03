@@ -10,6 +10,12 @@
 
 #define SWMMU_VA_BASE ((uintptr_t)0x1000000000ULL)
 
+struct nommu_swmmu_clone_item {
+	struct list_head node;
+	struct vm_area_struct *dst_vma;
+	struct nommu_swmmu_vma *new_data;
+};
+
 static inline void *default_kzalloc(size_t size, gfp_t gfp)
 {
 	return kzalloc(size, gfp);
@@ -134,11 +140,43 @@ static struct nommu_swmmu_vma *swmmu_vma_data_create(struct nommu_swmmu_space *s
 	return vma_data;
 }
 
+static void swmmu_vma_data_free(struct nommu_swmmu_space *space,
+				struct nommu_swmmu_vma *data)
+{
+	if (!space || !data)
+		return;
+
+	space->ops->dealloc(data);
+}
+
+static void swmmu_vma_data_release(struct nommu_swmmu_space *space,
+				   struct nommu_swmmu_vma *data)
+{
+	struct nommu_swmmu_backing *backing;
+
+	if (!data)
+		return;
+
+	backing = data->backing;
+
+	if (backing)
+		swmmu_backing_release(space, backing);
+
+	swmmu_vma_data_free(space, data);
+}
+
 static struct nommu_swmmu_vma *swmmu_vma_data_dup(struct nommu_swmmu_space *dst_space,
 						const struct nommu_swmmu_vma *src)
 {
 	struct nommu_swmmu_vma *dst;
 	size_t i;
+	int ret;
+
+	if (!dst_space || !src || !src->backing ||
+		src->page_offset > src->backing->page_count ||
+		src->page_count >
+		src->backing->page_count - src->page_offset)
+		return NULL;
 
 	dst = dst_space->ops->zalloc(sizeof(*dst), GFP_KERNEL);
 	if (!dst)
@@ -152,17 +190,16 @@ static struct nommu_swmmu_vma *swmmu_vma_data_dup(struct nommu_swmmu_space *dst_
 		return NULL;
 	}
 
-	dst->page_offset = src->page_offset;
+	dst->page_offset = 0;
 	dst->page_count = src->page_count;
 	dst->access = src->access;
 
 	for (i = 0; i < src->page_count; i++) {
-		if (dst_space->ops->page_copy(
-			    dst->backing->pages[i],
-			    src->backing->pages[
-				src->page_offset + i])) {
-			/* release the partial destination backing */
-			swmmu_backing_release(dst_space, dst->backing);
+		ret = dst_space->ops->page_copy(
+			dst->backing->pages[i],
+			src->backing->pages[src->page_offset + i]);
+		if (ret) {
+			swmmu_vma_data_release(dst_space, dst);
 			return NULL;
 		}
 	}
@@ -170,13 +207,13 @@ static struct nommu_swmmu_vma *swmmu_vma_data_dup(struct nommu_swmmu_space *dst_
 	return dst;
 }
 
-static void swmmu_vma_data_free(struct nommu_swmmu_space *space,
-				struct nommu_swmmu_vma *data)
+static void nommu_swmmu_clear_child_vmas(struct mm_struct *mm)
 {
-	if (!space || !data)
-		return;
+	VMA_ITERATOR(vmi, mm, 0);
+	struct vm_area_struct *vma;
 
-	space->ops->dealloc(data);
+	for_each_vma(vmi, vma)
+		vma->vm_swmmu_data = NULL;
 }
 
 void nommu_swmmu_vma_close(struct mm_struct *mm,
@@ -184,7 +221,6 @@ void nommu_swmmu_vma_close(struct mm_struct *mm,
 {
 	struct nommu_swmmu_space *space;
 	struct nommu_swmmu_vma *data;
-	struct nommu_swmmu_backing *backing;
 
 	if (!mm || !vma)
 		return;
@@ -194,13 +230,9 @@ void nommu_swmmu_vma_close(struct mm_struct *mm,
 		return;
 
 	space = mm->swmmu_space;
-	backing = data->backing;
 
 	vma->vm_swmmu_data = NULL;
-	if (backing)
-		swmmu_backing_release(space, backing);
-
-	swmmu_vma_data_free(space, data);
+	swmmu_vma_data_release(space, data);
 }
 
 static struct nommu_swmmu_vma *find_swmmu_vma(struct mm_struct *mm,
@@ -818,7 +850,117 @@ long nommu_swmmu_remap(struct nommu_swmmu_space *space,
 int nommu_swmmu_dup_mmap(struct mm_struct *dst,
 			 struct mm_struct *src)
 {
-	return -EOPNOTSUPP;
+	struct nommu_swmmu_space *src_space;
+	struct nommu_swmmu_space *dst_space;
+	struct nommu_swmmu_clone_item *item;
+	struct nommu_swmmu_clone_item *tmp;
+	struct vm_area_struct *src_vma;
+	struct vm_area_struct *dst_vma;
+	LIST_HEAD(prepared);
+	VMA_ITERATOR(src_vmi, src, 0);
+	int ret = 0;
+
+	if (!dst || !src)
+		return -EINVAL;
+
+	/* dup_mmap() holds both locks when calling us. */
+	mmap_assert_write_locked(src);
+	mmap_assert_write_locked(dst);
+
+	src_space = src->swmmu_space;
+	dst_space = dst->swmmu_space;
+
+	if (!src_space || !dst_space || src_space == dst_space)
+		return -EINVAL;
+
+	down_read(&src_space->lock);
+	down_write_nested(&dst_space->lock, SINGLE_DEPTH_NESTING);
+
+	nommu_swmmu_clear_child_vmas(dst);
+
+	for_each_vma(src_vmi, src_vma) {
+		struct nommu_swmmu_vma *src_data;
+
+		src_data = src_vma->vm_swmmu_data;
+		if (!src_data)
+			continue;
+
+		/* The child must contain a VMA with the same virtual range */
+		VMA_ITERATOR(dst_vmi, dst, src_vma->vm_start);
+
+		dst_vma = vma_iter_load(&dst_vmi);
+		if (!dst_vma ||
+		    dst_vma->vm_start != src_vma->vm_start ||
+		    dst_vma->vm_end != src_vma->vm_end) {
+			ret = -EFAULT;
+			goto rollback;
+		}
+
+		if (dst_vma->vm_swmmu_data) {
+			/*
+			 * This means the child VMA retained a parent
+			 * SWMMU pointer during dup_mmap().
+			 */
+			ret = -EUCLEAN;
+			goto rollback;
+		}
+
+		if (!src_data->backing ||
+			src_data->page_offset > src_data->backing->page_count ||
+			src_data->page_count >
+			src_data->backing->page_count - src_data->page_offset) {
+			ret = -EINVAL;
+			goto rollback;
+		}
+
+		item = dst_space->ops->zalloc(sizeof(*item), GFP_KERNEL);
+		if (!item) {
+			ret = -ENOMEM;
+			goto rollback;
+		}
+
+		item->dst_vma = dst_vma;
+		item->new_data = swmmu_vma_data_dup(dst_space, src_data);
+		if (!item->new_data) {
+			dst_space->ops->dealloc(item);
+			ret = -ENOMEM;
+			goto rollback;
+		}
+
+		list_add_tail(&item->node, &prepared);
+	}
+
+	/*
+	 * No operation below this point may fail.
+	 * Publish all child metadata only after every clone succeeded.
+	 */
+	list_for_each_entry(item, &prepared, node) {
+		item->dst_vma->vm_swmmu_data = item->new_data;
+		item->new_data = NULL;
+	}
+
+	list_for_each_entry_safe(item, tmp, &prepared, node) {
+		list_del(&item->node);
+		dst_space->ops->dealloc(item);
+	}
+
+	up_write(&dst_space->lock);
+	up_read(&src_space->lock);
+
+	return 0;
+
+rollback:
+	list_for_each_entry_safe(item, tmp, &prepared, node) {
+		list_del(&item->node);
+
+		swmmu_vma_data_release(dst_space, item->new_data);
+		dst_space->ops->dealloc(item);
+	}
+
+	up_write(&dst_space->lock);
+	up_read(&src_space->lock);
+
+	return ret;
 }
 
 int swmmu_clone_space(struct nommu_swmmu_space *parent,

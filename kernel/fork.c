@@ -1594,24 +1594,6 @@ static struct mm_struct *dup_mm(struct task_struct *tsk,
 	if (mm->binfmt && !try_module_get(mm->binfmt->module))
 		goto free_pt;
 
-#ifdef CONFIG_NOMMU_SWMMU
-	{
-		struct nommu_swmmu_space *new_space;
-
-		nommu_swmmu_space_detach(mm);
-		/* clone oldmm's space */
-		err = swmmu_clone_space(oldmm->swmmu_space, &new_space);
-		if (err)
-			goto free_pt;
-
-		err = nommu_swmmu_space_attach(mm, new_space);
-		if (err) {
-			nommu_swmmu_space_put(new_space);
-			goto free_pt;
-		}
-	}
-#endif
-
 	return mm;
 
 free_pt:

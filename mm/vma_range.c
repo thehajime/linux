@@ -69,6 +69,9 @@ void vma_backend_complete(struct vma_prepare *vp,
 int vma_backend_dup(struct vm_area_struct *src,
 		    struct vm_area_struct *dst)
 {
+#ifdef CONFIG_NOMMU_SWMMU
+	dst->vm_swmmu_data = NULL;
+#endif
 	return 0;
 }
 
