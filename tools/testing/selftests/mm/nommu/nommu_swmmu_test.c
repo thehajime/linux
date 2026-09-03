@@ -681,7 +681,7 @@ static int test_standard_mmap_fork_unmap(void)
 	if (child_pid < 0) {
 		ksft_test_result_fail("fork failed: %s\n",
 				      strerror(errno));
-		munmap(base, ps);
+		munmap(base, ps * 16);
 		return KSFT_FAIL;
 	}
 
@@ -1118,16 +1118,20 @@ static int test_standard_mmap_exit_cleanup_churn(void)
 	int status;
 	int i;
 	int j;
+	int failed = 0;
+	int failure_iteration = -1;
 
 	ps = sysconf(_SC_PAGESIZE);
 
 	for (i = 0; i < SWMMU_EXIT_CHURN_ITERS; i++) {
 		child_pid = fork();
 		if (child_pid < 0) {
-			ksft_test_result_fail(
+			failure_iteration = i;
+			failed = 1;
+			ksft_print_msg(
 				"fork iteration %d failed: %s\n",
 				i, strerror(errno));
-			return KSFT_FAIL;
+			break;
 		}
 
 		if (child_pid == 0) {
@@ -1190,6 +1194,13 @@ static int test_standard_mmap_exit_cleanup_churn(void)
 				i, (int)waited_pid, status);
 			return KSFT_FAIL;
 		}
+	}
+
+	if (failed) {
+		ksft_test_result_fail(
+			"repeated fork/exit cycle failed at iteration %d\n",
+			failure_iteration);
+		return KSFT_FAIL;
 	}
 
 	ksft_test_result_pass(
@@ -1526,7 +1537,285 @@ static int test_standard_munmap_middle(void)
 	ksft_test_result_pass("SWMMU middle munmap works\n");
 out:
 	munmap(base, ps);
+	munmap(base + ps + ps, ps);
 	return ret;
+}
+
+static int test_standard_mmap_expand(void)
+{
+	size_t ps = sysconf(_SC_PAGESIZE);
+	void *base;
+	void *expanded;
+	uint64_t value;
+	long ret;
+
+	base = mmap(NULL, ps,
+		    PROT_READ | PROT_WRITE,
+		    MAP_PRIVATE | MAP_ANONYMOUS,
+		    -1, 0);
+	if (base == MAP_FAILED) {
+		ksft_test_result_fail("mmap failed: %s\n",
+				      strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	ret = nommu_swmmu_store_u64(base, sizeof(value), 0x1122334455667788ULL);
+	if (ret < 0) {
+		ksft_test_result_fail("initial SWMMU store failed: %s\n",
+				      strerror(errno));
+		munmap(base, ps);
+		return KSFT_FAIL;
+	}
+
+	expanded = mremap(base, ps, ps * 2, 0);
+	if (expanded == MAP_FAILED) {
+		ksft_test_result_fail("mremap expansion failed: %s\n",
+				      strerror(errno));
+		munmap(base, ps);
+		return KSFT_FAIL;
+	}
+
+	/*
+	 * The current implementation does not support MAYMOVE and should
+	 * expand in place.
+	 */
+	if (expanded != base) {
+		ksft_test_result_fail(
+			"mremap expansion moved mapping: %p -> %p\n",
+			base, expanded);
+		munmap(expanded, ps * 2);
+		return KSFT_FAIL;
+	}
+
+	value = nommu_swmmu_load_u64(base, sizeof(value));
+	if (value != 0x1122334455667788ULL) {
+		ksft_test_result_fail(
+			"old value changed after expansion: %#llx\n",
+			(unsigned long long)value);
+		munmap(base, ps * 2);
+		return KSFT_FAIL;
+	}
+
+	/*
+	 * swmmu_backing_alloc() zero-fills newly allocated pages.
+	 */
+	value = nommu_swmmu_load_u64((char *)base + ps, sizeof(value));
+	if (value != 0) {
+		ksft_test_result_fail(
+			"newly expanded page was not zero-filled: %#llx\n",
+			(unsigned long long)value);
+		munmap(base, ps * 2);
+		return KSFT_FAIL;
+	}
+
+	ret = nommu_swmmu_store_u64((char *)base + ps,
+				    sizeof(value),
+				    0xaabbccddeeff0011ULL);
+	if (ret < 0) {
+		ksft_test_result_fail(
+			"store into expanded page failed: %s\n",
+			strerror(errno));
+		munmap(base, ps * 2);
+		return KSFT_FAIL;
+	}
+
+	value = nommu_swmmu_load_u64((char *)base + ps, sizeof(value));
+	if (value != 0xaabbccddeeff0011ULL) {
+		ksft_test_result_fail(
+			"value written to expanded page was not preserved\n");
+		munmap(base, ps * 2);
+		return KSFT_FAIL;
+	}
+
+	if (munmap(base, ps * 2) != 0) {
+		ksft_test_result_fail("munmap after expansion failed: %s\n",
+				      strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	ksft_test_result_pass(
+		"mremap expansion preserves old data and zero-fills new pages\n");
+	return KSFT_PASS;
+}
+
+static int test_standard_mmap_expand_tail_munmap(void)
+{
+	size_t ps = sysconf(_SC_PAGESIZE);
+	void *base;
+	void *expanded;
+	uint64_t value;
+
+	base = mmap(NULL, ps,
+		    PROT_READ | PROT_WRITE,
+		    MAP_PRIVATE | MAP_ANONYMOUS,
+		    -1, 0);
+	if (base == MAP_FAILED) {
+		ksft_test_result_fail("mmap failed: %s\n",
+				      strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	nommu_swmmu_store_u64(base, sizeof(value), 1234);
+
+	expanded = mremap(base, ps, ps * 3, 0);
+	if (expanded == MAP_FAILED || expanded != base) {
+		ksft_test_result_fail(
+			"mremap expansion failed or moved mapping: %s\n",
+			expanded == MAP_FAILED ? strerror(errno) : "moved");
+		if (expanded != MAP_FAILED)
+			munmap(expanded, ps * 3);
+		else
+			munmap(base, ps);
+		return KSFT_FAIL;
+	}
+
+	/*
+	 * Remove the last two pages. This exercises the already implemented
+	 * tail partial munmap after vma_expand().
+	 */
+	if (munmap((char *)base + ps, ps * 2) != 0) {
+		ksft_test_result_fail(
+			"tail munmap after expansion failed: %s\n",
+			strerror(errno));
+		munmap(base, ps * 3);
+		return KSFT_FAIL;
+	}
+
+	value = nommu_swmmu_load_u64(base, sizeof(value));
+	if (value != 1234) {
+		ksft_test_result_fail(
+			"value changed after expansion and tail munmap\n");
+		munmap(base, ps);
+		return KSFT_FAIL;
+	}
+
+	if (munmap(base, ps) != 0) {
+		ksft_test_result_fail(
+			"final munmap after tail removal failed: %s\n",
+			strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	ksft_test_result_pass(
+		"tail munmap works after mremap expansion\n");
+	return KSFT_PASS;
+}
+
+static int test_standard_mmap_overlap_expand(void)
+{
+	size_t ps = sysconf(_SC_PAGESIZE);
+	void *base;
+	void *expanded;
+	uint64_t value;
+	void *large_base;
+
+	large_base = mmap(NULL, ps * 16,
+		    PROT_READ | PROT_WRITE,
+		    MAP_PRIVATE | MAP_ANONYMOUS,
+		    -1, 0);
+	if (large_base == MAP_FAILED) {
+		ksft_test_result_fail("pre: mmap failed: %s\n",
+				      strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	if (munmap(large_base, ps) != 0) {
+		ksft_test_result_fail("head munmap failed: %s\n",
+				strerror(errno));
+		munmap(large_base, ps * 16);
+		return KSFT_FAIL;
+	}
+
+	base = mmap(large_base, ps,
+		    PROT_READ | PROT_WRITE,
+		    MAP_PRIVATE | MAP_ANONYMOUS,
+		    -1, 0);
+	if (base == MAP_FAILED) {
+		ksft_test_result_fail("mmap failed: %s\n",
+				      strerror(errno));
+		munmap(large_base + ps, ps * 16);
+		return KSFT_FAIL;
+	}
+
+	if (base != large_base) {
+		ksft_test_result_fail("failed to reuse the trimmed head address\n");
+		/* cleanup */
+		return KSFT_FAIL;
+	}
+	nommu_swmmu_store_u64(base, sizeof(value), 1234);
+
+	expanded = mremap(base, ps, ps * 3, 0);
+	if (expanded != MAP_FAILED) {
+		ksft_test_result_fail("overlapping expansion unexpectedly succeeded\n");
+		munmap(base, ps * 3);
+		return KSFT_FAIL;
+	}
+
+	if (errno != ENOMEM && errno != EEXIST) {
+		ksft_print_msg("unexpected errno: %s\n", strerror(errno));
+		munmap(base, ps);
+		return KSFT_FAIL;
+	}
+
+	if (munmap(base, ps) != 0)
+		ksft_print_msg("cleanup: base munmap failed: %s\n",
+			strerror(errno));
+
+	if (munmap((char *)large_base + ps, ps * 15) != 0)
+		ksft_print_msg("cleanup: tail munmap failed: %s\n",
+			strerror(errno));
+
+	ksft_test_result_pass(
+		"overlapping mremap expansion is rejected");
+	return KSFT_PASS;
+
+}
+
+static int test_standard_mmap_expand_rejects_maymove(void)
+{
+	size_t ps = sysconf(_SC_PAGESIZE);
+	void *base;
+	void *result;
+	uint64_t value;
+
+	base = mmap(NULL, ps,
+		    PROT_READ | PROT_WRITE,
+		    MAP_PRIVATE | MAP_ANONYMOUS,
+		    -1, 0);
+	if (base == MAP_FAILED) {
+		ksft_test_result_fail("mmap failed: %s\n",
+				      strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	nommu_swmmu_store_u64(base, sizeof(value), 5678);
+
+	result = mremap(base, ps, ps * 2, MREMAP_MAYMOVE);
+	if (result != MAP_FAILED) {
+		ksft_test_result_fail(
+			"MREMAP_MAYMOVE unexpectedly succeeded\n");
+		munmap(result, ps * 2);
+		return KSFT_FAIL;
+	}
+
+	value = nommu_swmmu_load_u64(base, sizeof(value));
+	if (value != 5678) {
+		ksft_test_result_fail(
+			"mapping was modified after rejected expansion\n");
+		munmap(base, ps);
+		return KSFT_FAIL;
+	}
+
+	if (munmap(base, ps) != 0) {
+		ksft_test_result_fail(
+			"munmap after rejected expansion failed: %s\n",
+			strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	ksft_test_result_pass(
+		"rejected expansion leaves the original mapping intact\n");
+	return KSFT_PASS;
 }
 
 static int swmmu_set_mode(unsigned long mode)
@@ -1997,7 +2286,7 @@ int main(void)
 	}
 
 	ksft_print_header();
-	ksft_set_plan(26);
+	ksft_set_plan(31);
 
 	if (test_default_mode_off() == KSFT_FAIL)
 		result = KSFT_FAIL;
@@ -2074,9 +2363,23 @@ int main(void)
 	if (test_standard_munmap_middle() == KSFT_FAIL)
 		result = KSFT_FAIL;
 
+	if (test_standard_mmap_expand() == KSFT_FAIL)
+		result = KSFT_FAIL;
+
+	if (test_standard_mmap_expand_tail_munmap() == KSFT_FAIL)
+		result = KSFT_FAIL;
+
+	if (test_standard_mmap_overlap_expand() == KSFT_FAIL)
+		result = KSFT_FAIL;
+
+	if (test_standard_mmap_expand_rejects_maymove() == KSFT_FAIL)
+		result = KSFT_FAIL;
+
+
 	/* shall be the last test */
 	if (test_standard_mmap_exit_cleanup_churn() == KSFT_FAIL)
 		result = KSFT_FAIL;
+
 	if (test_standard_mmap_exit_cleanup() == KSFT_FAIL)
 		result = KSFT_FAIL;
 

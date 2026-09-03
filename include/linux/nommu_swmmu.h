@@ -7,6 +7,7 @@
 #include <linux/maple_tree.h>
 #include <linux/refcount.h>
 #include <linux/gfp_types.h>
+#include <linux/rwsem.h>
 #include <vdso/limits.h>
 
 #define SWMMU_PAGE_SIZE 4096UL
@@ -36,7 +37,53 @@ struct nommu_swmmu_vma {
 	unsigned int access;
 };
 
-struct nommu_swmmu_space;
+struct nommu_swmmu_space {
+	struct rw_semaphore lock;
+	struct mm_struct *mm;
+	refcount_t users;
+	const struct nommu_swmmu_mem_ops *ops;
+};
+
+
+enum nommu_swmmu_vma_tx_type {
+	NOMMU_SWMMU_VMA_TX_RESIZE,
+	NOMMU_SWMMU_VMA_TX_SPLIT,
+	NOMMU_SWMMU_VMA_TX_EXPAND,
+};
+
+struct nommu_swmmu_vma_tx {
+	enum nommu_swmmu_vma_tx_type type;
+
+	struct nommu_swmmu_vma *vma_data;
+	struct nommu_swmmu_vma *new_vma_data;
+
+	struct nommu_swmmu_backing *old_backing;
+	struct nommu_swmmu_backing *new_backing;
+
+	size_t old_page_count;
+	size_t new_page_count;
+
+	unsigned long old_page_offset;
+	size_t split_page_count;
+
+	bool backing_ref_held;
+
+};
+
+struct vm_area_struct;
+
+int nommu_swmmu_expand_prepare(struct nommu_swmmu_space *space,
+				struct vm_area_struct *vma,
+				unsigned long new_end,
+				struct nommu_swmmu_vma_tx *tx);
+
+void nommu_swmmu_vma_expand_commit(struct vm_area_struct *target,
+				   struct nommu_swmmu_vma_tx *tx);
+
+void nommu_swmmu_vma_expand_abort(struct nommu_swmmu_space *space,
+				struct nommu_swmmu_vma_tx *tx);
+
+
 struct page;
 
 struct nommu_swmmu_mem_ops {
