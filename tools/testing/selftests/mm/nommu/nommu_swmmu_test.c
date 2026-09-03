@@ -1711,7 +1711,7 @@ static int test_standard_mmap_overlap_expand(void)
 
 	large_base = mmap(NULL, ps * 16,
 		    PROT_READ | PROT_WRITE,
-		    MAP_PRIVATE | MAP_ANONYMOUS,
+		    MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE,
 		    -1, 0);
 	if (large_base == MAP_FAILED) {
 		ksft_test_result_fail("pre: mmap failed: %s\n",
@@ -1725,6 +1725,10 @@ static int test_standard_mmap_overlap_expand(void)
 		munmap(large_base, ps * 16);
 		return KSFT_FAIL;
 	}
+
+	nommu_swmmu_store_u64((char *)large_base + ps,
+			sizeof(value),
+			0xfeedface);
 
 	base = mmap(large_base, ps,
 		    PROT_READ | PROT_WRITE,
@@ -1757,6 +1761,14 @@ static int test_standard_mmap_overlap_expand(void)
 		return KSFT_FAIL;
 	}
 
+	value = nommu_swmmu_load_u64((char *)large_base + ps,
+				sizeof(value));
+	if (value != 0xfeedface) {
+		ksft_test_result_fail(
+			"neighboring VMA changed after rejected expansion\n");
+		goto out_fail;
+	}
+
 	if (munmap(base, ps) != 0)
 		ksft_print_msg("cleanup: base munmap failed: %s\n",
 			strerror(errno));
@@ -1766,9 +1778,13 @@ static int test_standard_mmap_overlap_expand(void)
 			strerror(errno));
 
 	ksft_test_result_pass(
-		"overlapping mremap expansion is rejected");
+		"overlapping mremap expansion is rejected\n");
 	return KSFT_PASS;
 
+out_fail:
+	munmap(base, ps);
+	munmap((char *)large_base + ps, ps * 15);
+	return KSFT_FAIL;
 }
 
 static int test_standard_mmap_expand_rejects_maymove(void)
@@ -2275,6 +2291,64 @@ cleanup:
 	return KSFT_PASS;
 }
 
+static int test_standard_mmap_rejects_nonexact_old_range(void)
+{
+	size_t ps = sysconf(_SC_PAGESIZE);
+	void *base;
+	void *result;
+	uint64_t value = 0x12345678;
+
+	base = mmap(NULL, ps * 2,
+		    PROT_READ | PROT_WRITE,
+		    MAP_PRIVATE | MAP_ANONYMOUS,
+		    -1, 0);
+	if (base == MAP_FAILED) {
+		ksft_test_result_fail("mmap failed: %s\n",
+				      strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	nommu_swmmu_store_u64(base, sizeof(value), value);
+
+	/*
+	 * The current implementation requires old_len to describe
+	 * the complete VMA. This is only a partial old range.
+	 */
+	result = mremap(base, ps, ps, 0);
+	if (result != MAP_FAILED) {
+		ksft_test_result_fail(
+			"partial old range unexpectedly succeeded\n");
+		munmap(result, ps * 2);
+		return KSFT_FAIL;
+	}
+
+	if (errno != EINVAL) {
+		ksft_test_result_fail(
+			"partial old range returned unexpected errno: %s\n",
+			strerror(errno));
+		munmap(base, ps * 2);
+		return KSFT_FAIL;
+	}
+
+	value = nommu_swmmu_load_u64(base, sizeof(value));
+	if (value != 0x12345678) {
+		ksft_test_result_fail(
+			"mapping changed after rejected partial remap\n");
+		munmap(base, ps * 2);
+		return KSFT_FAIL;
+	}
+
+	if (munmap(base, ps * 2) != 0) {
+		ksft_test_result_fail("munmap failed: %s\n",
+				      strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	ksft_test_result_pass(
+		"non-exact old mremap ranges are rejected safely\n");
+	return KSFT_PASS;
+}
+
 int main(void)
 {
 	int result = KSFT_PASS;
@@ -2286,7 +2360,7 @@ int main(void)
 	}
 
 	ksft_print_header();
-	ksft_set_plan(31);
+	ksft_set_plan(32);
 
 	if (test_default_mode_off() == KSFT_FAIL)
 		result = KSFT_FAIL;
@@ -2375,13 +2449,17 @@ int main(void)
 	if (test_standard_mmap_expand_rejects_maymove() == KSFT_FAIL)
 		result = KSFT_FAIL;
 
+	if (test_standard_mmap_rejects_nonexact_old_range() == KSFT_FAIL)
+		result = KSFT_FAIL;
 
-	/* shall be the last test */
+
+	/* two tests below shall be the last */
 	if (test_standard_mmap_exit_cleanup_churn() == KSFT_FAIL)
 		result = KSFT_FAIL;
 
 	if (test_standard_mmap_exit_cleanup() == KSFT_FAIL)
 		result = KSFT_FAIL;
+
 
 	if (result == KSFT_PASS)
 		ksft_finished();

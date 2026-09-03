@@ -1552,7 +1552,11 @@ unsigned long do_mremap(unsigned long addr,
 	struct mm_struct *mm = current->mm;
 	VMA_ITERATOR(vmi, mm, addr);
 	struct vm_area_struct *vma;
+	struct nommu_swmmu_vma_tx vma_tx;
+	struct vm_area_struct *next;
+	int ret;
 	unsigned long end;
+
 	/* not implemented yet */
 	if (new_addr)
 		return -EINVAL;
@@ -1566,71 +1570,74 @@ unsigned long do_mremap(unsigned long addr,
 
 	end = addr + old_len;
 	vma = vma_find(&vmi, end);
-	if (vma && vma->vm_swmmu_data) {
-		struct nommu_swmmu_vma_tx vma_tx;
-		struct nommu_swmmu_vma *vma_data;
-		struct vm_area_struct *next;
-		int ret;
 
-		vma_data = vma->vm_swmmu_data;
-		next = vma_next(&vmi);
+	if (!vma || !vma->vm_swmmu_data)
+		return do_mremap_nommu(addr, old_len, new_len,
+				flags, new_addr);
 
-		if (!vma ||
-			vma->vm_start != addr ||
-			end > vma->vm_end)
-			return -EINVAL;
+	/*
+	 * The current SWMMU implementation only supports remapping
+	 * a complete VMA in place.
+	 */
+	if (vma->vm_start != addr ||
+		end != vma->vm_end)
+		return -EINVAL;
 
-		if (flags & (MREMAP_MAYMOVE | MREMAP_FIXED))
-			return -EINVAL;
+	if (flags & (MREMAP_MAYMOVE | MREMAP_FIXED))
+		return -EINVAL;
 
-		new_len = PAGE_ALIGN(new_len);
-		if (!new_len)
-			return -EINVAL;
+	next = vma_next(&vmi);
 
-		if (new_len == old_len)
-			return vma->vm_start;
+	if (new_len > ULONG_MAX - (PAGE_SIZE - 1))
+		return -EINVAL;
 
-		if (new_len < old_len) {
-			/* shrink */
-			ret = swmmu_resize_prepare(mm->swmmu_space,
-						vma_data,
-						new_len,
-						&vma_tx);
+	new_len = PAGE_ALIGN(new_len);
+	if (!new_len)
+		return -EINVAL;
 
-			if (ret)
-				return ret;
+	if (new_len == old_len)
+		return vma->vm_start;
 
-			ret = vma_shrink(&vmi, vma, vma->vm_start + new_len);
-			if (ret) {
-				swmmu_resize_abort(mm->swmmu_space, &vma_tx);
-				return ret;
-			}
+	if (new_len < old_len) {
+		/* shrink */
+		ret = swmmu_resize_prepare(mm->swmmu_space,
+					vma->vm_swmmu_data,
+					new_len,
+					&vma_tx);
 
-			down_write(&mm->swmmu_space->lock);
-			swmmu_resize_commit(mm->swmmu_space, &vma_tx);
-			up_write(&mm->swmmu_space->lock);
-		} else {
-			struct vma_merge_struct vmg = {
-				.mm = mm,
-				.vmi = &vmi,
-				.start = vma->vm_start,
-				.end = vma->vm_start + new_len,
-				.target = vma,
-				.next = next,
-				.just_expand = true,
-			};
+		if (ret)
+			return ret;
 
-			ret = vma_expand(&vmg);
-			if (ret)
-				return ret;
+		ret = vma_shrink(&vmi, vma, vma->vm_start + new_len);
+		if (ret) {
+			swmmu_resize_abort(mm->swmmu_space, &vma_tx);
+			return ret;
 		}
 
-		validate_mm(mm);
-		nommu_swmmu_validate(mm);
+		down_write(&mm->swmmu_space->lock);
+		swmmu_resize_commit(mm->swmmu_space, &vma_tx);
+		up_write(&mm->swmmu_space->lock);
+	} else {
+		/* growth */
+		struct vma_merge_struct vmg = {
+			.mm = mm,
+			.vmi = &vmi,
+			.start = vma->vm_start,
+			.end = vma->vm_start + new_len,
+			.target = vma,
+			.next = next,
+			.just_expand = true,
+		};
 
-		return vma->vm_start;
+		ret = vma_expand(&vmg);
+		if (ret)
+			return ret;
 	}
-	return do_mremap_nommu(addr, old_len, new_len, flags, new_addr);
+
+	validate_mm(mm);
+	nommu_swmmu_validate(mm);
+
+	return vma->vm_start;
 }
 
 /* prctl interface */
