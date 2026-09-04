@@ -350,6 +350,39 @@ static int swmmu_find_free_range(struct mm_struct *mm,
 	return 0;
 }
 
+static int swmmu_count_overlaps(struct mm_struct *mm,
+				unsigned long start,
+				unsigned long end,
+				struct vm_area_struct **single)
+{
+	VMA_ITERATOR(vmi, mm, start);
+	struct vm_area_struct *vma;
+	int count = 0;
+
+	*single = NULL;
+
+	vma = vma_find(&vmi, end);
+	while (vma && vma->vm_start < end) {
+		/*
+		 * vma_find() should already return the first VMA
+		 * overlapping or following @start, but keep the
+		 * half-open interval check explicit.
+		 */
+		if (vma->vm_end > start &&
+		    vma->vm_start < end) {
+			count++;
+
+			if (count == 1)
+				*single = vma;
+			else
+				return count;
+		}
+
+		vma = vma_next(&vmi);
+	}
+
+	return count;
+}
 
 /*
  * Create a space using @mem_ops.
@@ -1396,6 +1429,11 @@ __do_mmap_swmmu(struct mm_struct *mm,
 	unsigned long end;
 	int ret;
 	unsigned int access;
+	int overlap_count;
+	bool exact_replace = false;
+	bool head_replace = false;
+	bool tail_replace = false;
+	bool middle_replace = false;
 
 	if (!mm)
 		return -EINVAL;
@@ -1435,22 +1473,51 @@ __do_mmap_swmmu(struct mm_struct *mm,
 			return -EINVAL;
 		end = addr + len;
 
-		vma = find_vma(mm, addr);
-		if (vma && vma->vm_start < end) {
-			if (flags & MAP_FIXED_NOREPLACE)
-				return -EEXIST;
+		overlap_count = swmmu_count_overlaps(mm, addr, end, &replace_vma);
+		if (overlap_count < 0)
+			return overlap_count;
 
+		if (flags & MAP_FIXED_NOREPLACE) {
+			if (overlap_count)
+				return -EEXIST;
+		} else if (overlap_count > 1) {
 			/*
-			 * First version supports replacing one complete
-			 * SWMMU VMA only.
+			 * Multiple-VMA replacement requires the later
+			 * split/remove transaction.
 			 */
-			if (vma->vm_start != addr ||
-				vma->vm_end != end ||
-				!vma->vm_swmmu_data)
+			return -EOPNOTSUPP;
+		}
+
+		if (overlap_count == 1) {
+			if (!replace_vma->vm_swmmu_data)
 				return -EOPNOTSUPP;
 
-			replace_vma = vma;
+			exact_replace =
+				replace_vma->vm_start == addr &&
+				replace_vma->vm_end == end;
+
+			head_replace =
+				replace_vma->vm_start == addr &&
+				end < replace_vma->vm_end;
+
+			tail_replace =
+				addr > replace_vma->vm_start &&
+				replace_vma->vm_end == end;
+
+			middle_replace =
+				addr > replace_vma->vm_start &&
+				end < replace_vma->vm_end;
+
+			if (!exact_replace &&
+				!head_replace &&
+				!tail_replace &&
+				!middle_replace)
+				return -EOPNOTSUPP;
 		}
+
+		/* FIXME: to be impleneted */
+		if (head_replace || middle_replace || tail_replace)
+			return -EOPNOTSUPP;
 
 		start = addr;
 	}
@@ -1517,16 +1584,18 @@ __do_mmap_swmmu(struct mm_struct *mm,
 
 	/* MAP_FIXED with replacement */
 	if (replace_vma) {
-		vma_mark_detached(replace_vma);
-		mm->map_count--;
+		if (exact_replace) {
+			vma_mark_detached(replace_vma);
+			mm->map_count--;
 
-		nommu_swmmu_vma_close(mm, replace_vma);
-		vma_close(replace_vma);
+			nommu_swmmu_vma_close(mm, replace_vma);
+			vma_close(replace_vma);
 
-		if (replace_vma->vm_file)
-			fput(replace_vma->vm_file);
+			if (replace_vma->vm_file)
+				fput(replace_vma->vm_file);
 
-		vm_area_free(replace_vma);
+			vm_area_free(replace_vma);
+		}
 	}
 
 	mm->map_count++;

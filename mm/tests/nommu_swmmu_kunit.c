@@ -1020,6 +1020,85 @@ static void nommu_swmmu_mm_map_fixed_replace_test(struct kunit *test)
 	KUNIT_ASSERT_EQ(test, ret, 0);
 }
 
+static void nommu_swmmu_mm_map_fixed_head_replace_unsupported_test(struct kunit *test)
+{
+	struct nommu_swmmu_mm_test_ctx *ctx = test->priv;
+	unsigned long old_addr;
+	unsigned long replacement;
+	u64 value;
+
+	kunit_skip(test,
+		"partial MAP_FIXED head replacement is not implemented");
+
+	old_addr = nommu_swmmu_kunit_mmap_mm(
+		ctx->mm,
+		0x1000000000UL,
+		SWMMU_PAGE_SIZE * 2,
+		PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS |
+		MAP_FIXED_NOREPLACE);
+	KUNIT_ASSERT_EQ(test, old_addr, 0x1000000000UL);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_store_mm(ctx->mm,
+						   old_addr,
+						   sizeof(value),
+						   41),
+			0);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_store_mm(
+				ctx->mm,
+				old_addr + SWMMU_PAGE_SIZE,
+				sizeof(value),
+				42),
+			0);
+
+	/*
+	 * Replace the first page. The second page must remain mapped
+	 * by the retained suffix VMA.
+	 */
+	replacement = nommu_swmmu_kunit_mmap_mm(
+		ctx->mm,
+		old_addr,
+		SWMMU_PAGE_SIZE,
+		PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED);
+	KUNIT_ASSERT_EQ(test, replacement, old_addr);
+
+	/* Replacement backing is new and zero-filled. */
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_load_mm(ctx->mm,
+						  old_addr,
+						  sizeof(value),
+						  &value),
+			0);
+	KUNIT_EXPECT_EQ(test, value, 0ULL);
+
+	/* Retained suffix still contains the original value. */
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_load_mm(
+				ctx->mm,
+				old_addr + SWMMU_PAGE_SIZE,
+				sizeof(value),
+				&value),
+			0);
+	KUNIT_EXPECT_EQ(test, value, 42ULL);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_unmap_mm(ctx->mm,
+						   old_addr,
+						   SWMMU_PAGE_SIZE),
+			0);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_unmap_mm(
+				ctx->mm,
+				old_addr + SWMMU_PAGE_SIZE,
+				SWMMU_PAGE_SIZE),
+			0);
+}
+
 
 static int nommu_swmmu_mm_ctx_init(struct kunit *test)
 {
@@ -1063,6 +1142,7 @@ static struct kunit_case nommu_swmmu_mm_test_cases[] = {
 	KUNIT_CASE(nommu_swmmu_mm_fork_zalloc_rollback_test),
 	KUNIT_CASE(nommu_swmmu_mm_fork_page_alloc_rollback_test),
 	KUNIT_CASE(nommu_swmmu_mm_map_fixed_replace_test),
+	KUNIT_CASE(nommu_swmmu_mm_map_fixed_head_replace_unsupported_test),
 	{}
 };
 
