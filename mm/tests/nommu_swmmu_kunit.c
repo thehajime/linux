@@ -1,20 +1,10 @@
-// mm/nommu_swmmu_kunit.c
+// mm/tests/nommu_swmmu_kunit.c
 
 #include <kunit/test.h>
-#include <linux/init.h>
-#include <linux/nommu_swmmu.h>
-#include <linux/stddef.h>
-#include <linux/types.h>
 #include <linux/highmem.h>
-
-/*
- * note: this macro should be updated once the implementation
- * of swmmu_alloc/clone() will be changed.
- */
-#define SWMMU_ALLOC_ZALLOC_POINTS	2
-#define SWMMU_ALLOC_TEST_PAGES		4
-#define SWMMU_CLONE_ZALLOC_POINTS	3
-#define SWMMU_CLONE_TEST_PAGES		4
+#include <linux/nommu_swmmu.h>
+#include <linux/slab.h>
+#include <linux/string.h>
 
 enum test_fail_kind {
 	TEST_FAIL_NONE,
@@ -27,7 +17,6 @@ struct test_alloc_state {
 	enum test_fail_kind kind;
 	unsigned int fail_at;
 	unsigned int count;
-
 	unsigned int zalloc_success;
 	unsigned int dealloc_count;
 	unsigned int page_alloc_success;
@@ -40,14 +29,12 @@ static struct test_alloc_state test_alloc_state;
 static void test_alloc_reset(void)
 {
 	memset(&test_alloc_state, 0, sizeof(test_alloc_state));
-	test_alloc_state.kind = TEST_FAIL_NONE;
 }
 
 static void test_alloc_fail_at(enum test_fail_kind kind,
 			       unsigned int fail_at)
 {
 	test_alloc_reset();
-
 	test_alloc_state.kind = kind;
 	test_alloc_state.fail_at = fail_at;
 }
@@ -57,12 +44,10 @@ static bool test_should_fail(enum test_fail_kind kind)
 	if (test_alloc_state.kind != kind)
 		return false;
 
-	return test_alloc_state.count++ ==
-	       test_alloc_state.fail_at;
+	return test_alloc_state.count++ == test_alloc_state.fail_at;
 }
 
-
-static inline void *test_kzalloc(size_t size, gfp_t gfp)
+static void *test_kzalloc(size_t size, gfp_t gfp)
 {
 	void *ptr;
 
@@ -76,7 +61,7 @@ static inline void *test_kzalloc(size_t size, gfp_t gfp)
 	return ptr;
 }
 
-static inline void test_kfree(void *ptr)
+static void test_kfree(void *ptr)
 {
 	if (ptr)
 		test_alloc_state.dealloc_count++;
@@ -84,7 +69,7 @@ static inline void test_kfree(void *ptr)
 	kfree(ptr);
 }
 
-static inline struct page *test_alloc_page(gfp_t gfp)
+static struct page *test_alloc_page(gfp_t gfp)
 {
 	struct page *page;
 
@@ -98,7 +83,7 @@ static inline struct page *test_alloc_page(gfp_t gfp)
 	return page;
 }
 
-static inline void test_free_page(struct page *page)
+static void test_free_page(struct page *page)
 {
 	if (page)
 		test_alloc_state.page_free_count++;
@@ -106,8 +91,7 @@ static inline void test_free_page(struct page *page)
 	__free_page(page);
 }
 
-static inline int test_copy_page(struct page *dst,
-				const struct page *src)
+static int test_copy_page(struct page *dst, const struct page *src)
 {
 	test_alloc_state.page_copy_count++;
 
@@ -126,565 +110,11 @@ static const struct nommu_swmmu_mem_ops test_ops = {
 	.page_copy = test_copy_page,
 };
 
-/* compiler plugin instruments */
-struct swmmu_test_object {
-	u64 value;
-};
-
-struct swmmu_array_object {
-	u32 values[4];
-};
-
-struct swmmu_nested {
-	u32 value;
-};
-
-struct swmmu_object {
-	u32 values[4];
-	struct swmmu_nested nested;
-};
-
 struct nommu_swmmu_test_ctx {
 	struct nommu_swmmu_space *space;
 };
 
-static u64 (* const __used swmmu_load_ref)
-	(const void *, size_t) = nommu_swmmu_load_u64;
-
-static long (* const __used swmmu_store_ref)
-	(void *, size_t, u64) = nommu_swmmu_store_u64;
-
-__attribute__((swmmu))
-static noinline u64
-test_swmmu_increment(struct swmmu_test_object *object)
-{
-	object->value++;
-	return object->value;
-}
-
-/* Constant array indexing */
-__attribute__((swmmu))
-static noinline void
-test_swmmu_array_store_constant(struct swmmu_array_object *object)
-{
-	object->values[2] = 0x11223344;
-}
-
-__attribute__((swmmu))
-static noinline u32 test_swmmu_array_load_constant(
-	struct swmmu_array_object *object)
-{
-	return object->values[2];
-}
-
-/* nested structures; */
-__attribute__((swmmu))
-static noinline void swmmu_access_shapes(struct swmmu_object *object,
-				struct swmmu_object *source)
-{
-	object->values[2] = source->values[1];
-	object->nested.value++;
-	object->values[3] += object->nested.value;
-}
-
-/* Dynamic array indexing */
-#define SWMMU_ARRAY_INDEX 3
-#define SWMMU_ARRAY_VALUE 0xaabbccdd
-
-__attribute__((swmmu))
-static void test_swmmu_array_store_indexed(
-	struct swmmu_array_object *object,
-	size_t index,
-	u32 value)
-{
-	object->values[index] = value;
-}
-
-__attribute__((swmmu))
-static u32 test_swmmu_array_load_indexed(
-	struct swmmu_array_object *object,
-	size_t index)
-{
-	return object->values[index];
-}
-
-/* pointer arithmetic */
-__attribute__((swmmu))
-static void test_swmmu_array_store_pointer_arithmetic(
-	struct swmmu_array_object *object,
-	size_t index,
-	u32 value)
-{
-	u32 *element;
-
-	element = object->values + index;
-	*element = value;
-}
-
-__attribute__((swmmu))
-static u32 test_swmmu_array_load_pointer_arithmetic(
-	struct swmmu_array_object *object,
-	size_t index)
-{
-	u32 *element;
-
-	element = object->values + index;
-	return *element;
-}
-
-struct swmmu_node {
-	u32 value;
-	struct swmmu_node *next;
-};
-
-__attribute__((swmmu))
-static noinline u32
-test_swmmu_two_pointer_hops(struct swmmu_node *node)
-{
-	return node->next->next->value;
-}
-
-__attribute__((swmmu))
-static noinline u32
-test_swmmu_preincrement(struct swmmu_test_object *object)
-{
-	return ++object->value;
-}
-
-__attribute__((swmmu))
-static noinline u64
-test_swmmu_postincrement(struct swmmu_test_object *object)
-{
-	return object->value++;
-}
-
-/*
- * GCC 13 lowers the two RHS memory accesses into separate GIMPLE
- * assignments before the SWMMU pass.
- */
-__attribute__((swmmu))
-static noinline void
-test_swmmu_multiple_rhs(struct swmmu_array_object *object)
-{
-	object->values[0] = object->values[1] + object->values[2];
-}
-
-__attribute__((swmmu))
-static noinline void
-test_swmmu_copy_u32(u32 *dst, const u32 *src)
-{
-	*dst = *src;
-}
-
-__attribute__((swmmu))
-static noinline u32
-test_swmmu_loop_branch(struct swmmu_array_object *object)
-{
-	u32 sum = 0;
-	int i;
-
-	for (i = 0; i < ARRAY_SIZE(object->values); i++) {
-		if (object->values[i] & 1)
-			sum += object->values[i];
-	}
-
-	return sum;
-}
-
-struct swmmu_scalar_object {
-	s8  s8_value;
-	u8  u8_value;
-	s16 s16_value;
-	u16 u16_value;
-	s32 s32_value;
-	u32 u32_value;
-	s64 s64_value;
-	u64 u64_value;
-};
-
-__attribute__((swmmu))
-static noinline void
-test_swmmu_scalar_store(struct swmmu_scalar_object *object)
-{
-	object->s8_value = -1;
-	object->u8_value = 0xff;
-	object->s16_value = -2;
-	object->u16_value = 0xfffe;
-	object->s32_value = -3;
-	object->u32_value = 0xfffffffd;
-	object->s64_value = -4;
-	object->u64_value = 0xfffffffffffffffcULL;
-}
-
-struct swmmu_pointer_object {
-	void *value;
-};
-
-__attribute__((swmmu))
-static noinline void
-test_swmmu_pointer_store(struct swmmu_pointer_object *object,
-			 void *value)
-{
-	object->value = value;
-}
-
-__attribute__((swmmu))
-static noinline void *
-test_swmmu_pointer_load(struct swmmu_pointer_object *object)
-{
-	return object->value;
-}
-
-/*
- * actual tests
- */
-static void
-nommu_swmmu_increment_test(struct kunit *test)
-{
-	struct nommu_swmmu_space *space;
-	struct swmmu_test_object *object;
-	u64 value;
-	long ret;
-
-	space = nommu_swmmu_space_create_with_ops(&test_ops);
-	KUNIT_ASSERT_NOT_NULL(test, space);
-
-	nommu_swmmu_kunit_set_space(space);
-
-	ret = swmmu_alloc(sizeof(*object));
-	KUNIT_ASSERT_GT(test, ret, 0L);
-
-	object = (void *)(uintptr_t)ret;
-	nommu_swmmu_store_u64(&object->value,
-			      sizeof(object->value),
-			      41);
-
-	value = test_swmmu_increment(object);
-
-	KUNIT_EXPECT_EQ(test, value, 42ULL);
-
-	swmmu_free(object);
-	nommu_swmmu_kunit_clear_space();
-	nommu_swmmu_space_put(space);
-}
-
-static void
-destroy_test_space(struct nommu_swmmu_space *space)
-{
-	nommu_swmmu_kunit_clear_space();
-	nommu_swmmu_space_put(space);
-}
-
-KUNIT_DEFINE_ACTION_WRAPPER(
-	destroy_test_space_action,
-	destroy_test_space,
-	struct nommu_swmmu_space *);
-
-static void
-nommu_swmmu_clone_test(struct kunit *test)
-{
-	struct nommu_swmmu_space *parent;
-	struct nommu_swmmu_space *child;
-	struct swmmu_test_object *parent_object1;
-	struct swmmu_test_object *parent_object2;
-	struct swmmu_test_object *parent_object3;
-	struct swmmu_test_object *child_object1;
-	struct swmmu_test_object *child_object2;
-	struct swmmu_test_object *child_object3;
-	uintptr_t vaddr1, vaddr2, vaddr3;
-	u64 value;
-	long ret;
-
-	parent = nommu_swmmu_space_create_with_ops(&test_ops);
-	KUNIT_ASSERT_NOT_NULL(test, parent);
-	ret = kunit_add_action_or_reset(test,
-					destroy_test_space_action, parent);
-	KUNIT_ASSERT_EQ(test, ret, 0);
-
-	nommu_swmmu_kunit_set_space(parent);
-
-	ret = swmmu_alloc(sizeof(*parent_object1));
-	KUNIT_ASSERT_GT(test, ret, 0L);
-	parent_object1 = (void *)(uintptr_t)ret;
-
-	ret = swmmu_alloc(SWMMU_PAGE_SIZE * 2);
-	KUNIT_ASSERT_GT(test, ret, 0L);
-	parent_object2 = (void *)(uintptr_t)ret;
-
-	nommu_swmmu_store_u64(&parent_object1->value,
-			      sizeof(parent_object1->value),
-			      41);
-
-	nommu_swmmu_store_u64(&parent_object2->value,
-			      sizeof(parent_object2->value),
-			      81);
-
-	parent_object3 = (void *)((uintptr_t)parent_object2 +
-				SWMMU_PAGE_SIZE);
-	nommu_swmmu_store_u64(&parent_object3->value,
-			      sizeof(parent_object3->value),
-			      91);
-
-	vaddr1 = (uintptr_t)parent_object1;
-	vaddr2 = (uintptr_t)parent_object2;
-	vaddr3 = (uintptr_t)parent_object3;
-
-	KUNIT_ASSERT_EQ(test,
-			swmmu_clone_space(parent, &child),
-			0);
-
-	nommu_swmmu_kunit_set_space(child);
-
-	ret = kunit_add_action_or_reset(test,
-					destroy_test_space_action, child);
-	KUNIT_ASSERT_EQ(test, ret, 0);
-
-	child_object1 = (struct swmmu_test_object *)vaddr1;
-	child_object2 = (struct swmmu_test_object *)vaddr2;
-	child_object3 = (struct swmmu_test_object *)vaddr3;
-
-	value = test_swmmu_increment(child_object1);
-	KUNIT_EXPECT_EQ(test, value, 42ULL);
-
-	value = test_swmmu_increment(child_object2);
-	KUNIT_EXPECT_EQ(test, value, 82ULL);
-
-	value = test_swmmu_increment(child_object3);
-	KUNIT_EXPECT_EQ(test, value, 92ULL);
-
-	nommu_swmmu_kunit_set_space(parent);
-
-	value = nommu_swmmu_load_u64(&parent_object1->value,
-				     sizeof(parent_object1->value));
-	KUNIT_EXPECT_EQ(test, value, 41ULL);
-
-	value = nommu_swmmu_load_u64(&parent_object2->value,
-				     sizeof(parent_object2->value));
-	KUNIT_EXPECT_EQ(test, value, 81ULL);
-
-	value = nommu_swmmu_load_u64(&parent_object3->value,
-				     sizeof(parent_object3->value));
-	KUNIT_EXPECT_EQ(test, value, 91ULL);
-}
-
-static void nommu_swmmu_attach_test(struct kunit *test)
-{
-	struct nommu_swmmu_space *space;
-	struct nommu_swmmu_space *old_space;
-	struct mm_struct *test_mm;
-	int ret;
-
-	space = nommu_swmmu_space_create_with_ops(&test_ops);
-	KUNIT_ASSERT_NOT_NULL(test, space);
-
-	test_mm = mm_alloc();
-	KUNIT_ASSERT_NOT_NULL(test, test_mm);
-
-	old_space = test_mm->swmmu_space;
-	KUNIT_ASSERT_NOT_NULL(test, old_space);
-
-	/*
-	 * mm_alloc() creates and attaches an initial SWMMU space.
-	 * Remove that mm-owned reference before testing attach().
-	 */
-	nommu_swmmu_space_detach(test_mm);
-
-	/*
-	 * Test the attach helper directly. Do not rely on
-	 * nommu_swmmu_space_create_with_ops(&test_ops) implicitly using current->mm.
-	 */
-	ret = nommu_swmmu_space_attach(test_mm, space);
-	KUNIT_ASSERT_EQ(test, ret, 0);
-
-	KUNIT_EXPECT_PTR_EQ(test, test_mm->swmmu_space, space);
-
-	nommu_swmmu_space_detach(test_mm);
-	mmput(test_mm);
-}
-
-static void nommu_swmmu_cross_page_test(struct kunit *test)
-{
-	void *base;
-	void *address;
-	u64 value;
-
-	base = (void *)swmmu_alloc(SWMMU_PAGE_SIZE * 2);
-	KUNIT_ASSERT_GT(test, (long)base, 0L);
-
-	address = (void *)((uintptr_t)base +
-			   SWMMU_PAGE_SIZE - sizeof(u32));
-
-	nommu_swmmu_store_u64(address, sizeof(u64),
-			      0x1122334455667788ULL);
-
-	value = nommu_swmmu_load_u64(address, sizeof(u64));
-
-	KUNIT_EXPECT_EQ(test, value, 0x1122334455667788ULL);
-
-	KUNIT_EXPECT_EQ(test, swmmu_free(base), 0);
-}
-
-static void nommu_swmmu_translate_boundary_test(struct kunit *test)
-{
-	struct nommu_swmmu_test_ctx *ctx = test->priv;
-	void *base;
-
-	base = (void *)swmmu_alloc(SWMMU_PAGE_SIZE);
-	KUNIT_ASSERT_GT(test, (long)base, 0L);
-
-	KUNIT_EXPECT_EQ(test,
-			nommu_swmmu_check_access(ctx->space,
-						(uintptr_t)base,
-						sizeof(u64),
-						0),
-			0);
-
-	KUNIT_EXPECT_EQ(test,
-			nommu_swmmu_check_access(ctx->space,
-						(uintptr_t)base +
-						SWMMU_PAGE_SIZE -
-						sizeof(u32),
-						sizeof(u64),
-						0),
-			-EFAULT);
-
-	KUNIT_EXPECT_EQ(test,
-			nommu_swmmu_check_access(ctx->space,
-						(uintptr_t)base +
-						SWMMU_PAGE_SIZE,
-						sizeof(u64),
-						0),
-			-EFAULT);
-
-	KUNIT_EXPECT_EQ(test, swmmu_free(base), 0);
-}
-
-static void nommu_swmmu_multiple_mapping_test(struct kunit *test)
-{
-	struct nommu_swmmu_test_ctx *ctx = test->priv;
-	void *first;
-	void *second;
-	u64 value;
-
-	first = (void *)swmmu_alloc(SWMMU_PAGE_SIZE);
-	second = (void *)swmmu_alloc(SWMMU_PAGE_SIZE * 2);
-
-	KUNIT_ASSERT_GT(test, (long)first, 0L);
-	KUNIT_ASSERT_GT(test, (long)second, 0L);
-
-	KUNIT_EXPECT_PTR_NE(test, first, second);
-
-	nommu_swmmu_store_u64(first, sizeof(u64), 11);
-	nommu_swmmu_store_u64(second, sizeof(u64), 22);
-
-	value = nommu_swmmu_load_u64(first, sizeof(u64));
-	KUNIT_EXPECT_EQ(test, value, 11ULL);
-
-	value = nommu_swmmu_load_u64(second, sizeof(u64));
-	KUNIT_EXPECT_EQ(test, value, 22ULL);
-
-	KUNIT_EXPECT_EQ(test, swmmu_free(first), 0);
-	KUNIT_EXPECT_EQ(test, swmmu_free(second), 0);
-
-	KUNIT_EXPECT_EQ(test,
-			nommu_swmmu_check_access(ctx->space,
-						(uintptr_t)first,
-						sizeof(u64),
-						0),
-			-EFAULT);
-}
-
-static void nommu_swmmu_free_test(struct kunit *test)
-{
-	struct nommu_swmmu_test_ctx *ctx = test->priv;
-	void *base;
-
-	base = (void *)swmmu_alloc(SWMMU_PAGE_SIZE);
-	KUNIT_ASSERT_GT(test, (long)base, 0L);
-
-	KUNIT_EXPECT_EQ(test, swmmu_free(base), 0);
-
-	KUNIT_EXPECT_EQ(test, swmmu_free(base), -EINVAL);
-
-	KUNIT_EXPECT_EQ(test,
-			nommu_swmmu_check_access(ctx->space,
-						(uintptr_t)base,
-						sizeof(u64),
-						0),
-			-EFAULT);
-}
-
-static void nommu_swmmu_free_interior_test(struct kunit *test)
-{
-	void *base;
-	void *interior;
-
-	base = (void *)swmmu_alloc(SWMMU_PAGE_SIZE);
-	KUNIT_ASSERT_GT(test, (long)base, 0L);
-
-	interior = (void *)((uintptr_t)base + sizeof(u64));
-
-	KUNIT_EXPECT_EQ(test, swmmu_free(interior), -EINVAL);
-	KUNIT_EXPECT_EQ(test, swmmu_free(base), 0);
-}
-
-static void nommu_swmmu_repeated_alloc_free_test(struct kunit *test)
-{
-	int i;
-
-	for (i = 0; i < 128; i++) {
-		void *base;
-
-		base = (void *)swmmu_alloc((i % 4 + 1) * SWMMU_PAGE_SIZE);
-		KUNIT_ASSERT_GT(test, (long)base, 0L);
-
-		nommu_swmmu_store_u64(base, sizeof(u64), i);
-
-		KUNIT_EXPECT_EQ(test,
-				nommu_swmmu_load_u64(base, sizeof(u64)),
-				(u64)i);
-
-		KUNIT_ASSERT_EQ(test, swmmu_free(base), 0);
-	}
-}
-
-static void nommu_swmmu_repeated_clone_test(struct kunit *test)
-{
-	struct nommu_swmmu_test_ctx *ctx = test->priv;
-	int i;
-
-	for (i = 0; i < 32; i++) {
-		struct nommu_swmmu_space *child;
-		void *base;
-		long ret;
-		u64 value;
-
-		ret = swmmu_alloc(SWMMU_PAGE_SIZE * 2);
-		KUNIT_ASSERT_GT(test, ret, 0UL);
-
-		base = (void *)(uintptr_t)ret;
-		nommu_swmmu_store_u64(base, sizeof(u64), 100 + i);
-
-		KUNIT_ASSERT_EQ(test,
-				swmmu_clone_space(ctx->space, &child),
-				0);
-
-		nommu_swmmu_kunit_set_space(child);
-
-		value = nommu_swmmu_load_u64(base, sizeof(u64));
-		KUNIT_EXPECT_EQ(test, value, (u64)(100 + i));
-
-		nommu_swmmu_kunit_clear_space();
-		nommu_swmmu_space_put(child);
-
-		nommu_swmmu_kunit_set_space(ctx->space);
-
-		KUNIT_ASSERT_EQ(test, swmmu_free(base), 0);
-	}
-}
-
-static void
-expect_allocations_balanced(struct kunit *test)
+static void expect_allocations_balanced(struct kunit *test)
 {
 	KUNIT_EXPECT_EQ(test,
 			test_alloc_state.zalloc_success,
@@ -695,1492 +125,9 @@ expect_allocations_balanced(struct kunit *test)
 			test_alloc_state.page_free_count);
 }
 
-static void nommu_swmmu_alloc_failure_test(struct kunit *test)
-{
-	struct nommu_swmmu_space *space;
-	long ret;
-	int fail_at;
-
-	test_alloc_reset();
-
-	space = nommu_swmmu_space_create_with_ops(&test_ops);
-	KUNIT_ASSERT_NOT_NULL(test, space);
-
-	nommu_swmmu_kunit_set_space(space);
-
-	for (fail_at = 0; fail_at < SWMMU_ALLOC_ZALLOC_POINTS; fail_at++) {
-		test_alloc_fail_at(TEST_FAIL_ZALLOC, fail_at);
-
-		ret = swmmu_alloc(SWMMU_PAGE_SIZE);
-		KUNIT_EXPECT_LT(test, ret, 0L);
-		expect_allocations_balanced(test);
-
-		test_alloc_reset();
-
-		ret = swmmu_alloc(SWMMU_PAGE_SIZE);
-		KUNIT_ASSERT_GT(test, ret, 0L);
-
-		KUNIT_EXPECT_EQ(test,
-				swmmu_free((void *)(uintptr_t)ret),
-				0);
-		expect_allocations_balanced(test);
-	}
-
-	nommu_swmmu_kunit_clear_space();
-	nommu_swmmu_space_put(space);
-}
-
-static void nommu_swmmu_alloc_page_failure_test(struct kunit *test)
-{
-	struct nommu_swmmu_space *space;
-	long ret;
-	unsigned int fail_at;
-
-	space = nommu_swmmu_space_create_with_ops(&test_ops);
-	KUNIT_ASSERT_NOT_NULL(test, space);
-
-	nommu_swmmu_kunit_set_space(space);
-
-	for (fail_at = 0;
-	     fail_at < SWMMU_ALLOC_TEST_PAGES;
-	     fail_at++) {
-		test_alloc_fail_at(TEST_FAIL_PAGE_ALLOC, fail_at);
-
-		ret = swmmu_alloc(SWMMU_ALLOC_TEST_PAGES *
-				  SWMMU_PAGE_SIZE);
-		KUNIT_EXPECT_LT(test, ret, 0L);
-		expect_allocations_balanced(test);
-
-		test_alloc_reset();
-
-		ret = swmmu_alloc(SWMMU_ALLOC_TEST_PAGES *
-				  SWMMU_PAGE_SIZE);
-		KUNIT_ASSERT_GT(test, ret, 0L);
-
-		KUNIT_ASSERT_EQ(test,
-				swmmu_free((void *)(uintptr_t)ret),
-				0);
-		expect_allocations_balanced(test);
-	}
-
-	nommu_swmmu_kunit_clear_space();
-	nommu_swmmu_space_put(space);
-}
-
-static void nommu_swmmu_clone_failure_test(struct kunit *test)
-{
-	struct nommu_swmmu_space *space, *child;
-	long ret;
-	int fail_at;
-	void *base;
-
-	space = nommu_swmmu_space_create_with_ops(&test_ops);
-	KUNIT_ASSERT_NOT_NULL(test, space);
-	nommu_swmmu_kunit_set_space(space);
-
-	ret = swmmu_alloc(SWMMU_PAGE_SIZE);
-	KUNIT_ASSERT_GT(test, ret, 0L);
-
-	base = (void *)(uintptr_t)ret;
-	nommu_swmmu_store_u64(base, sizeof(u64), 41);
-
-	test_alloc_reset();
-
-	for (fail_at = 0; fail_at < SWMMU_CLONE_ZALLOC_POINTS; fail_at++) {
-		test_alloc_fail_at(TEST_FAIL_ZALLOC, fail_at);
-
-		child = NULL;
-		ret = swmmu_clone_space(space, &child);
-
-		KUNIT_EXPECT_LT(test, ret, 0L);
-		KUNIT_EXPECT_NULL(test, child);
-		expect_allocations_balanced(test);
-		KUNIT_EXPECT_EQ(test,
-			nommu_swmmu_load_u64(base, sizeof(u64)),
-			41ULL);
-
-		test_alloc_reset();
-
-		ret = swmmu_clone_space(space, &child);
-		KUNIT_ASSERT_EQ(test, ret, 0L);
-
-		nommu_swmmu_space_put(child);
-		expect_allocations_balanced(test);
-	}
-
-	nommu_swmmu_kunit_clear_space();
-	nommu_swmmu_space_put(space);
-}
-
-static void nommu_swmmu_clone_page_failure_test(struct kunit *test)
-{
-	struct nommu_swmmu_space *space, *child = NULL;
-	long ret;
-	unsigned int fail_at;
-	void *base;
-
-	space = nommu_swmmu_space_create_with_ops(&test_ops);
-	KUNIT_ASSERT_NOT_NULL(test, space);
-
-	nommu_swmmu_kunit_set_space(space);
-
-	ret = swmmu_alloc(SWMMU_CLONE_TEST_PAGES * SWMMU_PAGE_SIZE);
-	KUNIT_ASSERT_GT(test, ret, 0L);
-
-	base = (void *)(uintptr_t)ret;
-	for (int i = 0; i < SWMMU_CLONE_TEST_PAGES; i++) {
-		void *page_base = (void *)((uintptr_t)base +
-					i * SWMMU_PAGE_SIZE);
-
-		nommu_swmmu_store_u64(page_base,
-				sizeof(u64),
-				100 + i);
-	}
-
-	test_alloc_reset();
-
-	for (fail_at = 0;
-	     fail_at < SWMMU_CLONE_TEST_PAGES;
-	     fail_at++) {
-		test_alloc_fail_at(TEST_FAIL_PAGE_ALLOC, fail_at);
-
-		ret = swmmu_clone_space(space, &child);
-		KUNIT_EXPECT_LT(test, ret, 0L);
-		KUNIT_EXPECT_NULL(test, child);
-		expect_allocations_balanced(test);
-
-		KUNIT_EXPECT_EQ(test,
-				nommu_swmmu_load_u64(base, sizeof(u64)),
-				100ULL);
-
-		KUNIT_EXPECT_EQ(test,
-				nommu_swmmu_load_u64(
-					(void *)((uintptr_t)base +
-						(SWMMU_CLONE_TEST_PAGES - 1) *
-						SWMMU_PAGE_SIZE),
-					sizeof(u64)),
-				100ULL + SWMMU_CLONE_TEST_PAGES - 1);
-
-		test_alloc_reset();
-
-		ret = swmmu_clone_space(space, &child);
-		KUNIT_ASSERT_EQ(test, ret, 0L);
-
-		nommu_swmmu_space_put(child);
-		expect_allocations_balanced(test);
-	}
-
-	nommu_swmmu_kunit_clear_space();
-	nommu_swmmu_space_put(space);
-}
-
-static void nommu_swmmu_clone_copy_failure_test(struct kunit *test)
-{
-	struct nommu_swmmu_space *space;
-	struct nommu_swmmu_space *child = NULL;
-	void *base;
-	long ret;
-	unsigned int fail_at;
-
-	space = nommu_swmmu_space_create_with_ops(&test_ops);
-	KUNIT_ASSERT_NOT_NULL(test, space);
-
-	nommu_swmmu_kunit_set_space(space);
-
-	ret = swmmu_alloc(SWMMU_CLONE_TEST_PAGES *
-			  SWMMU_PAGE_SIZE);
-	KUNIT_ASSERT_GT(test, ret, 0L);
-
-	base = (void *)(uintptr_t)ret;
-	nommu_swmmu_store_u64(base, sizeof(u64), 41);
-
-	for (fail_at = 0;
-	     fail_at < SWMMU_CLONE_TEST_PAGES;
-	     fail_at++) {
-		test_alloc_reset();
-		test_alloc_fail_at(TEST_FAIL_PAGE_COPY, fail_at);
-
-		child = NULL;
-		ret = swmmu_clone_space(space, &child);
-
-		KUNIT_EXPECT_LT(test, ret, 0L);
-		KUNIT_EXPECT_NULL(test, child);
-		expect_allocations_balanced(test);
-
-		KUNIT_EXPECT_EQ(test,
-				nommu_swmmu_load_u64(base, sizeof(u64)),
-				41ULL);
-	}
-
-	test_alloc_reset();
-	nommu_swmmu_kunit_clear_space();
-	nommu_swmmu_space_put(space);
-}
-
-/* map API tests */
-static void nommu_swmmu_map_test(struct kunit *test)
-{
-	struct nommu_swmmu_test_ctx *ctx = test->priv;
-	long ret;
-
-	/* a one-byte request is rounded to one page */
-	ret = nommu_swmmu_map(ctx->space, 1);
-	KUNIT_ASSERT_GT(test, ret, 0L);
-
-	KUNIT_EXPECT_EQ(test,
-			nommu_swmmu_check_access(ctx->space,
-						(uintptr_t)ret +
-						SWMMU_PAGE_SIZE - 1,
-						1,
-						0),
-			0);
-
-	KUNIT_EXPECT_EQ(test,
-			nommu_swmmu_check_access(ctx->space,
-						(uintptr_t)ret +
-						SWMMU_PAGE_SIZE,
-						1,
-						0),
-			-EFAULT);
-
-	/* mapping is accessible */
-	KUNIT_ASSERT_EQ(test,
-			nommu_swmmu_check_access(ctx->space,
-						(uintptr_t)ret,
-						sizeof(u64),
-						0),
-			0);
-
-	KUNIT_ASSERT_EQ(test,
-			nommu_swmmu_unmap(ctx->space,
-					(unsigned long)ret,
-					SWMMU_PAGE_SIZE),
-			0);
-
-}
-
-static void nommu_swmmu_unmap_test(struct kunit *test)
-{
-	struct nommu_swmmu_test_ctx *ctx = test->priv;
-	long ret, addr;
-	void *base;
-
-	addr = nommu_swmmu_map(ctx->space, SWMMU_PAGE_SIZE);
-	KUNIT_ASSERT_GT(test, addr, 0L);
-
-	base = (void *)(uintptr_t)addr;
-
-	/* interior unmap returns -EINVAL */
-	ret = nommu_swmmu_unmap(ctx->space, addr +1, SWMMU_PAGE_SIZE);
-	KUNIT_EXPECT_EQ(test, ret, -EINVAL);
-
-	/* partial unmap returns -EINVAL */
-	ret = nommu_swmmu_unmap(ctx->space, addr, SWMMU_PAGE_SIZE/2);
-	KUNIT_EXPECT_EQ(test, ret, -EINVAL);
-
-	/* whole mapping unmaps */
-	ret = nommu_swmmu_unmap(ctx->space, addr, SWMMU_PAGE_SIZE);
-	KUNIT_ASSERT_EQ(test, ret, 0);
-
-	/* access afterward returns -EFAULT */
-	KUNIT_EXPECT_EQ(test,
-			nommu_swmmu_check_access(ctx->space,
-						(uintptr_t)base,
-						sizeof(u64),
-						0),
-			-EFAULT);
-
-	/* double unmap returns -EINVAL */
-	ret = nommu_swmmu_unmap(ctx->space, addr, SWMMU_PAGE_SIZE);
-	KUNIT_EXPECT_EQ(test, ret, -EINVAL);
-}
-
-static void nommu_swmmu_remap_shrink_test(struct kunit *test)
-{
-	struct nommu_swmmu_test_ctx *ctx = test->priv;
-	long ret, addr;
-	void *base;
-
-	addr = nommu_swmmu_map(ctx->space, SWMMU_PAGE_SIZE * 2);
-	KUNIT_ASSERT_GT(test, addr, 0L);
-
-	base = (void *)(uintptr_t)addr;
-	nommu_swmmu_store_u64(base, sizeof(u64), 671ULL);
-
-	/* old mapping is accessible before shrink */
-	KUNIT_EXPECT_EQ(test,
-			nommu_swmmu_check_access(ctx->space,
-						(uintptr_t)base,
-						sizeof(u64),
-						0),
-			0);
-
-	/* equal size remap should be no-op */
-	ret = nommu_swmmu_remap(ctx->space,
-				addr,
-				SWMMU_PAGE_SIZE * 2,
-				SWMMU_PAGE_SIZE * 2);
-	KUNIT_EXPECT_EQ(test, ret, addr);
-
-	/* but if base addr is different, should fail */
-	ret = nommu_swmmu_remap(ctx->space,
-				addr + SWMMU_PAGE_SIZE,
-				SWMMU_PAGE_SIZE * 2,
-				SWMMU_PAGE_SIZE * 2);
-	KUNIT_EXPECT_EQ(test, ret, -EINVAL);
-
-	/* shrink should succeed */
-	ret = nommu_swmmu_remap(ctx->space, addr,
-				SWMMU_PAGE_SIZE * 2, SWMMU_PAGE_SIZE);
-	KUNIT_ASSERT_EQ(test, ret, addr);
-
-	/* new range is accessible */
-	KUNIT_EXPECT_EQ(test,
-			nommu_swmmu_check_access(ctx->space,
-						(uintptr_t)base,
-						SWMMU_PAGE_SIZE,
-						0),
-			0);
-
-	/* removed tail is inaccessible */
-	KUNIT_EXPECT_EQ(test,
-		nommu_swmmu_check_access(ctx->space,
-					(uintptr_t)base +
-					SWMMU_PAGE_SIZE,
-					1,
-					0),
-		-EFAULT);
-
-	/* original contents are preserved */
-	KUNIT_ASSERT_EQ(test,
-			nommu_swmmu_load_u64(base, sizeof(u64)),
-			671ULL);
-
-	ret = nommu_swmmu_unmap(ctx->space, addr, SWMMU_PAGE_SIZE);
-	KUNIT_ASSERT_EQ(test, ret, 0);
-}
-
-static void nommu_swmmu_remap_shrink_extended_test(struct kunit *test)
-{
-	struct nommu_swmmu_test_ctx *ctx = test->priv;
-	long ret, addr, addr2;
-	void *base, *base2;
-
-	addr = nommu_swmmu_map(ctx->space, SWMMU_PAGE_SIZE * 2);
-	KUNIT_ASSERT_GT(test, addr, 0L);
-
-	base = (void *)(uintptr_t)addr;
-	nommu_swmmu_store_u64(base, sizeof(u64), 671ULL);
-
-	/* old mapping is accessible before shrink */
-	KUNIT_EXPECT_EQ(test,
-			nommu_swmmu_check_access(ctx->space,
-						(uintptr_t)base,
-						sizeof(u64),
-						0),
-			0);
-
-	/* adjacent-mapping test */
-
-	/* allocate adjacent map  */
-	addr2 = nommu_swmmu_map_at(ctx->space, addr + SWMMU_PAGE_SIZE * 2,
-				SWMMU_PAGE_SIZE * 3,
-				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
-				NOMMU_SWMMU_MAP_FIXED);
-	KUNIT_ASSERT_GT(test, addr2, 0L);
-
-	base2 = (void *)(uintptr_t)addr2;
-	nommu_swmmu_store_u64(base2, sizeof(u64), 771ULL);
-
-	/* shrink should succeed */
-	ret = nommu_swmmu_remap(ctx->space, addr,
-				SWMMU_PAGE_SIZE * 2, SWMMU_PAGE_SIZE);
-	KUNIT_ASSERT_EQ(test, ret, addr);
-
-	/* new range is accessible */
-	KUNIT_EXPECT_EQ(test,
-			nommu_swmmu_check_access(ctx->space,
-						(uintptr_t)base,
-						SWMMU_PAGE_SIZE,
-						0),
-			0);
-
-	/* removed tail is inaccessible */
-	KUNIT_EXPECT_EQ(test,
-		nommu_swmmu_check_access(ctx->space,
-					(uintptr_t)base +
-					SWMMU_PAGE_SIZE,
-					1,
-					0),
-		-EFAULT);
-
-	KUNIT_EXPECT_EQ(test,
-			nommu_swmmu_check_access(ctx->space,
-						(uintptr_t)addr2,
-						SWMMU_PAGE_SIZE * 3,
-						0),
-			0);
-
-	/* original contents are preserved */
-	KUNIT_ASSERT_EQ(test,
-			nommu_swmmu_load_u64(base, sizeof(u64)),
-			671ULL);
-
-	KUNIT_ASSERT_EQ(test,
-			nommu_swmmu_load_u64(base2, sizeof(u64)),
-			771ULL);
-
-	ret = nommu_swmmu_unmap(ctx->space, addr, SWMMU_PAGE_SIZE);
-	KUNIT_ASSERT_EQ(test, ret, 0);
-	ret = nommu_swmmu_unmap(ctx->space, addr2, SWMMU_PAGE_SIZE * 3);
-	KUNIT_ASSERT_EQ(test, ret, 0);
-}
-
-static void nommu_swmmu_remap_grow_test(struct kunit *test)
-{
-	struct nommu_swmmu_test_ctx *ctx = test->priv;
-	long ret, addr;
-	void *base;
-
-	addr = nommu_swmmu_map(ctx->space, SWMMU_PAGE_SIZE);
-	KUNIT_ASSERT_GT(test, addr, 0L);
-
-	base = (void *)(uintptr_t)addr;
-	nommu_swmmu_store_u64(base, sizeof(u64), 771ULL);
-
-	/* invalid old size */
-	ret = nommu_swmmu_remap(ctx->space,
-			addr,
-			SWMMU_PAGE_SIZE * 2,
-			SWMMU_PAGE_SIZE * 3);
-	KUNIT_EXPECT_EQ(test, ret, -EINVAL);
-
-	/* grow should succeed */
-	ret = nommu_swmmu_remap(ctx->space, addr,
-				SWMMU_PAGE_SIZE, SWMMU_PAGE_SIZE * 2);
-	KUNIT_ASSERT_EQ(test, ret, addr);
-
-	/* existing contents survive growth */
-	KUNIT_ASSERT_EQ(test,
-			nommu_swmmu_load_u64(base,
-					sizeof(u64)),
-			771ULL);
-
-	/* new pages are zero-filled */
-	KUNIT_EXPECT_EQ(test,
-			nommu_swmmu_load_u64((void *)((uintptr_t)base + SWMMU_PAGE_SIZE),
-					sizeof(u64)),
-				0ULL);
-
-	/* new range is accessible */
-	KUNIT_EXPECT_EQ(test,
-			nommu_swmmu_check_access(ctx->space,
-						((uintptr_t)base + SWMMU_PAGE_SIZE),
-						1,
-						0),
-			0);
-
-	ret = nommu_swmmu_unmap(ctx->space, addr, SWMMU_PAGE_SIZE * 2);
-	KUNIT_ASSERT_EQ(test, ret, 0);
-}
-
-static void nommu_swmmu_remap_rollback_test(struct kunit *test)
-{
-	struct nommu_swmmu_test_ctx *ctx = test->priv;
-	long ret, addr;
-	void *base;
-
-	addr = nommu_swmmu_map(ctx->space, SWMMU_PAGE_SIZE * 2);
-	KUNIT_ASSERT_GT(test, addr, 0L);
-
-	base = (void *)(uintptr_t)addr;
-	nommu_swmmu_store_u64(base, sizeof(u64), 871ULL);
-
-	/* failed growth leaves old mapping unchanged */
-	/* verify rollback when allocating the grown page array fails. */
-	test_alloc_fail_at(TEST_FAIL_ZALLOC, 0);
-	ret = nommu_swmmu_remap(ctx->space, addr,
-				SWMMU_PAGE_SIZE * 2,
-				SWMMU_PAGE_SIZE * 4);
-	KUNIT_EXPECT_EQ(test, ret, -ENOMEM);
-	expect_allocations_balanced(test);
-
-	/* old contents remain readable */
-	KUNIT_EXPECT_EQ(test,
-			nommu_swmmu_load_u64(base,
-					sizeof(u64)),
-			871ULL);
-
-	KUNIT_EXPECT_EQ(test,
-			nommu_swmmu_check_access(ctx->space,
-						(uintptr_t)base +
-						SWMMU_PAGE_SIZE,
-						1,
-						0),
-			0);
-	KUNIT_EXPECT_EQ(test,
-			nommu_swmmu_check_access(ctx->space,
-						(uintptr_t)base +
-						SWMMU_PAGE_SIZE * 2,
-						SWMMU_PAGE_SIZE,
-						0),
-			-EFAULT);
-
-	/* verify rollback when allocating the actual pages fails. */
-	for (int fail_at = 0; fail_at < 2; fail_at++) {
-		test_alloc_fail_at(TEST_FAIL_PAGE_ALLOC, fail_at);
-		ret = nommu_swmmu_remap(ctx->space, addr,
-					SWMMU_PAGE_SIZE * 2,
-					SWMMU_PAGE_SIZE * 4);
-		KUNIT_EXPECT_EQ(test, ret, -ENOMEM);
-
-		expect_allocations_balanced(test);
-
-		KUNIT_EXPECT_EQ(test,
-				nommu_swmmu_check_access(ctx->space,
-							(uintptr_t)base,
-							SWMMU_PAGE_SIZE,
-							0),
-				0);
-		KUNIT_EXPECT_EQ(test,
-				nommu_swmmu_check_access(ctx->space,
-							(uintptr_t)base +
-							SWMMU_PAGE_SIZE * 2,
-							1,
-							0),
-				-EFAULT);
-
-		/* old contents remain readable */
-		KUNIT_EXPECT_EQ(test,
-				nommu_swmmu_load_u64(base,
-						sizeof(u64)),
-				871ULL);
-
-		/* old length remains valid */
-		KUNIT_EXPECT_EQ(test,
-				nommu_swmmu_check_access(ctx->space,
-							(uintptr_t)base,
-							SWMMU_PAGE_SIZE,
-							0),
-				0);
-		KUNIT_EXPECT_EQ(test,
-				nommu_swmmu_check_access(ctx->space,
-							(uintptr_t)base +
-							SWMMU_PAGE_SIZE * 2,
-							1,
-							0),
-				-EFAULT);
-
-		/* new range is not visible */
-		KUNIT_EXPECT_EQ(test,
-				nommu_swmmu_check_access(ctx->space,
-							(uintptr_t)base +
-							SWMMU_PAGE_SIZE * 2 + 1,
-							sizeof(u64),
-							0),
-				-EFAULT);
-	}
-
-	test_alloc_reset();
-	ret = nommu_swmmu_unmap(ctx->space, addr, SWMMU_PAGE_SIZE * 2);
-	KUNIT_ASSERT_EQ(test, ret, 0);
-}
-
-static void nommu_swmmu_remap_overlap_test(struct kunit *test)
-{
-	struct nommu_swmmu_test_ctx *ctx = test->priv;
-	long first;
-	long second;
-	long ret;
-
-	first = nommu_swmmu_map(ctx->space, SWMMU_PAGE_SIZE);
-	KUNIT_ASSERT_GT(test, first, 0L);
-
-	second = nommu_swmmu_map(ctx->space, SWMMU_PAGE_SIZE);
-	KUNIT_ASSERT_GT(test, second, 0L);
-
-	ret = nommu_swmmu_remap(ctx->space,
-				(unsigned long)first,
-				SWMMU_PAGE_SIZE,
-				SWMMU_PAGE_SIZE * 2);
-	KUNIT_EXPECT_EQ(test, ret, -EEXIST);
-
-	KUNIT_EXPECT_EQ(test,
-			nommu_swmmu_check_access(ctx->space,
-						(uintptr_t)first,
-						SWMMU_PAGE_SIZE,
-						0),
-			0);
-
-	KUNIT_EXPECT_EQ(test,
-			nommu_swmmu_check_access(ctx->space,
-						(uintptr_t)second,
-						SWMMU_PAGE_SIZE,
-						0),
-			0);
-
-	KUNIT_ASSERT_EQ(test,
-			nommu_swmmu_unmap(ctx->space,
-					 (unsigned long)first,
-					 0),
-			0);
-
-	KUNIT_ASSERT_EQ(test,
-			nommu_swmmu_unmap(ctx->space,
-					 (unsigned long)second,
-					 0),
-			0);
-}
-
-static void map_at_exact_address_test(struct kunit *test)
-{
-	struct nommu_swmmu_test_ctx *ctx = test->priv;
-	long ret;
-
-	/* MAP_FIXED allocation */
-	ret = nommu_swmmu_map_at(ctx->space, 0x1000000000ULL + 0x1000,
-				0x1000,
-				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
-				NOMMU_SWMMU_MAP_FIXED);
-	KUNIT_ASSERT_EQ(test, ret, 0x1000001000ULL);
-
-	KUNIT_ASSERT_EQ(test,
-			nommu_swmmu_unmap(ctx->space,
-					(unsigned long)ret,
-					0),
-			0);
-}
-
-static void map_at_overlap_test(struct kunit *test)
-{
-	struct nommu_swmmu_test_ctx *ctx = test->priv;
-	long ret, mapped;
-
-	mapped = nommu_swmmu_map_at(ctx->space, 0x1000000000ULL + 0x1000,
-				0x1000,
-				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
-				NOMMU_SWMMU_MAP_FIXED);
-	KUNIT_ASSERT_EQ(test, mapped, 0x1000001000ULL);
-
-	/* map overlapping region should fail */
-	ret = nommu_swmmu_map_at(ctx->space, 0x1000000000ULL, 0x2000,
-				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
-				NOMMU_SWMMU_MAP_FIXED);
-	KUNIT_EXPECT_EQ(test, ret, -EEXIST);
-
-	KUNIT_EXPECT_EQ(test,
-			nommu_swmmu_unmap(ctx->space,
-					(unsigned long)mapped,
-					0),
-			0);
-}
-
-static void map_at_alignment_test(struct kunit *test)
-{
-	struct nommu_swmmu_test_ctx *ctx = test->priv;
-	long ret;
-
-	/* MAP_FIXED allocation, with unaligned address */
-	ret = nommu_swmmu_map_at(ctx->space, 0x1000000000ULL + 0x10,
-				0x1000,
-				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
-				NOMMU_SWMMU_MAP_FIXED);
-	KUNIT_EXPECT_EQ(test, ret, -EINVAL);
-}
-
-static void map_at_overflow_test(struct kunit *test)
-{
-	struct nommu_swmmu_test_ctx *ctx = test->priv;
-	long ret;
-
-	/* MAP_FIXED size is huge */
-	ret = nommu_swmmu_map_at(ctx->space, 0x0, ULONG_MAX,
-				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
-				NOMMU_SWMMU_MAP_FIXED);
-	KUNIT_EXPECT_EQ(test, ret, -EINVAL);
-
-	/* specified address is out of range */
-	ret = nommu_swmmu_map_at(ctx->space, (unsigned long)LONG_MAX + 1,
-				SWMMU_PAGE_SIZE,
-				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
-				NOMMU_SWMMU_MAP_FIXED);
-	KUNIT_EXPECT_EQ(test, ret, -EOVERFLOW);
-}
-
-static void same_address_different_spaces_test(struct kunit *test)
-{
-	struct nommu_swmmu_test_ctx *ctx = test->priv;
-	struct nommu_swmmu_space *child;
-	long ret;
-
-	ret = swmmu_clone_space(ctx->space, &child);
-	KUNIT_ASSERT_EQ(test, ret, 0L);
-	KUNIT_ASSERT_NOT_NULL(test, child);
-
-	ret = nommu_swmmu_map_at(ctx->space, 0x1000000000ULL,
-				SWMMU_PAGE_SIZE,
-				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
-				NOMMU_SWMMU_MAP_FIXED);
-	KUNIT_ASSERT_EQ(test, ret, 0x1000000000ULL);
-
-	/* child */
-	ret = nommu_swmmu_map_at(child, 0x1000000000ULL,
-				SWMMU_PAGE_SIZE,
-				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
-				NOMMU_SWMMU_MAP_FIXED);
-	KUNIT_ASSERT_EQ(test, ret, 0x1000000000ULL);
-
-	KUNIT_ASSERT_EQ(test,
-			nommu_swmmu_unmap(ctx->space,
-					(unsigned long)ret,
-					0),
-			0);
-	KUNIT_ASSERT_EQ(test,
-			nommu_swmmu_unmap(child,
-					(unsigned long)ret,
-					0),
-			0);
-}
-
-static void nommu_swmmu_mode_test(struct kunit *test)
-{
-	struct nommu_swmmu_space *space;
-	struct nommu_swmmu_space *old_space;
-	struct mm_struct *test_mm;
-	long ret;
-
-	space = nommu_swmmu_space_create_with_ops(&test_ops);
-	KUNIT_ASSERT_NOT_NULL(test, space);
-
-	test_mm = mm_alloc();
-	KUNIT_ASSERT_NOT_NULL(test, test_mm);
-
-	old_space = test_mm->swmmu_space;
-	KUNIT_ASSERT_NOT_NULL(test, old_space);
-
-	/*
-	 * mm_alloc() creates and attaches an initial SWMMU space.
-	 * Remove that mm-owned reference before testing attach().
-	 */
-	nommu_swmmu_space_detach(test_mm);
-
-	/*
-	 * Test the attach helper directly. Do not rely on
-	 * nommu_swmmu_space_create_with_ops(&test_ops) implicitly using current->mm.
-	 */
-	ret = nommu_swmmu_space_attach(test_mm, space);
-	KUNIT_ASSERT_EQ(test, ret, 0);
-
-	KUNIT_EXPECT_PTR_EQ(test, test_mm->swmmu_space, space);
-
-	/* default mode is OFF */
-	KUNIT_EXPECT_EQ(test, nommu_swmmu_get_mode(test_mm), NOMMU_SWMMU_OFF);
-
-	/* set ON succeeds */
-	KUNIT_EXPECT_EQ(test, nommu_swmmu_set_mode(test_mm, NOMMU_SWMMU_ON),
-			0);
-
-	/* GET returns ON */
-	KUNIT_EXPECT_EQ(test, nommu_swmmu_get_mode(test_mm), NOMMU_SWMMU_ON);
-
-	/* invalid mode returns -EINVAL */
-	KUNIT_EXPECT_EQ(test, nommu_swmmu_set_mode(test_mm, 100), -EINVAL);
-
-	/* set OFF succeeds when no mappings exist */
-	KUNIT_EXPECT_EQ(test, nommu_swmmu_set_mode(test_mm, NOMMU_SWMMU_OFF),
-			0);
-
-	/* set ON succeeds */
-	KUNIT_EXPECT_EQ(test, nommu_swmmu_set_mode(test_mm, NOMMU_SWMMU_ON),
-			0);
-
-	ret = nommu_swmmu_map_at(space, 0x1000000000ULL,
-				SWMMU_PAGE_SIZE,
-				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
-				NOMMU_SWMMU_MAP_FIXED);
-	KUNIT_ASSERT_EQ(test, ret, 0x1000000000ULL);
-
-	/* set OFF returns -EBUSY while a SWMMU mapping exists */
-	KUNIT_EXPECT_EQ(test, nommu_swmmu_set_mode(test_mm, NOMMU_SWMMU_OFF),
-			-EBUSY);
-
-	/* mode changes do not affect existing mappings */
-	KUNIT_EXPECT_EQ(test,
-			nommu_swmmu_check_access(space,
-						(uintptr_t)0x1000000000ULL,
-						SWMMU_PAGE_SIZE,
-						0),
-			0);
-
-	KUNIT_ASSERT_EQ(test,
-			nommu_swmmu_unmap(space,
-					0x1000000000UL,
-					0),
-			0);
-
-	nommu_swmmu_space_detach(test_mm);
-	mmput(test_mm);
-}
-
-static void nommu_swmmu_prot_test(struct kunit *test)
-{
-	struct nommu_swmmu_test_ctx *ctx = test->priv;
-	long ret;
-	long addr;
-
-	/* read-write mapping: read allowed, write allowed */
-	addr = nommu_swmmu_map_at(ctx->space, 0, SWMMU_PAGE_SIZE,
-				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
-				NOMMU_SWMMU_MAP_AUTO);
-	KUNIT_ASSERT_GT(test, addr, 0L);
-	ret = nommu_swmmu_check_access(ctx->space,
-				addr, sizeof(long), 0);
-	KUNIT_EXPECT_EQ(test, ret, 0);
-	ret = nommu_swmmu_check_access(ctx->space,
-				addr, SWMMU_PAGE_SIZE, 1);
-	KUNIT_EXPECT_EQ(test, ret, 0);
-	ret = nommu_swmmu_unmap(ctx->space, addr, 0);
-	KUNIT_ASSERT_EQ(test, ret, 0);
-
-	/* read-only mapping: read allowed, write rejected */
-	addr = nommu_swmmu_map_at(ctx->space, 0, SWMMU_PAGE_SIZE,
-				NOMMU_SWMMU_READ,
-				NOMMU_SWMMU_MAP_AUTO);
-	KUNIT_ASSERT_GT(test, addr, 0L);
-	ret = nommu_swmmu_check_access(ctx->space,
-				addr, sizeof(long), 0);
-	KUNIT_EXPECT_EQ(test, ret, 0);
-	ret = nommu_swmmu_check_access(ctx->space,
-				addr, SWMMU_PAGE_SIZE, 1);
-	KUNIT_EXPECT_LT(test, ret, 0);
-	ret = nommu_swmmu_unmap(ctx->space, addr, 0);
-	KUNIT_ASSERT_EQ(test, ret, 0);
-
-	/* write-only mapping: write allowed, read rejected */
-	addr = nommu_swmmu_map_at(ctx->space, 0, SWMMU_PAGE_SIZE,
-				NOMMU_SWMMU_WRITE,
-				NOMMU_SWMMU_MAP_AUTO);
-	KUNIT_ASSERT_GT(test, addr, 0L);
-	ret = nommu_swmmu_check_access(ctx->space,
-				addr, sizeof(long), 0);
-	KUNIT_EXPECT_LT(test, ret, 0);
-	ret = nommu_swmmu_check_access(ctx->space,
-				addr, SWMMU_PAGE_SIZE, 1);
-	KUNIT_EXPECT_EQ(test, ret, 0);
-	ret = nommu_swmmu_unmap(ctx->space, addr, 0);
-	KUNIT_ASSERT_EQ(test, ret, 0);
-
-	/* PROT_NONE: both read and write rejected */
-	addr = nommu_swmmu_map_at(ctx->space, 0, SWMMU_PAGE_SIZE,
-				0,
-				NOMMU_SWMMU_MAP_AUTO);
-	KUNIT_ASSERT_GT(test, addr, 0L);
-	ret = nommu_swmmu_check_access(ctx->space,
-				addr, sizeof(long), 0);
-	KUNIT_EXPECT_LT(test, ret, 0);
-	ret = nommu_swmmu_check_access(ctx->space,
-				addr, SWMMU_PAGE_SIZE, 1);
-	KUNIT_EXPECT_LT(test, ret, 0);
-	ret = nommu_swmmu_unmap(ctx->space, addr, 0);
-	KUNIT_ASSERT_EQ(test, ret, 0);
-
-	/* fixed mapping: exact address returned */
-	addr = nommu_swmmu_map_at(ctx->space, 0x2000000000ULL, SWMMU_PAGE_SIZE,
-				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
-				NOMMU_SWMMU_MAP_FIXED);
-	KUNIT_ASSERT_EQ(test, addr, 0x2000000000ULL);
-
-	/* fixed overlap: expected rejection: replacement isn't implemented */
-	ret = nommu_swmmu_map_at(ctx->space, 0x2000000000ULL - SWMMU_PAGE_SIZE,
-				SWMMU_PAGE_SIZE * 2,
-				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
-				NOMMU_SWMMU_MAP_FIXED);
-	KUNIT_EXPECT_EQ(test, ret, -EEXIST);
-
-	/* MAP_FIXED_NOREPLACE: overlap rejected */
-	ret = nommu_swmmu_map_at(ctx->space, 0x2000000000ULL - SWMMU_PAGE_SIZE,
-				SWMMU_PAGE_SIZE * 2,
-				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
-				NOMMU_SWMMU_MAP_FIXED_NOREPLACE);
-	KUNIT_EXPECT_EQ(test, ret, -EEXIST);
-
-	/* unmap allocated fixed previously */
-	ret = nommu_swmmu_unmap(ctx->space, addr, 0);
-	KUNIT_ASSERT_EQ(test, ret, 0);
-
-	/* nonzero hint */
-	addr = nommu_swmmu_map_at(ctx->space, 0x2000000000ULL, SWMMU_PAGE_SIZE,
-				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
-				NOMMU_SWMMU_MAP_HINT);
-	KUNIT_ASSERT_EQ(test, addr, 0x2000000000ULL);
-}
-
-
-static void nommu_swmmu_map_hint_free_test(struct kunit *test)
-{
-	struct nommu_swmmu_test_ctx *ctx = test->priv;
-	long ret;
-	long addr1, addr2;
-
-	/* free hint is honored */
-	addr1 = nommu_swmmu_map_at(ctx->space, 0x1000000000UL, SWMMU_PAGE_SIZE,
-				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
-				NOMMU_SWMMU_MAP_HINT);
-	KUNIT_ASSERT_EQ(test, addr1, 0x1000000000UL);
-
-	addr2 = nommu_swmmu_map_at(ctx->space, 0x2000000000UL, SWMMU_PAGE_SIZE,
-				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
-				NOMMU_SWMMU_MAP_HINT);
-	KUNIT_ASSERT_EQ(test, addr2, 0x2000000000UL);
-
-	ret = nommu_swmmu_unmap(ctx->space, addr2, 0);
-	KUNIT_ASSERT_EQ(test, ret, 0);
-	ret = nommu_swmmu_unmap(ctx->space, addr1, 0);
-	KUNIT_ASSERT_EQ(test, ret, 0);
-}
-
-static void nommu_swmmu_map_hint_occupied_test(struct kunit *test)
-{
-	struct nommu_swmmu_test_ctx *ctx = test->priv;
-	long ret;
-	long fixed, hint;
-
-	/* occupied hint falls back to another range */
-	fixed = nommu_swmmu_map_at(ctx->space,
-				0x2000000000UL,
-				SWMMU_PAGE_SIZE,
-				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
-				NOMMU_SWMMU_MAP_FIXED);
-	KUNIT_ASSERT_EQ(test, fixed, 0x2000000000UL);
-
-	hint = nommu_swmmu_map_at(ctx->space,
-				0x2000000000UL,
-				SWMMU_PAGE_SIZE,
-				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
-				NOMMU_SWMMU_MAP_HINT);
-
-	KUNIT_ASSERT_GT(test, hint, 0L);
-	KUNIT_EXPECT_NE(test, hint, fixed);
-
-	ret = nommu_swmmu_unmap(ctx->space, hint, 0);
-	KUNIT_ASSERT_EQ(test, ret, 0);
-	ret = nommu_swmmu_unmap(ctx->space, fixed, 0);
-	KUNIT_ASSERT_EQ(test, ret, 0);
-}
-
-static void nommu_swmmu_map_hint_unaligned_test(struct kunit *test)
-{
-	struct nommu_swmmu_test_ctx *ctx = test->priv;
-	long ret;
-	long addr1;
-
-	/* hint follows documented alignment behavior */
-	addr1 = nommu_swmmu_map_at(ctx->space, 0x1000000010UL, SWMMU_PAGE_SIZE,
-				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
-				NOMMU_SWMMU_MAP_HINT);
-	KUNIT_ASSERT_EQ(test, addr1, 0x1000001000UL);
-
-	ret = nommu_swmmu_unmap(ctx->space, addr1, 0);
-	KUNIT_ASSERT_EQ(test, ret, 0);
-
-}
-
-static void nommu_swmmu_map_auto_avoids_fixed_test(struct kunit *test)
-{
-	struct nommu_swmmu_test_ctx *ctx = test->priv;
-	long ret;
-	long addr1, addr2;
-
-	/* automatic allocation does not overlap a fixed mapping */
-	addr1 = nommu_swmmu_map_at(ctx->space, 0x1000000000UL, SWMMU_PAGE_SIZE,
-				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
-				NOMMU_SWMMU_MAP_FIXED);
-	KUNIT_ASSERT_EQ(test, addr1, 0x1000000000UL);
-
-	addr2 = nommu_swmmu_map_at(ctx->space, 0, SWMMU_PAGE_SIZE,
-				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
-				NOMMU_SWMMU_MAP_AUTO);
-	KUNIT_ASSERT_GT(test, addr2, 0);
-	KUNIT_ASSERT_NE(test, addr2, 0x1000000000UL);
-
-	ret = nommu_swmmu_unmap(ctx->space, addr2, 0);
-	KUNIT_ASSERT_EQ(test, ret, 0);
-	ret = nommu_swmmu_unmap(ctx->space, addr1, 0);
-	KUNIT_ASSERT_EQ(test, ret, 0);
-}
-
-static void nommu_swmmu_invalid_map_mode_test(struct kunit *test)
-{
-	struct nommu_swmmu_test_ctx *ctx = test->priv;
-	long addr1;
-
-	/* invalid enum returns -EINVAL */
-	addr1 = nommu_swmmu_map_at(ctx->space, 0x1000000000UL, SWMMU_PAGE_SIZE,
-				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
-				NOMMU_SWMMU_MAP_FIXED_NOREPLACE + 1);
-	KUNIT_ASSERT_EQ(test, addr1, -EINVAL);
-}
-
-static void nommu_swmmu_access_test(struct kunit *test)
-{
-	struct nommu_swmmu_test_ctx *ctx = test->priv;
-	long ret;
-	long addr;
-	u64 value;
-	void *base;
-
-	addr = nommu_swmmu_map_at(ctx->space, 0, SWMMU_PAGE_SIZE,
-				NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
-				NOMMU_SWMMU_MAP_AUTO);
-	KUNIT_ASSERT_GT(test, addr, 0L);
-	base = (void *)(uintptr_t)addr;
-
-	nommu_swmmu_store_u64(base, sizeof(u64), 871ULL);
-
-	/* valid read */
-	ret = nommu_swmmu_load_u64_checked(base, sizeof(u64), &value);
-	KUNIT_EXPECT_EQ(test, ret, 0);
-	KUNIT_EXPECT_EQ(test, value, 871ULL);
-
-	/* valid write */
-	value = 1001ULL;
-	ret = nommu_swmmu_store_u64_checked(base, sizeof(u64), value);
-	KUNIT_EXPECT_EQ(test, ret, 0);
-	ret = nommu_swmmu_load_u64_checked(base, sizeof(value), &value);
-	KUNIT_EXPECT_EQ(test, ret, 0);
-	KUNIT_EXPECT_EQ(test, value, 1001ULL);
-
-	ret = nommu_swmmu_unmap(ctx->space, addr, 0);
-	KUNIT_ASSERT_EQ(test, ret, 0);
-
-	/* unmapped read => -EFAULT */
-	ret = nommu_swmmu_load_u64_checked(base, sizeof(u64), &value);
-	KUNIT_EXPECT_EQ(test, ret, -EFAULT);
-
-	/* unmapped write => -EFAULT */
-	ret = nommu_swmmu_store_u64_checked(base, sizeof(u64), value);
-	KUNIT_EXPECT_EQ(test, ret, -EFAULT);
-
-	addr = nommu_swmmu_map_at(ctx->space, 0, SWMMU_PAGE_SIZE,
-				NOMMU_SWMMU_NONE, NOMMU_SWMMU_MAP_AUTO);
-	KUNIT_ASSERT_GT(test, addr, 0L);
-	base = (void *)(uintptr_t)addr;
-
-	/* PROT_NONE read => -EACCES */
-	ret = nommu_swmmu_load_u64_checked(base, sizeof(u64), &value);
-	KUNIT_EXPECT_EQ(test, ret, -EACCES);
-
-	/* PROT_NONE write => -EACCES */
-	ret = nommu_swmmu_store_u64_checked(base, sizeof(u64), value);
-	KUNIT_EXPECT_EQ(test, ret, -EACCES);
-
-	ret = nommu_swmmu_unmap(ctx->space, addr, 0);
-	KUNIT_ASSERT_EQ(test, ret, 0);
-
-	addr = nommu_swmmu_map_at(ctx->space, 0, SWMMU_PAGE_SIZE,
-				NOMMU_SWMMU_READ, NOMMU_SWMMU_MAP_AUTO);
-	KUNIT_ASSERT_GT(test, addr, 0L);
-	base = (void *)(uintptr_t)addr;
-
-	/* read-only write => -EACCES */
-	ret = nommu_swmmu_store_u64_checked(base, sizeof(u64), value);
-	KUNIT_EXPECT_EQ(test, ret, -EACCES);
-
-	ret = nommu_swmmu_unmap(ctx->space, addr, 0);
-	KUNIT_ASSERT_EQ(test, ret, 0);
-
-	addr = nommu_swmmu_map_at(ctx->space, 0, SWMMU_PAGE_SIZE,
-				NOMMU_SWMMU_WRITE, NOMMU_SWMMU_MAP_AUTO);
-	KUNIT_ASSERT_GT(test, addr, 0L);
-	base = (void *)(uintptr_t)addr;
-
-	/* write-only read => -EACCES */
-	ret = nommu_swmmu_load_u64_checked(base, sizeof(u64), &value);
-	KUNIT_EXPECT_EQ(test, ret, -EACCES);
-
-	ret = nommu_swmmu_unmap(ctx->space, addr, 0);
-	KUNIT_ASSERT_EQ(test, ret, 0);
-
-	addr = nommu_swmmu_map_at(ctx->space, 0, SWMMU_PAGE_SIZE * 2,
-				NOMMU_SWMMU_READ, NOMMU_SWMMU_MAP_AUTO);
-	KUNIT_ASSERT_GT(test, addr, 0L);
-	base = (void *)(uintptr_t)addr;
-
-	/* cross-page valid access */
-	ret = nommu_swmmu_load_u64_checked(base + SWMMU_PAGE_SIZE - 1, sizeof(u64), &value);
-	KUNIT_EXPECT_EQ(test, ret, 0);
-
-	ret = nommu_swmmu_unmap(ctx->space, addr, 0);
-	KUNIT_ASSERT_EQ(test, ret, 0);
-
-	/* cross-page access into an unmapped page */
-	ret = nommu_swmmu_load_u64_checked(base + SWMMU_PAGE_SIZE - 1, sizeof(u64), &value);
-	KUNIT_EXPECT_EQ(test, ret, -EFAULT);
-}
-
-static void nommu_swmmu_simple_map_test(struct kunit *test)
-{
-	struct nommu_swmmu_test_ctx *ctx = test->priv;
-	long ret, addr, addr2;
-
-	addr = nommu_swmmu_map(ctx->space, SWMMU_PAGE_SIZE);
-	KUNIT_ASSERT_GT(test, addr, 0L);
-
-	addr2 = swmmu_alloc(SWMMU_PAGE_SIZE);
-	KUNIT_ASSERT_GT(test, addr2, 0L);
-
-	KUNIT_ASSERT_EQ(test,
-			swmmu_free((void *)(uintptr_t)addr2),
-			0);
-	ret = nommu_swmmu_unmap(ctx->space, addr, 0);
-	KUNIT_ASSERT_EQ(test, ret, 0);
-
-	ret = nommu_swmmu_unmap(ctx->space, addr, 0);
-	KUNIT_ASSERT_EQ(test, ret, -EINVAL);
-}
-
-static void nommu_swmmu_array_index_test(struct kunit *test)
-{
-	struct swmmu_array_object *object;
-	u64 value;
-	long ret;
-
-	ret = swmmu_alloc(sizeof(*object));
-	if (ret <= 0) {
-		KUNIT_FAIL(test, "swmmu_alloc failed: %ld\n", ret);
-		return;
-	}
-
-	object = (void *)(uintptr_t)ret;
-
-	test_swmmu_array_store_constant(object);
-
-	value = nommu_swmmu_load_u64(&object->values[2],
-				     sizeof(object->values[2]));
-	KUNIT_EXPECT_EQ(test, value, (u64)0x11223344);
-
-	test_swmmu_array_store_indexed(object, SWMMU_ARRAY_INDEX,
-				       SWMMU_ARRAY_VALUE);
-
-	value = nommu_swmmu_load_u64(
-		&object->values[SWMMU_ARRAY_INDEX],
-		sizeof(object->values[SWMMU_ARRAY_INDEX]));
-	KUNIT_EXPECT_EQ(test, value, (u64)SWMMU_ARRAY_VALUE);
-
-	value = test_swmmu_array_load_indexed(object,
-					      SWMMU_ARRAY_INDEX);
-	KUNIT_EXPECT_EQ(test, value, (u32)SWMMU_ARRAY_VALUE);
-
-
-	test_swmmu_array_store_pointer_arithmetic(object, 1,
-						0x55667788);
-	value = test_swmmu_array_load_pointer_arithmetic(object, 1);
-	KUNIT_EXPECT_EQ(test, value, (u32)0x55667788);
-
-	value = test_swmmu_array_load_constant(object);
-	KUNIT_EXPECT_EQ(test, value, (u32)0x11223344);
-
-	swmmu_free(object);
-}
-
-static void nommu_swmmu_nested_test(struct kunit *test)
-{
-	struct swmmu_object *object;
-	struct swmmu_object *source;
-	u64 value;
-	long ret;
-
-	ret = swmmu_alloc(sizeof(*object));
-	if (ret <= 0) {
-		KUNIT_FAIL(test, "object allocation failed: %ld\n", ret);
-		return;
-	}
-	object = (void *)(uintptr_t)ret;
-
-	ret = swmmu_alloc(sizeof(*source));
-	if (ret <= 0) {
-		swmmu_free(object);
-		KUNIT_FAIL(test, "source allocation failed: %ld\n", ret);
-		return;
-	}
-	source = (void *)(uintptr_t)ret;
-
-	nommu_swmmu_store_u64(&source->values[1],
-			      sizeof(source->values[1]), 0x12345678);
-	nommu_swmmu_store_u64(&object->nested.value,
-			      sizeof(object->nested.value), 10);
-	nommu_swmmu_store_u64(&object->values[3],
-			      sizeof(object->values[3]), 5);
-
-	swmmu_access_shapes(object, source);
-
-	value = nommu_swmmu_load_u64(&object->values[2],
-				     sizeof(object->values[2]));
-	KUNIT_EXPECT_EQ(test, value, (u64)0x12345678);
-
-	value = nommu_swmmu_load_u64(&object->nested.value,
-				     sizeof(object->nested.value));
-	KUNIT_EXPECT_EQ(test, value, 11ULL);
-
-	value = nommu_swmmu_load_u64(&object->values[3],
-				     sizeof(object->values[3]));
-	KUNIT_EXPECT_EQ(test, value, 16ULL);
-
-	swmmu_free(source);
-	swmmu_free(object);
-}
-
-static void nommu_swmmu_multiple_indirection_test(struct kunit *test)
-{
-	struct swmmu_node *node1;
-	struct swmmu_node *node2;
-	struct swmmu_node *node3;
-	u64 value;
-	long ret;
-
-	ret = swmmu_alloc(sizeof(*node1));
-	KUNIT_ASSERT_GT(test, ret, 0L);
-	node1 = (void *)(uintptr_t)ret;
-
-	ret = swmmu_alloc(sizeof(*node1));
-	if (ret <= 0) {
-		swmmu_free(node1);
-		KUNIT_FAIL(test, "allocation failed: %ld\n", ret);
-		return;
-	}
-	node2 = (void *)(uintptr_t)ret;
-
-	ret = swmmu_alloc(sizeof(*node1));
-	if (ret <= 0) {
-		swmmu_free(node2);
-		swmmu_free(node1);
-		KUNIT_FAIL(test, "allocation failed: %ld\n", ret);
-		return;
-	}
-	node3 = (void *)(uintptr_t)ret;
-
-	nommu_swmmu_store_u64(&node1->next, sizeof(node1->next),
-			(u64)(uintptr_t)node2);
-	nommu_swmmu_store_u64(&node2->next, sizeof(node2->next),
-			(u64)(uintptr_t)node3);
-	nommu_swmmu_store_u64(&node3->value, sizeof(node3->value),
-			0xabcdef01);
-
-	value = test_swmmu_two_pointer_hops(node1);
-	KUNIT_EXPECT_EQ(test, value, (u32)0xabcdef01);
-
-	swmmu_free(node3);
-	swmmu_free(node2);
-	swmmu_free(node1);
-}
-
-static void nommu_swmmu_read_modify_write_order_test(struct kunit *test)
-{
-	struct swmmu_test_object *object;
-	u64 value;
-	long ret;
-
-	ret = swmmu_alloc(sizeof(*object));
-	KUNIT_ASSERT_GT(test, ret, 0L);
-	object = (void *)(uintptr_t)ret;
-
-	nommu_swmmu_store_u64(&object->value,
-			sizeof(object->value), 10);
-
-	value = test_swmmu_preincrement(object);
-	KUNIT_EXPECT_EQ(test, value, 11ULL);
-
-	value = nommu_swmmu_load_u64(&object->value,
-				sizeof(object->value));
-	KUNIT_EXPECT_EQ(test, value, 11ULL);
-
-	value = test_swmmu_postincrement(object);
-	KUNIT_EXPECT_EQ(test, value, 11ULL);
-
-	value = nommu_swmmu_load_u64(&object->value,
-				sizeof(object->value));
-	KUNIT_EXPECT_EQ(test, value, 12ULL);
-
-	swmmu_free(object);
-}
-
-static void nommu_swmmu_multi_access_test(struct kunit *test)
-{
-	struct swmmu_array_object *object;
-	u32 *src;
-	u32 *dst;
-	u64 value;
-	long src_ret;
-	long dst_ret;
-	long ret;
-
-	ret = swmmu_alloc(sizeof(*object));
-	if (ret <= 0) {
-		KUNIT_FAIL(test, "swmmu_alloc failed: %ld\n", ret);
-		return;
-	}
-	object = (void *)(uintptr_t)ret;
-
-	src_ret = swmmu_alloc(sizeof(*src));
-	if (src_ret <= 0) {
-		swmmu_free(object);
-		KUNIT_FAIL(test, "source allocation failed: %ld\n", src_ret);
-		return;
-	}
-	src = (void *)(uintptr_t)src_ret;
-
-	dst_ret = swmmu_alloc(sizeof(*dst));
-	if (dst_ret <= 0) {
-		swmmu_free(object);
-		swmmu_free(src);
-		KUNIT_FAIL(test, "destination allocation failed: %ld\n", dst_ret);
-		return;
-	}
-	dst = (void *)(uintptr_t)dst_ret;
-
-	nommu_swmmu_store_u64(src, sizeof(*src), 3939);
-	nommu_swmmu_store_u64(dst, sizeof(*dst), 0);
-
-	test_swmmu_copy_u32(dst, src);
-
-	value = nommu_swmmu_load_u64(dst, sizeof(*dst));
-	KUNIT_EXPECT_EQ(test, value, 3939ULL);
-
-	/* multi rhs test */
-	nommu_swmmu_store_u64(&object->values[1],
-			      sizeof(object->values[1]), 10);
-	nommu_swmmu_store_u64(&object->values[2],
-			      sizeof(object->values[2]), 32);
-
-	test_swmmu_multiple_rhs(object);
-
-	value = nommu_swmmu_load_u64(&object->values[0],
-				     sizeof(object->values[0]));
-	KUNIT_EXPECT_EQ(test, value, 42ULL);
-
-	swmmu_free(object);
-	swmmu_free(dst);
-	swmmu_free(src);
-}
-
-static void nommu_swmmu_loop_branch_test(struct kunit *test)
-{
-	struct swmmu_array_object *object;
-	u32 value;
-	long ret;
-
-	ret = swmmu_alloc(sizeof(*object));
-	if (ret <= 0) {
-		KUNIT_FAIL(test, "swmmu_alloc failed: %ld\n", ret);
-		return;
-	}
-	object = (void *)(uintptr_t)ret;
-
-	nommu_swmmu_store_u64(&object->values[0],
-			      sizeof(object->values[0]), 11);
-	nommu_swmmu_store_u64(&object->values[1],
-			      sizeof(object->values[1]), 11);
-	nommu_swmmu_store_u64(&object->values[2],
-			      sizeof(object->values[2]), 11);
-	nommu_swmmu_store_u64(&object->values[3],
-			      sizeof(object->values[3]), 10);
-	value = test_swmmu_loop_branch(object);
-
-	KUNIT_EXPECT_EQ(test, value, 33ULL);
-
-	swmmu_free(object);
-}
-
-static void nommu_swmmu_signed_unsigned_scalar_test(struct kunit *test)
-{
-	struct swmmu_scalar_object *object;
-	long ret;
-
-	ret = swmmu_alloc(sizeof(*object));
-	KUNIT_ASSERT_GT(test, ret, 0L);
-	object = (void *)(uintptr_t)ret;
-
-	test_swmmu_scalar_store(object);
-
-	KUNIT_EXPECT_EQ(test,
-			nommu_swmmu_load_u64(&object->s8_value,
-					sizeof(object->s8_value)),
-			0xffULL);
-
-	KUNIT_EXPECT_EQ(test,
-			nommu_swmmu_load_u64(&object->u8_value,
-					sizeof(object->u8_value)),
-			0xffULL);
-
-	KUNIT_EXPECT_EQ(test,
-			nommu_swmmu_load_u64(&object->s16_value,
-					sizeof(object->s16_value)),
-			0xfffeULL);
-
-	KUNIT_EXPECT_EQ(test,
-			nommu_swmmu_load_u64(&object->u16_value,
-					sizeof(object->u16_value)),
-			0xfffeULL);
-
-	KUNIT_EXPECT_EQ(test,
-			nommu_swmmu_load_u64(&object->s32_value,
-					sizeof(object->s32_value)),
-			0xfffffffdULL);
-
-	KUNIT_EXPECT_EQ(test,
-			nommu_swmmu_load_u64(&object->u32_value,
-					sizeof(object->u32_value)),
-			0xfffffffdULL);
-
-	KUNIT_EXPECT_EQ(test,
-			nommu_swmmu_load_u64(&object->s64_value,
-					sizeof(object->s64_value)),
-			0xfffffffffffffffcULL);
-
-	KUNIT_EXPECT_EQ(test,
-			nommu_swmmu_load_u64(&object->u64_value,
-					sizeof(object->u64_value)),
-			0xfffffffffffffffcULL);
-
-	swmmu_free(object);
-}
-
-static void nommu_swmmu_pointer_sized_value_test(struct kunit *test)
-{
-	struct swmmu_pointer_object *object;
-	u64 *value, *dst;
-	long ret;
-
-	ret = swmmu_alloc(sizeof(*object));
-	KUNIT_ASSERT_GT(test, ret, 0L);
-	object = (void *)(uintptr_t)ret;
-
-	ret = swmmu_alloc(sizeof(*value));
-	if (ret <= 0) {
-		swmmu_free(object);
-		KUNIT_FAIL(test, "value allocation failed: %ld\n", ret);
-		return;
-	}
-	value = (void *)(uintptr_t)ret;
-
-	nommu_swmmu_store_u64(value, sizeof(*value), 59ULL);
-	test_swmmu_pointer_store(object, value);
-
-	dst = test_swmmu_pointer_load(object);
-
-	KUNIT_EXPECT_PTR_EQ(test, dst, value);
-
-	swmmu_free(value);
-	swmmu_free(object);
-}
-
-
-/* init/exit */
 static int nommu_swmmu_test_init(struct kunit *test)
 {
 	struct nommu_swmmu_test_ctx *ctx;
-
-	test_alloc_reset();
 
 	ctx = kunit_kzalloc(test, sizeof(*ctx), GFP_KERNEL);
 	KUNIT_ASSERT_NOT_NULL(test, ctx);
@@ -2188,9 +135,7 @@ static int nommu_swmmu_test_init(struct kunit *test)
 	ctx->space = nommu_swmmu_space_create_with_ops(&test_ops);
 	KUNIT_ASSERT_NOT_NULL(test, ctx->space);
 
-	nommu_swmmu_kunit_set_space(ctx->space);
 	test->priv = ctx;
-
 	return 0;
 }
 
@@ -2198,62 +143,163 @@ static void nommu_swmmu_test_exit(struct kunit *test)
 {
 	struct nommu_swmmu_test_ctx *ctx = test->priv;
 
-	test_alloc_reset();
-	if (!ctx)
-		return;
-
-	nommu_swmmu_kunit_clear_space();
-
-	if (ctx->space)
+	if (ctx && ctx->space)
 		nommu_swmmu_space_put(ctx->space);
+
+	test_alloc_reset();
 }
 
+static void nommu_swmmu_backing_alloc_test(struct kunit *test)
+{
+	struct nommu_swmmu_test_ctx *ctx = test->priv;
+	struct nommu_swmmu_backing *backing = NULL;
+	size_t i;
+	int ret;
+
+	ret = nommu_swmmu_kunit_backing_alloc(ctx->space,
+					      2 * SWMMU_PAGE_SIZE,
+					      &backing);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+	KUNIT_ASSERT_NOT_NULL(test, backing);
+	KUNIT_EXPECT_EQ(test, backing->page_count, 2UL);
+
+	for (i = 0; i < backing->page_count; i++) {
+		void *addr = page_address(backing->pages[i]);
+
+		KUNIT_ASSERT_NOT_NULL(test, addr);
+		KUNIT_EXPECT_EQ(test, ((u8 *)addr)[0], 0);
+		KUNIT_EXPECT_EQ(test, ((u8 *)addr)[SWMMU_PAGE_SIZE - 1], 0);
+	}
+
+	nommu_swmmu_kunit_backing_release(ctx->space, backing);
+}
+
+static void nommu_swmmu_backing_zalloc_failure_test(
+	struct kunit *test)
+{
+	struct nommu_swmmu_test_ctx *ctx = test->priv;
+	struct nommu_swmmu_backing *backing;
+	unsigned int fail_at;
+	int ret;
+
+	for (fail_at = 0; fail_at < 2; fail_at++) {
+		test_alloc_fail_at(TEST_FAIL_ZALLOC, fail_at);
+		backing = NULL;
+
+		ret = nommu_swmmu_kunit_backing_alloc(
+			ctx->space,
+			SWMMU_PAGE_SIZE,
+			&backing);
+
+		KUNIT_EXPECT_LT(test, ret, 0);
+		KUNIT_EXPECT_PTR_EQ(test, backing, NULL);
+		expect_allocations_balanced(test);
+
+		test_alloc_reset();
+
+		ret = nommu_swmmu_kunit_backing_alloc(
+			ctx->space,
+			SWMMU_PAGE_SIZE,
+			&backing);
+
+		KUNIT_ASSERT_EQ(test, ret, 0);
+		KUNIT_ASSERT_NOT_NULL(test, backing);
+
+		nommu_swmmu_kunit_backing_release(ctx->space, backing);
+		expect_allocations_balanced(test);
+	}
+}
+
+static void nommu_swmmu_backing_page_failure_test(
+	struct kunit *test)
+{
+	struct nommu_swmmu_test_ctx *ctx = test->priv;
+	struct nommu_swmmu_backing *backing;
+	unsigned int fail_at;
+	int ret;
+
+	for (fail_at = 0; fail_at < 4; fail_at++) {
+		test_alloc_fail_at(TEST_FAIL_PAGE_ALLOC, fail_at);
+		backing = NULL;
+
+		ret = nommu_swmmu_kunit_backing_alloc(
+			ctx->space,
+			4 * SWMMU_PAGE_SIZE,
+			&backing);
+
+		KUNIT_EXPECT_LT(test, ret, 0);
+		KUNIT_EXPECT_PTR_EQ(test, backing, NULL);
+		expect_allocations_balanced(test);
+
+		test_alloc_reset();
+
+		ret = nommu_swmmu_kunit_backing_alloc(
+			ctx->space,
+			4 * SWMMU_PAGE_SIZE,
+			&backing);
+
+		KUNIT_ASSERT_EQ(test, ret, 0);
+		KUNIT_ASSERT_NOT_NULL(test, backing);
+
+		nommu_swmmu_kunit_backing_release(ctx->space, backing);
+		expect_allocations_balanced(test);
+	}
+}
+
+static void nommu_swmmu_vma_dup_offset_test(struct kunit *test)
+{
+	struct nommu_swmmu_test_ctx *ctx = test->priv;
+	struct nommu_swmmu_backing *backing = NULL;
+	struct nommu_swmmu_vma src = {};
+	struct nommu_swmmu_vma *dst = NULL;
+	u32 *page;
+	int ret;
+
+	ret = nommu_swmmu_kunit_backing_alloc(
+		ctx->space,
+		3 * SWMMU_PAGE_SIZE,
+		&backing);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	page = page_address(backing->pages[1]);
+	KUNIT_ASSERT_NOT_NULL(test, page);
+	*page = 0x11223344;
+
+	page = page_address(backing->pages[2]);
+	KUNIT_ASSERT_NOT_NULL(test, page);
+	*page = 0x55667788;
+
+	src.backing = backing;
+	src.page_offset = 1;
+	src.page_count = 2;
+	src.access = NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE;
+
+	ret = nommu_swmmu_kunit_vma_dup(ctx->space, &src, &dst);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+	KUNIT_ASSERT_NOT_NULL(test, dst);
+
+	KUNIT_EXPECT_EQ(test, dst->page_offset, 0UL);
+	KUNIT_EXPECT_EQ(test, dst->page_count, 2UL);
+	KUNIT_EXPECT_EQ(test, dst->access, src.access);
+	KUNIT_EXPECT_PTR_NE(test, dst->backing, src.backing);
+
+	page = page_address(dst->backing->pages[0]);
+	KUNIT_ASSERT_NOT_NULL(test, page);
+	KUNIT_EXPECT_EQ(test, *page, 0x11223344);
+
+	page = page_address(dst->backing->pages[1]);
+	KUNIT_ASSERT_NOT_NULL(test, page);
+	KUNIT_EXPECT_EQ(test, *page, 0x55667788);
+
+	nommu_swmmu_kunit_vma_release(ctx->space, dst);
+	nommu_swmmu_kunit_backing_release(ctx->space, backing);
+}
 
 static struct kunit_case nommu_swmmu_test_cases[] = {
-	KUNIT_CASE(nommu_swmmu_increment_test),
-	KUNIT_CASE(nommu_swmmu_clone_test),
-	KUNIT_CASE(nommu_swmmu_attach_test),
-	KUNIT_CASE(nommu_swmmu_cross_page_test),
-	KUNIT_CASE(nommu_swmmu_translate_boundary_test),
-	KUNIT_CASE(nommu_swmmu_multiple_mapping_test),
-	KUNIT_CASE(nommu_swmmu_free_test),
-	KUNIT_CASE(nommu_swmmu_free_interior_test),
-	KUNIT_CASE(nommu_swmmu_repeated_alloc_free_test),
-	KUNIT_CASE(nommu_swmmu_repeated_clone_test),
-	KUNIT_CASE(nommu_swmmu_alloc_failure_test),
-	KUNIT_CASE(nommu_swmmu_alloc_page_failure_test),
-	KUNIT_CASE(nommu_swmmu_clone_failure_test),
-	KUNIT_CASE(nommu_swmmu_clone_page_failure_test),
-	KUNIT_CASE(nommu_swmmu_clone_copy_failure_test),
-	KUNIT_CASE(nommu_swmmu_map_test),
-	KUNIT_CASE(nommu_swmmu_unmap_test),
-	KUNIT_CASE(nommu_swmmu_remap_shrink_test),
-	KUNIT_CASE(nommu_swmmu_remap_shrink_extended_test),
-	KUNIT_CASE(nommu_swmmu_remap_grow_test),
-	KUNIT_CASE(nommu_swmmu_remap_rollback_test),
-	KUNIT_CASE(nommu_swmmu_remap_overlap_test),
-	KUNIT_CASE(map_at_exact_address_test),
-	KUNIT_CASE(map_at_overlap_test),
-	KUNIT_CASE(map_at_alignment_test),
-	KUNIT_CASE(map_at_overflow_test),
-	KUNIT_CASE(same_address_different_spaces_test),
-	KUNIT_CASE(nommu_swmmu_mode_test),
-	KUNIT_CASE(nommu_swmmu_prot_test),
-	KUNIT_CASE(nommu_swmmu_map_hint_free_test),
-	KUNIT_CASE(nommu_swmmu_map_hint_occupied_test),
-	KUNIT_CASE(nommu_swmmu_map_hint_unaligned_test),
-	KUNIT_CASE(nommu_swmmu_map_auto_avoids_fixed_test),
-	KUNIT_CASE(nommu_swmmu_invalid_map_mode_test),
-	KUNIT_CASE(nommu_swmmu_access_test),
-	KUNIT_CASE(nommu_swmmu_simple_map_test),
-	KUNIT_CASE(nommu_swmmu_array_index_test),
-	KUNIT_CASE(nommu_swmmu_nested_test),
-	KUNIT_CASE(nommu_swmmu_multiple_indirection_test),
-	KUNIT_CASE(nommu_swmmu_read_modify_write_order_test),
-	KUNIT_CASE(nommu_swmmu_multi_access_test),
-	KUNIT_CASE(nommu_swmmu_loop_branch_test),
-	KUNIT_CASE(nommu_swmmu_signed_unsigned_scalar_test),
-	KUNIT_CASE(nommu_swmmu_pointer_sized_value_test),
+	KUNIT_CASE(nommu_swmmu_backing_alloc_test),
+	KUNIT_CASE(nommu_swmmu_backing_zalloc_failure_test),
+	KUNIT_CASE(nommu_swmmu_backing_page_failure_test),
+	KUNIT_CASE(nommu_swmmu_vma_dup_offset_test),
 	{}
 };
 

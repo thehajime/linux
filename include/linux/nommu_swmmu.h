@@ -109,6 +109,24 @@ const struct nommu_swmmu_mem_ops *nommu_swmmu_arch_mem_ops(void);
 struct nommu_swmmu_space *
 nommu_swmmu_space_create_with_ops(
 	const struct nommu_swmmu_mem_ops *mem_ops);
+
+int nommu_swmmu_kunit_backing_alloc(
+	struct nommu_swmmu_space *space,
+	size_t size,
+	struct nommu_swmmu_backing **out);
+
+void nommu_swmmu_kunit_backing_release(
+	struct nommu_swmmu_space *space,
+	struct nommu_swmmu_backing *backing);
+
+int nommu_swmmu_kunit_vma_dup(
+	struct nommu_swmmu_space *space,
+	const struct nommu_swmmu_vma *src,
+	struct nommu_swmmu_vma **out);
+
+void nommu_swmmu_kunit_vma_release(
+	struct nommu_swmmu_space *space,
+	struct nommu_swmmu_vma *data);
 #endif
 
 struct nommu_swmmu_space *nommu_swmmu_current(void);

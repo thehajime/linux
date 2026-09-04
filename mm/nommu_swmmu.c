@@ -521,6 +521,50 @@ void nommu_swmmu_kunit_clear_space(void)
 {
 	kunit_test_space = NULL;
 }
+
+int nommu_swmmu_kunit_backing_alloc(
+	struct nommu_swmmu_space *space,
+	size_t size,
+	struct nommu_swmmu_backing **out)
+{
+	if (!space || !out || !size)
+		return -EINVAL;
+
+	*out = swmmu_backing_alloc(space, size);
+	if (!*out)
+		return -ENOMEM;
+
+	return 0;
+}
+
+void nommu_swmmu_kunit_backing_release(
+	struct nommu_swmmu_space *space,
+	struct nommu_swmmu_backing *backing)
+{
+	swmmu_backing_release(space, backing);
+}
+
+int nommu_swmmu_kunit_vma_dup(
+	struct nommu_swmmu_space *space,
+	const struct nommu_swmmu_vma *src,
+	struct nommu_swmmu_vma **out)
+{
+	if (!space || !src || !out)
+		return -EINVAL;
+
+	*out = swmmu_vma_data_dup(space, src);
+	if (!*out)
+		return -ENOMEM;
+
+	return 0;
+}
+
+void nommu_swmmu_kunit_vma_release(
+	struct nommu_swmmu_space *space,
+	struct nommu_swmmu_vma *data)
+{
+	swmmu_vma_data_release(space, data);
+}
 #endif
 
 
