@@ -339,6 +339,16 @@ static void nommu_swmmu_mm_mapping_test(struct kunit *test)
 	KUNIT_ASSERT_EQ(test, ret, 0);
 	KUNIT_EXPECT_EQ(test, value, 0x12345678ULL);
 
+	ret = nommu_swmmu_kunit_unmap_mm(ctx->mm,
+					 address,
+					 SWMMU_PAGE_SIZE);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	ret = nommu_swmmu_kunit_load_mm(ctx->mm,
+					address,
+					sizeof(value),
+					&value);
+	KUNIT_EXPECT_EQ(test, ret, -EFAULT);
 }
 
 static int nommu_swmmu_mm_ctx_init(struct kunit *test)

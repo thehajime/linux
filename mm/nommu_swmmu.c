@@ -1557,6 +1557,22 @@ unsigned long nommu_swmmu_kunit_mmap_mm(
 
 	return ret;
 }
+
+int nommu_swmmu_kunit_unmap_mm(struct mm_struct *mm,
+			       unsigned long address,
+			       size_t size)
+{
+	int ret;
+
+	if (!mm || !size)
+		return -EINVAL;
+
+	mmap_write_lock(mm);
+	ret = do_munmap(mm, address, size, NULL);
+	mmap_write_unlock(mm);
+
+	return ret;
+}
 #endif
 
 static void swmmu_split_abort(struct vm_area_struct *vma,

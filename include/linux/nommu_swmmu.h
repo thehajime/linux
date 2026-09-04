@@ -135,6 +135,10 @@ unsigned long nommu_swmmu_kunit_mmap_mm(
 	unsigned long prot,
 	unsigned long flags);
 
+int nommu_swmmu_kunit_unmap_mm(struct mm_struct *mm,
+			       unsigned long address,
+			       size_t size);
+
 int nommu_swmmu_kunit_load_mm(struct mm_struct *mm,
 			      uintptr_t address,
 			      size_t size,
