@@ -744,6 +744,108 @@ static void nommu_swmmu_mm_fork_rollback_test(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, child->mm->map_count, 0);
 }
 
+#define TEST_VMA1_ADDR	0x1000000000UL
+#define TEST_VMA2_ADDR	0x1000002000UL
+
+static void nommu_swmmu_mm_fork_page_copy_rollback_test(
+	struct kunit *test)
+{
+	struct nommu_swmmu_mm_test_ctx parent;
+	struct nommu_swmmu_mm_test_ctx child;
+	unsigned long addr1;
+	unsigned long addr2;
+	u64 value;
+	unsigned int fail_at;
+	int ret;
+
+	ret = nommu_swmmu_mm_ctx_create(&parent, test);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	ret = nommu_swmmu_mm_ctx_create(&child, test);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	addr1 = nommu_swmmu_kunit_mmap_mm(
+		parent.mm,
+		TEST_VMA1_ADDR,
+		SWMMU_PAGE_SIZE,
+		PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS |
+		MAP_FIXED_NOREPLACE);
+	KUNIT_ASSERT_EQ(test, addr1, TEST_VMA1_ADDR);
+
+	addr2 = nommu_swmmu_kunit_mmap_mm(
+		parent.mm,
+		TEST_VMA2_ADDR,
+		SWMMU_PAGE_SIZE,
+		PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS |
+		MAP_FIXED_NOREPLACE);
+	KUNIT_ASSERT_EQ(test, addr2, TEST_VMA2_ADDR);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_store_mm(parent.mm,
+						   addr1,
+						   sizeof(value),
+						   41),
+			0);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_store_mm(parent.mm,
+						   addr2,
+						   sizeof(value),
+						   42),
+			0);
+
+	/*
+	 * The exact upper bound should match the number of page-copy
+	 * operations performed by this clone.
+	 */
+	for (fail_at = 0; fail_at < 2; fail_at++) {
+		test_alloc_reset();
+		test_alloc_fail_at(TEST_FAIL_PAGE_COPY, fail_at);
+
+		ret = test_dup_mmap(child.mm, parent.mm);
+		KUNIT_EXPECT_EQ(test, ret, -ENOMEM);
+
+		test_alloc_reset();
+
+		/*
+		 * No child VMA or child SWMMU metadata may remain.
+		 */
+		KUNIT_EXPECT_EQ(test, child.mm->map_count, 0);
+
+		KUNIT_EXPECT_EQ(test,
+				nommu_swmmu_kunit_load_mm(parent.mm,
+							  addr1,
+							  sizeof(value),
+							  &value),
+				0);
+		KUNIT_EXPECT_EQ(test, value, 41ULL);
+
+		KUNIT_EXPECT_EQ(test,
+				nommu_swmmu_kunit_load_mm(parent.mm,
+							  addr2,
+							  sizeof(value),
+							  &value),
+				0);
+		KUNIT_EXPECT_EQ(test, value, 42ULL);
+
+		expect_allocations_balanced(test);
+	}
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_unmap_mm(parent.mm,
+						   addr1,
+						   SWMMU_PAGE_SIZE),
+			0);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_unmap_mm(parent.mm,
+						   addr2,
+						   SWMMU_PAGE_SIZE),
+			0);
+}
+
 
 static int nommu_swmmu_mm_ctx_init(struct kunit *test)
 {
@@ -783,6 +885,7 @@ static struct kunit_case nommu_swmmu_mm_test_cases[] = {
 	KUNIT_CASE(nommu_swmmu_mm_mremap_expand_rollback_test),
 	KUNIT_CASE(nommu_swmmu_mm_fork_clone_test),
 	KUNIT_CASE(nommu_swmmu_mm_fork_rollback_test),
+	KUNIT_CASE(nommu_swmmu_mm_fork_page_copy_rollback_test),
 	{}
 };
 
