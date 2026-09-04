@@ -139,6 +139,13 @@ int nommu_swmmu_kunit_unmap_mm(struct mm_struct *mm,
 			       unsigned long address,
 			       size_t size);
 
+unsigned long nommu_swmmu_kunit_mremap_mm(struct mm_struct *mm,
+					unsigned long addr,
+					unsigned long old_len,
+					unsigned long new_len,
+					unsigned long flags,
+					unsigned long new_addr);
+
 int nommu_swmmu_kunit_load_mm(struct mm_struct *mm,
 			      uintptr_t address,
 			      size_t size,

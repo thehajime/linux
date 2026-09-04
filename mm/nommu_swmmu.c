@@ -1871,17 +1871,22 @@ int do_munmap(struct mm_struct *mm,
 	return do_munmap_nommu(mm, start, len, uf);
 }
 
-unsigned long do_mremap(unsigned long addr,
-			unsigned long old_len, unsigned long new_len,
-			unsigned long flags, unsigned long new_addr)
+static unsigned long
+__do_mremap(struct mm_struct *mm,
+	    unsigned long addr,
+	    unsigned long old_len,
+	    unsigned long new_len,
+	    unsigned long flags,
+	    unsigned long new_addr)
 {
-	struct mm_struct *mm = current->mm;
 	VMA_ITERATOR(vmi, mm, addr);
 	struct vm_area_struct *vma;
 	struct nommu_swmmu_vma_tx vma_tx;
 	struct vm_area_struct *next;
 	int ret;
 	unsigned long end;
+
+	mmap_assert_write_locked(mm);
 
 	/* not implemented yet */
 	if (new_addr)
@@ -1965,6 +1970,41 @@ unsigned long do_mremap(unsigned long addr,
 
 	return vma->vm_start;
 }
+
+unsigned long do_mremap(unsigned long addr,
+			unsigned long old_len, unsigned long new_len,
+			unsigned long flags, unsigned long new_addr)
+{
+	if (!current->mm)
+		return -EINVAL;
+
+	return __do_mremap(current->mm, addr, old_len, new_len,
+			   flags, new_addr);
+}
+
+#if IS_ENABLED(CONFIG_NOMMU_SWMMU_KUNIT_TEST)
+unsigned long nommu_swmmu_kunit_mremap_mm(struct mm_struct *mm,
+					unsigned long addr,
+					unsigned long old_len,
+					unsigned long new_len,
+					unsigned long flags,
+					unsigned long new_addr)
+{
+	unsigned long ret;
+
+	if (!mm)
+		return -EINVAL;
+
+	mmap_write_lock(mm);
+
+	ret = __do_mremap(mm, addr, old_len, new_len,
+			  flags, new_addr);
+
+	mmap_write_unlock(mm);
+
+	return ret;
+}
+#endif
 
 /* prctl interface */
 int nommu_swmmu_set_mode(struct mm_struct *mm,

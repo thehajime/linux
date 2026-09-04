@@ -351,6 +351,113 @@ static void nommu_swmmu_mm_mapping_test(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, ret, -EFAULT);
 }
 
+static void nommu_swmmu_mm_mremap_shrink_test(struct kunit *test)
+{
+	struct nommu_swmmu_mm_test_ctx *ctx = test->priv;
+	unsigned long address;
+	unsigned long ret;
+	u64 value;
+
+	address = nommu_swmmu_kunit_mmap_mm(
+		ctx->mm,
+		0,
+		SWMMU_PAGE_SIZE * 2,
+		PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS);
+	KUNIT_ASSERT_GT(test, address, 0UL);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_store_mm(ctx->mm,
+						   address,
+						   sizeof(value),
+						   0x12345678),
+			0);
+
+	ret = nommu_swmmu_kunit_mremap_mm(
+		ctx->mm,
+		address,
+		SWMMU_PAGE_SIZE * 2,
+		SWMMU_PAGE_SIZE,
+		0,
+		0);
+	KUNIT_ASSERT_EQ(test, ret, address);
+
+	KUNIT_EXPECT_EQ(test,
+			nommu_swmmu_kunit_load_mm(ctx->mm,
+						  address,
+						  sizeof(value),
+						  &value),
+			0);
+	KUNIT_EXPECT_EQ(test, value, 0x12345678ULL);
+
+	KUNIT_EXPECT_EQ(test,
+			nommu_swmmu_kunit_load_mm(
+				ctx->mm,
+				address + SWMMU_PAGE_SIZE,
+				sizeof(value),
+				&value),
+			-EFAULT);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_unmap_mm(ctx->mm,
+						   address,
+						   SWMMU_PAGE_SIZE),
+			0);
+}
+
+static void nommu_swmmu_mm_mremap_expand_test(struct kunit *test)
+{
+	struct nommu_swmmu_mm_test_ctx *ctx = test->priv;
+	unsigned long address;
+	unsigned long ret;
+	u64 value;
+
+	address = nommu_swmmu_kunit_mmap_mm(
+		ctx->mm, 0, SWMMU_PAGE_SIZE,
+		PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS);
+	KUNIT_ASSERT_GT(test, address, 0UL);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_store_mm(ctx->mm,
+						   address,
+						   sizeof(value),
+						   0x1122334455667788ULL),
+			0);
+
+	ret = nommu_swmmu_kunit_mremap_mm(
+		ctx->mm,
+		address,
+		SWMMU_PAGE_SIZE,
+		SWMMU_PAGE_SIZE * 2,
+		0,
+		0);
+	KUNIT_ASSERT_EQ(test, ret, address);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_load_mm(ctx->mm,
+						  address,
+						  sizeof(value),
+						  &value),
+			0);
+	KUNIT_EXPECT_EQ(test, value, 0x1122334455667788ULL);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_load_mm(
+				ctx->mm,
+				address + SWMMU_PAGE_SIZE,
+				sizeof(value),
+				&value),
+			0);
+	KUNIT_EXPECT_EQ(test, value, 0ULL);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_unmap_mm(ctx->mm,
+						   address,
+						   SWMMU_PAGE_SIZE * 2),
+			0);
+}
+
 static int nommu_swmmu_mm_ctx_init(struct kunit *test)
 {
 	struct nommu_swmmu_mm_test_ctx *ctx;
@@ -411,6 +518,8 @@ static void nommu_swmmu_mm_ctx_exit(struct kunit *test)
 
 static struct kunit_case nommu_swmmu_mm_test_cases[] = {
 	KUNIT_CASE(nommu_swmmu_mm_mapping_test),
+	KUNIT_CASE(nommu_swmmu_mm_mremap_shrink_test),
+	KUNIT_CASE(nommu_swmmu_mm_mremap_expand_test),
 	{}
 };
 
