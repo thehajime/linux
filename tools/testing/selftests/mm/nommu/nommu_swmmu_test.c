@@ -2363,6 +2363,76 @@ static int test_standard_mmap_rejects_nonexact_old_range(void)
 	return KSFT_PASS;
 }
 
+static int test_fork_mapping_isolation_after_head_trim(void)
+{
+	size_t ps = sysconf(_SC_PAGESIZE);
+	char *base;
+	char *remaining;
+	pid_t child;
+	int status;
+	uint64_t value;
+
+	base = mmap(NULL, ps * 2,
+		    PROT_READ | PROT_WRITE,
+		    MAP_PRIVATE | MAP_ANONYMOUS,
+		    -1, 0);
+	if (base == MAP_FAILED) {
+		SWMMU_TEST_FAIL("mmap failed: %s\n",
+				      strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	remaining = base + ps;
+
+	if (munmap(base, ps) != 0) {
+		SWMMU_TEST_FAIL("head munmap failed: %s\n",
+				      strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	nommu_swmmu_store_u64(remaining, sizeof(value), 41);
+
+	child = fork();
+	if (child < 0) {
+		SWMMU_TEST_FAIL("fork failed: %s\n",
+				      strerror(errno));
+		munmap(remaining, ps);
+		return KSFT_FAIL;
+	}
+
+	if (child == 0) {
+		nommu_swmmu_store_u64(remaining, sizeof(value), 42);
+		_exit(0);
+	}
+
+	if (waitpid(child, &status, 0) != child ||
+	    !WIFEXITED(status) ||
+	    WEXITSTATUS(status) != 0) {
+		SWMMU_TEST_FAIL("child exited abnormally\n");
+		munmap(remaining, ps);
+		return KSFT_FAIL;
+	}
+
+	value = nommu_swmmu_load_u64(remaining, sizeof(value));
+	if (value != 41) {
+		SWMMU_TEST_FAIL(
+			"parent backing changed after child write: %llu\n",
+			(unsigned long long)value);
+		munmap(remaining, ps);
+		return KSFT_FAIL;
+	}
+
+	if (munmap(remaining, ps) != 0) {
+		SWMMU_TEST_FAIL("final munmap failed: %s\n",
+				      strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	SWMMU_TEST_PASS(
+		"fork isolates a nonzero-offset SWMMU VMA view\n");
+	return KSFT_PASS;
+}
+
 int main(void)
 {
 	int result = KSFT_PASS;
@@ -2374,7 +2444,7 @@ int main(void)
 	}
 
 	ksft_print_header();
-	ksft_set_plan(32);
+	ksft_set_plan(33);
 
 	if (test_default_mode_off() == KSFT_FAIL)
 		result = KSFT_FAIL;
@@ -2464,6 +2534,9 @@ int main(void)
 		result = KSFT_FAIL;
 
 	if (test_standard_mmap_rejects_nonexact_old_range() == KSFT_FAIL)
+		result = KSFT_FAIL;
+
+	if (test_fork_mapping_isolation_after_head_trim() == KSFT_FAIL)
 		result = KSFT_FAIL;
 
 
