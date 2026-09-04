@@ -32,6 +32,18 @@
 #define SWMMU_EXIT_CHURN_ITERS		32
 #define SWMMU_EXIT_CHURN_MAPPINGS	16
 
+#define SWMMU_TEST_FAIL(fmt, ...)				\
+	do {							\
+		ksft_test_result_fail("%s: " fmt, __func__,	\
+				##__VA_ARGS__);		\
+	} while (0)
+
+#define SWMMU_TEST_PASS(fmt, ...)				\
+	do {							\
+		ksft_test_result_pass("%s: " fmt, __func__,	\
+				##__VA_ARGS__);		\
+	} while (0)
+
 /*
  * Force the runtime declarations to remain visible to the GCC plugin's
  * symbol lookup.
@@ -76,7 +88,7 @@ test_scalar_access(void)
 	value = test_swmmu_increment(object);
 
 	if (value != 42) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"increment returned %llu, expected 42\n",
 			(unsigned long long)value);
 		nommu_swmmu_free(object);
@@ -87,7 +99,7 @@ test_scalar_access(void)
 				     sizeof(object->value));
 
 	if (value != 42) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"load returned %llu, expected 42\n",
 			(unsigned long long)value);
 		nommu_swmmu_free(object);
@@ -96,7 +108,7 @@ test_scalar_access(void)
 
 	nommu_swmmu_free(object);
 
-	ksft_test_result_pass(
+	SWMMU_TEST_PASS(
 		"compiler-generated SWMMU scalar access works\n");
 
 	return KSFT_PASS;
@@ -128,7 +140,7 @@ test_eager_copy_fork(void)
 
 	child_pid = fork();
 	if (child_pid < 0) {
-		ksft_test_result_fail("fork failed: %s\n",
+		SWMMU_TEST_FAIL("fork failed: %s\n",
 				      strerror(errno));
 		nommu_swmmu_free(object);
 		return KSFT_FAIL;
@@ -148,14 +160,14 @@ test_eager_copy_fork(void)
 	waited_pid = waitpid(child_pid, &status, 0);
 
 	if (waited_pid < 0) {
-		ksft_test_result_fail("waitpid failed: %s\n",
+		SWMMU_TEST_FAIL("waitpid failed: %s\n",
 				strerror(errno));
 		nommu_swmmu_free(object);
 		return KSFT_FAIL;
 	}
 
 	if (waited_pid != child_pid) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"waitpid returned %d, expected child pid %d\n",
 			waited_pid, child_pid);
 		nommu_swmmu_free(object);
@@ -163,7 +175,7 @@ test_eager_copy_fork(void)
 	}
 
 	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"child exited abnormally: status=%#x\n",
 			status);
 		nommu_swmmu_free(object);
@@ -174,7 +186,7 @@ test_eager_copy_fork(void)
 					    sizeof(object->value));
 
 	if (parent_value != 41) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"parent value changed to %llu\n",
 			(unsigned long long)parent_value);
 		nommu_swmmu_free(object);
@@ -183,7 +195,7 @@ test_eager_copy_fork(void)
 
 	nommu_swmmu_free(object);
 
-	ksft_test_result_pass(
+	SWMMU_TEST_PASS(
 		"fork child exited and parent backing remained unchanged\n");
 
 	return KSFT_PASS;
@@ -213,7 +225,7 @@ static int test_repeated_fork(void)
 		/* fork */
 		child_pid = fork();
 		if (child_pid < 0) {
-			ksft_test_result_fail("fork failed: %s\n",
+			SWMMU_TEST_FAIL("fork failed: %s\n",
 					strerror(errno));
 			nommu_swmmu_free(object);
 			return KSFT_FAIL;
@@ -234,14 +246,14 @@ static int test_repeated_fork(void)
 		waited_pid = waitpid(child_pid, &status, 0);
 
 		if (waited_pid < 0) {
-			ksft_test_result_fail("waitpid failed: %s\n",
+			SWMMU_TEST_FAIL("waitpid failed: %s\n",
 					strerror(errno));
 			nommu_swmmu_free(object);
 			return KSFT_FAIL;
 		}
 
 		if (waited_pid != child_pid) {
-			ksft_test_result_fail(
+			SWMMU_TEST_FAIL(
 				"waitpid returned %d, expected child pid %d\n",
 				waited_pid, child_pid);
 			nommu_swmmu_free(object);
@@ -249,7 +261,7 @@ static int test_repeated_fork(void)
 		}
 
 		if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-			ksft_test_result_fail(
+			SWMMU_TEST_FAIL(
 				"child exited abnormally: status=%#x\n",
 				status);
 			nommu_swmmu_free(object);
@@ -260,7 +272,7 @@ static int test_repeated_fork(void)
 		parent_value = nommu_swmmu_load_u64(&object->value,
 						sizeof(object->value));
 		if (parent_value != 41) {
-			ksft_test_result_fail(
+			SWMMU_TEST_FAIL(
 				"parent value changed to %llu\n",
 				(unsigned long long)parent_value);
 			nommu_swmmu_free(object);
@@ -271,7 +283,7 @@ static int test_repeated_fork(void)
 		nommu_swmmu_free(object);
 	}
 
-	ksft_test_result_pass(
+	SWMMU_TEST_PASS(
 		"repeated fork works\n");
 	return KSFT_PASS;
 }
@@ -299,7 +311,7 @@ static int test_remap(void)
 				     ps,
 				     ps * 2);
 	if (new_base == MAP_FAILED) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"SWMMU growth failed: %s\n",
 			strerror(errno));
 		nommu_swmmu_free(base);
@@ -307,7 +319,7 @@ static int test_remap(void)
 	}
 
 	if (new_base != base) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"SWMMU remap moved address from %p to %p\n",
 			base, new_base);
 		nommu_swmmu_free(new_base);
@@ -316,7 +328,7 @@ static int test_remap(void)
 
 	value = nommu_swmmu_load_u64(base, sizeof(uint64_t));
 	if (value != 771) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"remap did not preserve value: %llu\n",
 			(unsigned long long)value);
 		nommu_swmmu_free(base);
@@ -328,7 +340,7 @@ static int test_remap(void)
 	value = nommu_swmmu_load_u64((void *)second_page,
 				     sizeof(uint64_t));
 	if (value != 0) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"grown page was not zero-filled: %llu\n",
 			(unsigned long long)value);
 		nommu_swmmu_free(base);
@@ -339,7 +351,7 @@ static int test_remap(void)
 				     ps * 2,
 				     ps);
 	if (new_base == MAP_FAILED) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"SWMMU shrink failed: %s\n",
 			strerror(errno));
 		nommu_swmmu_free(base);
@@ -347,7 +359,7 @@ static int test_remap(void)
 	}
 
 	if (new_base != base) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"SWMMU shrink changed address\n");
 		nommu_swmmu_free(new_base);
 		return KSFT_FAIL;
@@ -355,7 +367,7 @@ static int test_remap(void)
 
 	nommu_swmmu_free(base);
 
-	ksft_test_result_pass(
+	SWMMU_TEST_PASS(
 		"SWMMU remap growth and shrink work\n");
 
 	return KSFT_PASS;
@@ -377,7 +389,7 @@ static int test_standard_mmap(void)
 		    MAP_PRIVATE | MAP_ANONYMOUS,
 		    -1, 0);
 	if (base == MAP_FAILED) {
-		ksft_test_result_fail("SWMMU mmap failed: %s\n",
+		SWMMU_TEST_FAIL("SWMMU mmap failed: %s\n",
 				      strerror(errno));
 		return KSFT_FAIL;
 	}
@@ -391,7 +403,7 @@ static int test_standard_mmap(void)
 
 	grown = mremap(base, ps, ps * 2, 0);
 	if (grown == MAP_FAILED) {
-		ksft_test_result_fail("SWMMU mremap failed: %s\n",
+		SWMMU_TEST_FAIL("SWMMU mremap failed: %s\n",
 				      strerror(errno));
 		ret = KSFT_FAIL;
 		goto end;
@@ -400,14 +412,14 @@ static int test_standard_mmap(void)
 
 	value = nommu_swmmu_load_u64(grown, sizeof(uint64_t));
 	if (value != 100) {
-		ksft_test_result_fail("mmap value was not preserved\n");
+		SWMMU_TEST_FAIL("mmap value was not preserved\n");
 		ret = KSFT_FAIL;
 		goto end;
 	}
 
 	grown = mremap(grown, mapped_len, ps * 3, 0);
 	if (grown == MAP_FAILED) {
-		ksft_test_result_fail("SWMMU mremap (2nd) failed: %s\n",
+		SWMMU_TEST_FAIL("SWMMU mremap (2nd) failed: %s\n",
 				      strerror(errno));
 		ret = KSFT_FAIL;
 		goto end;
@@ -416,7 +428,7 @@ static int test_standard_mmap(void)
 
 	/* partial munmap (head remove) → pass */
 	if (munmap(grown, ps) != 0) {
-		ksft_test_result_fail("SWMMU munmap failed (partial munmap)\n");
+		SWMMU_TEST_FAIL("SWMMU munmap failed (partial munmap)\n");
 		ret = KSFT_FAIL;
 		goto end;
 	}
@@ -425,28 +437,28 @@ static int test_standard_mmap(void)
 
 	/* mremap with incorrect old length → failure */
 	if (mremap(base, ps, ps * 2, 0) != MAP_FAILED) {
-		ksft_test_result_fail("SWMMU mremap unexpectedly passed (incorrect old len)\n");
+		SWMMU_TEST_FAIL("SWMMU mremap unexpectedly passed (incorrect old len)\n");
 		ret = KSFT_FAIL;
 		goto end;
 	}
 
 	/* mremap with MREMAP_MAYMOVE → failure initially */
 	if (mremap(base, ps * 2, ps, MREMAP_MAYMOVE) != MAP_FAILED) {
-		ksft_test_result_fail("SWMMU mremap unexpectedly passed (MREMAP_MAYMOVE)\n");
+		SWMMU_TEST_FAIL("SWMMU mremap unexpectedly passed (MREMAP_MAYMOVE)\n");
 		ret = KSFT_FAIL;
 		goto end;
 	}
 
 
 	if (munmap(grown, mapped_len) != 0) {
-		ksft_test_result_fail("SWMMU munmap (final) failed: %s\n",
+		SWMMU_TEST_FAIL("SWMMU munmap (final) failed: %s\n",
 				      strerror(errno));
 		ret = KSFT_FAIL;
 		goto end;
 	}
 
 	grown = MAP_FAILED;
-	ksft_test_result_pass("standard mmap/mremap/munmap use SWMMU\n");
+	SWMMU_TEST_PASS("standard mmap/mremap/munmap use SWMMU\n");
 end:
 	/* ignore failure as it might be already failed */
 	if (grown != MAP_FAILED && mapped_len)
@@ -473,14 +485,14 @@ static int test_standard_mmap_shrink(void)
 
 	shrunk = mremap(base, ps * 2, ps, 0);
 	if (shrunk == MAP_FAILED) {
-		ksft_test_result_fail("SWMMU shrink failed: %s\n",
+		SWMMU_TEST_FAIL("SWMMU shrink failed: %s\n",
 				      strerror(errno));
 		ret = KSFT_FAIL;
 		goto out;
 	}
 
 	if (shrunk != base) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"shrink unexpectedly moved mapping: %p\n",
 			shrunk);
 		ret = KSFT_FAIL;
@@ -489,13 +501,13 @@ static int test_standard_mmap_shrink(void)
 
 	value = nommu_swmmu_load_u64(shrunk, sizeof(value));
 	if (value != 100) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"value was not preserved after shrink\n");
 		ret = KSFT_FAIL;
 		goto out;
 	}
 
-	ksft_test_result_pass("SWMMU mremap shrink works\n");
+	SWMMU_TEST_PASS("SWMMU mremap shrink works\n");
 
 out:
 	munmap(shrunk == MAP_FAILED ? base : shrunk, ps);
@@ -518,7 +530,7 @@ static int test_standard_mmap_fork(void)
 		    MAP_PRIVATE | MAP_ANONYMOUS,
 		    -1, 0);
 	if (base == MAP_FAILED) {
-		ksft_test_result_fail("SWMMU mmap failed: %s\n",
+		SWMMU_TEST_FAIL("SWMMU mmap failed: %s\n",
 				      strerror(errno));
 		return KSFT_FAIL;
 	}
@@ -527,7 +539,7 @@ static int test_standard_mmap_fork(void)
 
 	child_pid = fork();
 	if (child_pid < 0) {
-		ksft_test_result_fail("fork failed: %s\n",
+		SWMMU_TEST_FAIL("fork failed: %s\n",
 				      strerror(errno));
 		munmap(base, ps);
 		return KSFT_FAIL;
@@ -542,7 +554,7 @@ static int test_standard_mmap_fork(void)
 	if (waited_pid != child_pid ||
 	    !WIFEXITED(status) ||
 	    WEXITSTATUS(status) != 0) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"%s (child) failed: waited=%d child=%d status=%#x\n",
 			__func__, waited_pid, child_pid, status);
 		munmap(base, ps);
@@ -551,7 +563,7 @@ static int test_standard_mmap_fork(void)
 
 	value = nommu_swmmu_load_u64(base, sizeof(uint64_t));
 	if (value != 41) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"parent mapping changed after fork: %llu\n",
 			(unsigned long long)value);
 		munmap(base, ps);
@@ -559,12 +571,12 @@ static int test_standard_mmap_fork(void)
 	}
 
 	if (munmap(base, ps) != 0) {
-		ksft_test_result_fail("standard mmap munmap failed: %s\n",
+		SWMMU_TEST_FAIL("standard mmap munmap failed: %s\n",
 				      strerror(errno));
 		return KSFT_FAIL;
 	}
 
-	ksft_test_result_pass(
+	SWMMU_TEST_PASS(
 		"standard mmap mapping is eagerly copied across fork\n");
 
 	return KSFT_PASS;
@@ -587,7 +599,7 @@ static int test_standard_mmap_fork_child_remap(void)
 		    MAP_PRIVATE | MAP_ANONYMOUS,
 		    -1, 0);
 	if (base == MAP_FAILED) {
-		ksft_test_result_fail("SWMMU mmap failed: %s\n",
+		SWMMU_TEST_FAIL("SWMMU mmap failed: %s\n",
 				      strerror(errno));
 		return KSFT_FAIL;
 	}
@@ -596,7 +608,7 @@ static int test_standard_mmap_fork_child_remap(void)
 
 	child_pid = fork();
 	if (child_pid < 0) {
-		ksft_test_result_fail("fork failed: %s\n",
+		SWMMU_TEST_FAIL("fork failed: %s\n",
 				      strerror(errno));
 		munmap(base, ps);
 		return KSFT_FAIL;
@@ -627,7 +639,7 @@ static int test_standard_mmap_fork_child_remap(void)
 	if (waited_pid != child_pid ||
 	    !WIFEXITED(status) ||
 	    WEXITSTATUS(status) != 0) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"%s (child) failed: waited=%d child=%d status=%#x\n",
 			__func__, waited_pid, child_pid, status);
 		munmap(base, ps);
@@ -636,7 +648,7 @@ static int test_standard_mmap_fork_child_remap(void)
 
 	value = nommu_swmmu_load_u64(base, sizeof(uint64_t));
 	if (value != 41) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"parent mapping changed after fork: %llu\n",
 			(unsigned long long)value);
 		munmap(base, ps);
@@ -644,12 +656,12 @@ static int test_standard_mmap_fork_child_remap(void)
 	}
 
 	if (munmap(base, ps) != 0) {
-		ksft_test_result_fail("standard mmap munmap failed: %s\n",
+		SWMMU_TEST_FAIL("standard mmap munmap failed: %s\n",
 				      strerror(errno));
 		return KSFT_FAIL;
 	}
 
-	ksft_test_result_pass("standard mmap mapping with child remap works\n");
+	SWMMU_TEST_PASS("standard mmap mapping with child remap works\n");
 
 	return KSFT_PASS;
 }
@@ -670,7 +682,7 @@ static int test_standard_mmap_fork_unmap(void)
 		    MAP_PRIVATE | MAP_ANONYMOUS,
 		    -1, 0);
 	if (base == MAP_FAILED) {
-		ksft_test_result_fail("SWMMU mmap failed: %s\n",
+		SWMMU_TEST_FAIL("SWMMU mmap failed: %s\n",
 				      strerror(errno));
 		return KSFT_FAIL;
 	}
@@ -679,7 +691,7 @@ static int test_standard_mmap_fork_unmap(void)
 
 	child_pid = fork();
 	if (child_pid < 0) {
-		ksft_test_result_fail("fork failed: %s\n",
+		SWMMU_TEST_FAIL("fork failed: %s\n",
 				      strerror(errno));
 		munmap(base, ps * 16);
 		return KSFT_FAIL;
@@ -701,7 +713,7 @@ static int test_standard_mmap_fork_unmap(void)
 	if (waited_pid != child_pid ||
 	    !WIFEXITED(status) ||
 	    WEXITSTATUS(status) != 0) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"%s (child) failed: waited=%d child=%d status=%#x\n",
 			__func__, waited_pid, child_pid, status);
 		munmap(base, ps);
@@ -710,7 +722,7 @@ static int test_standard_mmap_fork_unmap(void)
 
 	value = nommu_swmmu_load_u64(base, sizeof(uint64_t));
 	if (value != 41) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"parent mapping changed after fork: %llu\n",
 			(unsigned long long)value);
 		munmap(base, ps);
@@ -718,12 +730,12 @@ static int test_standard_mmap_fork_unmap(void)
 	}
 
 	if (munmap(base, ps * 16) != 0) {
-		ksft_test_result_fail("standard mmap munmap failed: %s\n",
+		SWMMU_TEST_FAIL("standard mmap munmap failed: %s\n",
 				      strerror(errno));
 		return KSFT_FAIL;
 	}
 
-	ksft_test_result_pass("standard mmap with child unmap works\n");
+	SWMMU_TEST_PASS("standard mmap with child unmap works\n");
 
 	return KSFT_PASS;
 }
@@ -744,7 +756,7 @@ static int test_standard_mmap_exit_cleanup(void)
 		    MAP_PRIVATE | MAP_ANONYMOUS,
 		    -1, 0);
 	if (base == MAP_FAILED) {
-		ksft_test_result_fail("SWMMU mmap failed: %s\n",
+		SWMMU_TEST_FAIL("SWMMU mmap failed: %s\n",
 				      strerror(errno));
 		return KSFT_FAIL;
 	}
@@ -753,7 +765,7 @@ static int test_standard_mmap_exit_cleanup(void)
 
 	child_pid = fork();
 	if (child_pid < 0) {
-		ksft_test_result_fail("fork failed: %s\n",
+		SWMMU_TEST_FAIL("fork failed: %s\n",
 				      strerror(errno));
 		munmap(base, ps);
 		return KSFT_FAIL;
@@ -800,7 +812,7 @@ static int test_standard_mmap_exit_cleanup(void)
 	if (waited_pid != child_pid ||
 	    !WIFEXITED(status) ||
 	    WEXITSTATUS(status) != 0) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"%s (child) failed: waited=%d child=%d status=%#x\n",
 			__func__, waited_pid, child_pid, status);
 		munmap(base, ps);
@@ -809,7 +821,7 @@ static int test_standard_mmap_exit_cleanup(void)
 
 	value = nommu_swmmu_load_u64(base, sizeof(uint64_t));
 	if (value != 41) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"parent mapping changed after fork: %llu\n",
 			(unsigned long long)value);
 		munmap(base, ps);
@@ -817,12 +829,12 @@ static int test_standard_mmap_exit_cleanup(void)
 	}
 
 	if (munmap(base, ps) != 0) {
-		ksft_test_result_fail("standard mmap munmap failed: %s\n",
+		SWMMU_TEST_FAIL("standard mmap munmap failed: %s\n",
 				      strerror(errno));
 		return KSFT_FAIL;
 	}
 
-	ksft_test_result_pass("standard mmap without child unmap works\n");
+	SWMMU_TEST_PASS("standard mmap without child unmap works\n");
 
 	return KSFT_PASS;
 }
@@ -844,7 +856,7 @@ static int test_repeated_standard_mmap_fork(void)
 			MAP_PRIVATE | MAP_ANONYMOUS,
 			-1, 0);
 		if (base == MAP_FAILED) {
-			ksft_test_result_fail("SWMMU mmap failed: %s\n",
+			SWMMU_TEST_FAIL("SWMMU mmap failed: %s\n",
 					strerror(errno));
 			return KSFT_FAIL;
 		}
@@ -853,7 +865,7 @@ static int test_repeated_standard_mmap_fork(void)
 
 		child_pid = fork();
 		if (child_pid < 0) {
-			ksft_test_result_fail("fork failed: %s\n",
+			SWMMU_TEST_FAIL("fork failed: %s\n",
 					strerror(errno));
 			munmap(base, ps);
 			return KSFT_FAIL;
@@ -868,7 +880,7 @@ static int test_repeated_standard_mmap_fork(void)
 		if (waited_pid != child_pid ||
 			!WIFEXITED(status) ||
 			WEXITSTATUS(status) != 0) {
-			ksft_test_result_fail(
+			SWMMU_TEST_FAIL(
 				"%s (child) failed: waited=%d child=%d status=%#x\n",
 				__func__, waited_pid, child_pid, status);
 			munmap(base, ps);
@@ -877,7 +889,7 @@ static int test_repeated_standard_mmap_fork(void)
 
 		value = nommu_swmmu_load_u64(base, sizeof(uint64_t));
 		if (value != 41) {
-			ksft_test_result_fail(
+			SWMMU_TEST_FAIL(
 				"parent mapping changed after fork: %llu\n",
 				(unsigned long long)value);
 			munmap(base, ps);
@@ -885,13 +897,13 @@ static int test_repeated_standard_mmap_fork(void)
 		}
 
 		if (munmap(base, ps) != 0) {
-			ksft_test_result_fail("standard mmap munmap failed: %s\n",
+			SWMMU_TEST_FAIL("standard mmap munmap failed: %s\n",
 					strerror(errno));
 			return KSFT_FAIL;
 		}
 	}
 
-	ksft_test_result_pass("repeated mmap fork works\n");
+	SWMMU_TEST_PASS("repeated mmap fork works\n");
 	return KSFT_PASS;
 }
 
@@ -915,7 +927,7 @@ static int test_multiple_standard_mmap_children(void)
 		      MAP_PRIVATE | MAP_ANONYMOUS,
 		      -1, 0);
 	if (object == MAP_FAILED) {
-		ksft_test_result_fail("SWMMU mmap failed: %s\n",
+		SWMMU_TEST_FAIL("SWMMU mmap failed: %s\n",
 				      strerror(errno));
 		return KSFT_FAIL;
 	}
@@ -927,7 +939,7 @@ static int test_multiple_standard_mmap_children(void)
 	for (i = 0; i < SWMMU_LIVE_CHILDREN; i++) {
 		child_pid = fork();
 		if (child_pid < 0) {
-			ksft_test_result_fail(
+			SWMMU_TEST_FAIL(
 				"fork %d failed: %s\n",
 				i, strerror(errno));
 			failed = 1;
@@ -947,7 +959,7 @@ static int test_multiple_standard_mmap_children(void)
 		if (waited_pid != children[i] ||
 		    !WIFEXITED(status) ||
 		    WEXITSTATUS(status) != 0) {
-			ksft_test_result_fail(
+			SWMMU_TEST_FAIL(
 				"child %d failed: waited=%d status=%#x\n",
 				(int)children[i],
 				(int)waited_pid,
@@ -959,14 +971,14 @@ static int test_multiple_standard_mmap_children(void)
 	value = nommu_swmmu_load_u64(&object->value,
 				     sizeof(object->value));
 	if (value != 41) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"parent value changed to %llu\n",
 			(unsigned long long)value);
 		failed = 1;
 	}
 
 	if (munmap(object, ps) != 0) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"parent munmap failed: %s\n",
 			strerror(errno));
 		failed = 1;
@@ -975,7 +987,7 @@ static int test_multiple_standard_mmap_children(void)
 	if (failed)
 		return KSFT_FAIL;
 
-	ksft_test_result_pass(
+	SWMMU_TEST_PASS(
 		"multiple live children retain independent SWMMU spaces\n");
 
 	return KSFT_PASS;
@@ -999,7 +1011,7 @@ static int test_standard_mmap_fork_child_isolation(void)
 		     MAP_PRIVATE | MAP_ANONYMOUS,
 		     -1, 0);
 	if (first == MAP_FAILED) {
-		ksft_test_result_fail("first mmap failed: %s\n",
+		SWMMU_TEST_FAIL("first mmap failed: %s\n",
 				      strerror(errno));
 		return KSFT_FAIL;
 	}
@@ -1009,7 +1021,7 @@ static int test_standard_mmap_fork_child_isolation(void)
 		      MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,
 		      -1, 0);
 	if (second == MAP_FAILED || second != second_hint) {
-		ksft_test_result_fail("second fixed mmap failed: %s\n",
+		SWMMU_TEST_FAIL("second fixed mmap failed: %s\n",
 				      strerror(errno));
 		munmap(first, ps);
 		return KSFT_FAIL;
@@ -1022,7 +1034,7 @@ static int test_standard_mmap_fork_child_isolation(void)
 
 	child_pid = fork();
 	if (child_pid < 0) {
-		ksft_test_result_fail("fork failed: %s\n",
+		SWMMU_TEST_FAIL("fork failed: %s\n",
 				      strerror(errno));
 		munmap(second, ps * 2);
 		munmap(first, ps);
@@ -1058,7 +1070,7 @@ static int test_standard_mmap_fork_child_isolation(void)
 	if (waited_pid != child_pid ||
 	    !WIFEXITED(status) ||
 	    WEXITSTATUS(status) != 0) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"child failed: waited=%d status=%#x\n",
 			(int)waited_pid,
 			status);
@@ -1070,7 +1082,7 @@ static int test_standard_mmap_fork_child_isolation(void)
 	value = nommu_swmmu_load_u64(&first->value,
 				     sizeof(first->value));
 	if (value != 41) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"parent first mapping changed to %llu\n",
 			(unsigned long long)value);
 		munmap(second, ps * 2);
@@ -1081,7 +1093,7 @@ static int test_standard_mmap_fork_child_isolation(void)
 	value = nommu_swmmu_load_u64(&second->value,
 				     sizeof(second->value));
 	if (value != 81) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"parent second mapping changed to %llu\n",
 			(unsigned long long)value);
 		munmap(second, ps * 2);
@@ -1090,7 +1102,7 @@ static int test_standard_mmap_fork_child_isolation(void)
 	}
 
 	if (munmap(second, ps * 2) != 0) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"parent second munmap failed: %s\n",
 			strerror(errno));
 		munmap(first, ps);
@@ -1098,13 +1110,13 @@ static int test_standard_mmap_fork_child_isolation(void)
 	}
 
 	if (munmap(first, ps) != 0) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"parent first munmap failed: %s\n",
 			strerror(errno));
 		return KSFT_FAIL;
 	}
 
-	ksft_test_result_pass(
+	SWMMU_TEST_PASS(
 		"child remap/unmap does not affect parent mappings\n");
 
 	return KSFT_PASS;
@@ -1188,7 +1200,7 @@ static int test_standard_mmap_exit_cleanup_churn(void)
 		if (waited_pid != child_pid ||
 		    !WIFEXITED(status) ||
 		    WEXITSTATUS(status) != 0) {
-			ksft_test_result_fail(
+			SWMMU_TEST_FAIL(
 				"exit-cleanup child %d failed: "
 				"waited=%d status=%#x\n",
 				i, (int)waited_pid, status);
@@ -1197,13 +1209,13 @@ static int test_standard_mmap_exit_cleanup_churn(void)
 	}
 
 	if (failed) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"repeated fork/exit cycle failed at iteration %d\n",
 			failure_iteration);
 		return KSFT_FAIL;
 	}
 
-	ksft_test_result_pass(
+	SWMMU_TEST_PASS(
 		"repeated SWMMU exit cleanup succeeds\n");
 
 	return KSFT_PASS;
@@ -1223,14 +1235,14 @@ static int test_standard_mmap_permission(void)
 	base = mmap(NULL, ps, PROT_READ,
 		    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (base == MAP_FAILED) {
-		ksft_test_result_fail("mmap failed: %s\n",
+		SWMMU_TEST_FAIL("mmap failed: %s\n",
 				      strerror(errno));
 		return KSFT_FAIL;
 	}
 	/* this should not cause BUG() in kernel */
 	nommu_swmmu_load_u64(base, sizeof(uint64_t));
 	if (munmap(base, ps) != 0) {
-		ksft_test_result_fail("munmap 0 failed: %s\n",
+		SWMMU_TEST_FAIL("munmap 0 failed: %s\n",
 			strerror(errno));
 		return KSFT_FAIL;
 	}
@@ -1239,7 +1251,7 @@ static int test_standard_mmap_permission(void)
 	base = mmap(NULL, ps, PROT_READ | PROT_WRITE,
 		    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (base == MAP_FAILED) {
-		ksft_test_result_fail("mmap failed: %s\n",
+		SWMMU_TEST_FAIL("mmap failed: %s\n",
 				      strerror(errno));
 		return KSFT_FAIL;
 	}
@@ -1247,7 +1259,7 @@ static int test_standard_mmap_permission(void)
 	nommu_swmmu_load_u64(base, sizeof(uint64_t));
 	nommu_swmmu_store_u64(base, sizeof(uint64_t), 1919);
 	if (munmap(base, ps) != 0) {
-		ksft_test_result_fail("munmap 1 failed: %s\n",
+		SWMMU_TEST_FAIL("munmap 1 failed: %s\n",
 			strerror(errno));
 		return KSFT_FAIL;
 	}
@@ -1256,13 +1268,13 @@ static int test_standard_mmap_permission(void)
 	base = mmap(NULL, ps, PROT_NONE,
 		    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (base == MAP_FAILED) {
-		ksft_test_result_fail("mmap failed: %s\n",
+		SWMMU_TEST_FAIL("mmap failed: %s\n",
 				      strerror(errno));
 		return KSFT_FAIL;
 	}
 	/* any ops should cause BUG() in kernel, so do nothing */
 	if (munmap(base, ps) != 0) {
-		ksft_test_result_fail("munmap 2 failed: %s\n",
+		SWMMU_TEST_FAIL("munmap 2 failed: %s\n",
 			strerror(errno));
 		return KSFT_FAIL;
 	}
@@ -1271,7 +1283,7 @@ static int test_standard_mmap_permission(void)
 	base = mmap((void *)0x2000000000ULL, ps, PROT_READ | PROT_WRITE,
 		    MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
 	if (base == MAP_FAILED) {
-		ksft_test_result_fail("mmap failed: %s\n",
+		SWMMU_TEST_FAIL("mmap failed: %s\n",
 				      strerror(errno));
 		return KSFT_FAIL;
 	}
@@ -1280,7 +1292,7 @@ static int test_standard_mmap_permission(void)
 	ret = mmap((void *)0x2000000000ULL, ps, PROT_READ | PROT_WRITE,
 		    MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
 	if (ret != MAP_FAILED || errno != EEXIST) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"MAP_FIXED_NOREPLACE returned unexpected result: "
 			"ret=%p errno=%d\n",
 			ret, errno);
@@ -1291,7 +1303,7 @@ static int test_standard_mmap_permission(void)
 	}
 
 	if (munmap(base, ps) != 0) {
-		ksft_test_result_fail("munmap 3 failed: %s\n",
+		SWMMU_TEST_FAIL("munmap 3 failed: %s\n",
 			strerror(errno));
 		return KSFT_FAIL;
 	}
@@ -1301,7 +1313,7 @@ out:
 	if (base != MAP_FAILED)
 		munmap(base, mapped_len);
 
-	ksft_test_result_pass(
+	SWMMU_TEST_PASS(
 		"standard mmap permission and fixed-address checks work\n");
 	return result;
 }
@@ -1317,13 +1329,13 @@ static int test_standard_mmap_nonzero_hint(void)
 	base = mmap((void *)0x3000000000UL, ps, PROT_READ,
 		    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (base == MAP_FAILED) {
-		ksft_test_result_fail("mmap failed: %s\n",
+		SWMMU_TEST_FAIL("mmap failed: %s\n",
 				      strerror(errno));
 		return KSFT_FAIL;
 	}
 
 	if (base != (void *)0x3000000000UL) {
-		ksft_test_result_fail("mmap returns non-hinted address %p: %s\n",
+		SWMMU_TEST_FAIL("mmap returns non-hinted address %p: %s\n",
 				base, strerror(errno));
 		return KSFT_FAIL;
 	}
@@ -1331,7 +1343,7 @@ static int test_standard_mmap_nonzero_hint(void)
 	if (base != MAP_FAILED)
 		munmap(base, ps);
 
-	ksft_test_result_pass(
+	SWMMU_TEST_PASS(
 		"standard mmap with nonzero hint test works\n");
 	return KSFT_PASS;
 }
@@ -1347,7 +1359,7 @@ static int test_standard_mmap_occupied_hint(void)
 	fixed = mmap((void *)0x2000000000UL, ps, PROT_READ,
 		MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
 	if (fixed == MAP_FAILED || fixed != (void *)0x2000000000UL) {
-		ksft_test_result_fail("mmap fixed failed (%p): %s\n",
+		SWMMU_TEST_FAIL("mmap fixed failed (%p): %s\n",
 				fixed, strerror(errno));
 		return KSFT_FAIL;
 	}
@@ -1355,7 +1367,7 @@ static int test_standard_mmap_occupied_hint(void)
 	hint = mmap((void *)0x2000000000UL, ps, PROT_READ,
 		MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (hint == MAP_FAILED || hint == (void *)0x2000000000UL) {
-		ksft_test_result_fail("mmap with hint failed (%p): %s\n",
+		SWMMU_TEST_FAIL("mmap with hint failed (%p): %s\n",
 				hint, strerror(errno));
 		munmap(fixed, ps);
 		return KSFT_FAIL;
@@ -1367,7 +1379,7 @@ static int test_standard_mmap_occupied_hint(void)
 	if (hint != MAP_FAILED)
 		munmap(hint, ps);
 
-	ksft_test_result_pass(
+	SWMMU_TEST_PASS(
 		"standard mmap with occupied hint test works\n");
 	return KSFT_PASS;
 }
@@ -1383,7 +1395,7 @@ static int test_standard_mmap_fixed_noreplace(void)
 	addr1 = mmap((void *)0x2000000000UL, ps, PROT_READ,
 		MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
 	if (addr1 == MAP_FAILED || addr1 != (void *)0x2000000000UL) {
-		ksft_test_result_fail("mmap fixed failed (%p): %s\n",
+		SWMMU_TEST_FAIL("mmap fixed failed (%p): %s\n",
 				addr1, strerror(errno));
 		return KSFT_FAIL;
 	}
@@ -1391,7 +1403,7 @@ static int test_standard_mmap_fixed_noreplace(void)
 	addr2 = mmap((void *)0x2000000000UL, ps, PROT_READ,
 		MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
 	if (addr2 != MAP_FAILED || errno != EEXIST) {
-		ksft_test_result_fail("mmap with FIXED_NOREPLACE failed (%p)): %s\n",
+		SWMMU_TEST_FAIL("mmap with FIXED_NOREPLACE failed (%p)): %s\n",
 				addr2, strerror(errno));
 		munmap(addr1, ps);
 		return KSFT_FAIL;
@@ -1402,7 +1414,7 @@ static int test_standard_mmap_fixed_noreplace(void)
 	if (addr1 != MAP_FAILED)
 		munmap(addr1, ps);
 
-	ksft_test_result_pass(
+	SWMMU_TEST_PASS(
 		"standard mmap with MAP_FIXED_NOREPLACE test works\n");
 	return KSFT_PASS;
 }
@@ -1448,10 +1460,10 @@ out:
 		munmap(addr, ps);
 
 	if (ret == KSFT_PASS)
-		ksft_test_result_pass(
+		SWMMU_TEST_PASS(
 			"standard mmap access control test works\n");
 	else
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"standard mmap access control test failed\n");
 
 	return ret;
@@ -1474,7 +1486,7 @@ static int test_standard_munmap_tail(void)
 	nommu_swmmu_store_u64(base, sizeof(value), 1234);
 
 	if (munmap((char *)base + ps, ps) < 0) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"tail munmap failed: %s\n",
 			strerror(errno));
 		ret = KSFT_FAIL;
@@ -1483,7 +1495,7 @@ static int test_standard_munmap_tail(void)
 
 	value = nommu_swmmu_load_u64(base, sizeof(value));
 	if (value != 1234) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"first page changed after tail munmap\n");
 		ret = KSFT_FAIL;
 		goto out;
@@ -1495,7 +1507,7 @@ static int test_standard_munmap_tail(void)
 	 * exposes the desired error result.
 	 */
 
-	ksft_test_result_pass("SWMMU tail munmap works\n");
+	SWMMU_TEST_PASS("SWMMU tail munmap works\n");
 
 out:
 	munmap(base, ps);
@@ -1520,7 +1532,7 @@ static int test_standard_munmap_middle(void)
 
 	/* interior munmap → pass */
 	if (munmap(base + ps, ps) != 0) {
-		ksft_test_result_fail("SWMMU munmap failed (interior munmap) (%s)\n",
+		SWMMU_TEST_FAIL("SWMMU munmap failed (interior munmap) (%s)\n",
 				strerror(errno));
 		ret = KSFT_FAIL;
 		goto out;
@@ -1528,13 +1540,13 @@ static int test_standard_munmap_middle(void)
 
 	value = nommu_swmmu_load_u64(base, sizeof(value));
 	if (value != 1234) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"first page changed after middle munmap\n");
 		ret = KSFT_FAIL;
 		goto out;
 	}
 
-	ksft_test_result_pass("SWMMU middle munmap works\n");
+	SWMMU_TEST_PASS("SWMMU middle munmap works\n");
 out:
 	munmap(base, ps);
 	munmap(base + ps + ps, ps);
@@ -1554,14 +1566,14 @@ static int test_standard_mmap_expand(void)
 		    MAP_PRIVATE | MAP_ANONYMOUS,
 		    -1, 0);
 	if (base == MAP_FAILED) {
-		ksft_test_result_fail("mmap failed: %s\n",
+		SWMMU_TEST_FAIL("mmap failed: %s\n",
 				      strerror(errno));
 		return KSFT_FAIL;
 	}
 
 	ret = nommu_swmmu_store_u64(base, sizeof(value), 0x1122334455667788ULL);
 	if (ret < 0) {
-		ksft_test_result_fail("initial SWMMU store failed: %s\n",
+		SWMMU_TEST_FAIL("initial SWMMU store failed: %s\n",
 				      strerror(errno));
 		munmap(base, ps);
 		return KSFT_FAIL;
@@ -1569,7 +1581,7 @@ static int test_standard_mmap_expand(void)
 
 	expanded = mremap(base, ps, ps * 2, 0);
 	if (expanded == MAP_FAILED) {
-		ksft_test_result_fail("mremap expansion failed: %s\n",
+		SWMMU_TEST_FAIL("mremap expansion failed: %s\n",
 				      strerror(errno));
 		munmap(base, ps);
 		return KSFT_FAIL;
@@ -1580,7 +1592,7 @@ static int test_standard_mmap_expand(void)
 	 * expand in place.
 	 */
 	if (expanded != base) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"mremap expansion moved mapping: %p -> %p\n",
 			base, expanded);
 		munmap(expanded, ps * 2);
@@ -1589,7 +1601,7 @@ static int test_standard_mmap_expand(void)
 
 	value = nommu_swmmu_load_u64(base, sizeof(value));
 	if (value != 0x1122334455667788ULL) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"old value changed after expansion: %#llx\n",
 			(unsigned long long)value);
 		munmap(base, ps * 2);
@@ -1601,7 +1613,7 @@ static int test_standard_mmap_expand(void)
 	 */
 	value = nommu_swmmu_load_u64((char *)base + ps, sizeof(value));
 	if (value != 0) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"newly expanded page was not zero-filled: %#llx\n",
 			(unsigned long long)value);
 		munmap(base, ps * 2);
@@ -1612,7 +1624,7 @@ static int test_standard_mmap_expand(void)
 				    sizeof(value),
 				    0xaabbccddeeff0011ULL);
 	if (ret < 0) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"store into expanded page failed: %s\n",
 			strerror(errno));
 		munmap(base, ps * 2);
@@ -1621,19 +1633,19 @@ static int test_standard_mmap_expand(void)
 
 	value = nommu_swmmu_load_u64((char *)base + ps, sizeof(value));
 	if (value != 0xaabbccddeeff0011ULL) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"value written to expanded page was not preserved\n");
 		munmap(base, ps * 2);
 		return KSFT_FAIL;
 	}
 
 	if (munmap(base, ps * 2) != 0) {
-		ksft_test_result_fail("munmap after expansion failed: %s\n",
+		SWMMU_TEST_FAIL("munmap after expansion failed: %s\n",
 				      strerror(errno));
 		return KSFT_FAIL;
 	}
 
-	ksft_test_result_pass(
+	SWMMU_TEST_PASS(
 		"mremap expansion preserves old data and zero-fills new pages\n");
 	return KSFT_PASS;
 }
@@ -1650,7 +1662,7 @@ static int test_standard_mmap_expand_tail_munmap(void)
 		    MAP_PRIVATE | MAP_ANONYMOUS,
 		    -1, 0);
 	if (base == MAP_FAILED) {
-		ksft_test_result_fail("mmap failed: %s\n",
+		SWMMU_TEST_FAIL("mmap failed: %s\n",
 				      strerror(errno));
 		return KSFT_FAIL;
 	}
@@ -1659,7 +1671,7 @@ static int test_standard_mmap_expand_tail_munmap(void)
 
 	expanded = mremap(base, ps, ps * 3, 0);
 	if (expanded == MAP_FAILED || expanded != base) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"mremap expansion failed or moved mapping: %s\n",
 			expanded == MAP_FAILED ? strerror(errno) : "moved");
 		if (expanded != MAP_FAILED)
@@ -1674,7 +1686,7 @@ static int test_standard_mmap_expand_tail_munmap(void)
 	 * tail partial munmap after vma_expand().
 	 */
 	if (munmap((char *)base + ps, ps * 2) != 0) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"tail munmap after expansion failed: %s\n",
 			strerror(errno));
 		munmap(base, ps * 3);
@@ -1683,20 +1695,20 @@ static int test_standard_mmap_expand_tail_munmap(void)
 
 	value = nommu_swmmu_load_u64(base, sizeof(value));
 	if (value != 1234) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"value changed after expansion and tail munmap\n");
 		munmap(base, ps);
 		return KSFT_FAIL;
 	}
 
 	if (munmap(base, ps) != 0) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"final munmap after tail removal failed: %s\n",
 			strerror(errno));
 		return KSFT_FAIL;
 	}
 
-	ksft_test_result_pass(
+	SWMMU_TEST_PASS(
 		"tail munmap works after mremap expansion\n");
 	return KSFT_PASS;
 }
@@ -1714,13 +1726,13 @@ static int test_standard_mmap_overlap_expand(void)
 			MAP_PRIVATE | MAP_ANONYMOUS,
 			-1, 0);
 	if (large_base == MAP_FAILED) {
-		ksft_test_result_fail("initial large mmap failed: %s\n",
+		SWMMU_TEST_FAIL("initial large mmap failed: %s\n",
 				strerror(errno));
 		return KSFT_FAIL;
 	}
 
 	if (munmap(large_base, ps) != 0) {
-		ksft_test_result_fail("head munmap failed: %s\n",
+		SWMMU_TEST_FAIL("head munmap failed: %s\n",
 				strerror(errno));
 		munmap((char *)large_base, ps * 16);
 		return KSFT_FAIL;
@@ -1736,14 +1748,14 @@ static int test_standard_mmap_overlap_expand(void)
 		MAP_FIXED_NOREPLACE,
 		-1, 0);
 	if (base == MAP_FAILED) {
-		ksft_test_result_fail("fixed head mmap failed: %s\n",
+		SWMMU_TEST_FAIL("fixed head mmap failed: %s\n",
 				strerror(errno));
 		munmap((char *)large_base + ps, ps * 15);
 		return KSFT_FAIL;
 	}
 
 	if (base != large_base) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"replacement mapping was not placed at the trimmed address\n");
 		munmap((char *)large_base + ps, ps * 15);
 		munmap((char *)base, ps);
@@ -1752,7 +1764,7 @@ static int test_standard_mmap_overlap_expand(void)
 
 	expanded = mremap(base, ps, ps * 3, 0);
 	if (expanded != MAP_FAILED) {
-		ksft_test_result_fail("overlapping expansion unexpectedly succeeded\n");
+		SWMMU_TEST_FAIL("overlapping expansion unexpectedly succeeded\n");
 		munmap((char *)base, ps * 3);
 		return KSFT_FAIL;
 	}
@@ -1766,7 +1778,7 @@ static int test_standard_mmap_overlap_expand(void)
 	value = nommu_swmmu_load_u64((char *)large_base + ps,
 				sizeof(value));
 	if (value != 0xfeedface) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"neighboring VMA changed after rejected expansion\n");
 		goto out_fail;
 	}
@@ -1779,7 +1791,7 @@ static int test_standard_mmap_overlap_expand(void)
 		ksft_print_msg("cleanup: tail munmap failed: %s\n",
 			strerror(errno));
 
-	ksft_test_result_pass(
+	SWMMU_TEST_PASS(
 		"overlapping mremap expansion is rejected\n");
 	return KSFT_PASS;
 
@@ -1801,7 +1813,7 @@ static int test_standard_mmap_expand_rejects_maymove(void)
 		    MAP_PRIVATE | MAP_ANONYMOUS,
 		    -1, 0);
 	if (base == MAP_FAILED) {
-		ksft_test_result_fail("mmap failed: %s\n",
+		SWMMU_TEST_FAIL("mmap failed: %s\n",
 				      strerror(errno));
 		return KSFT_FAIL;
 	}
@@ -1810,7 +1822,7 @@ static int test_standard_mmap_expand_rejects_maymove(void)
 
 	result = mremap(base, ps, ps * 2, MREMAP_MAYMOVE);
 	if (result != MAP_FAILED) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"MREMAP_MAYMOVE unexpectedly succeeded\n");
 		munmap(result, ps * 2);
 		return KSFT_FAIL;
@@ -1818,20 +1830,20 @@ static int test_standard_mmap_expand_rejects_maymove(void)
 
 	value = nommu_swmmu_load_u64(base, sizeof(value));
 	if (value != 5678) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"mapping was modified after rejected expansion\n");
 		munmap(base, ps);
 		return KSFT_FAIL;
 	}
 
 	if (munmap(base, ps) != 0) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"munmap after rejected expansion failed: %s\n",
 			strerror(errno));
 		return KSFT_FAIL;
 	}
 
-	ksft_test_result_pass(
+	SWMMU_TEST_PASS(
 		"rejected expansion leaves the original mapping intact\n");
 	return KSFT_PASS;
 }
@@ -1877,12 +1889,12 @@ static int test_default_mode_off(void)
 	int mode = swmmu_get_mode();
 
 	if (mode < 0) {
-		ksft_test_result_fail("cannot query initial SWMMU mode: %s\n",
+		SWMMU_TEST_FAIL("cannot query initial SWMMU mode: %s\n",
 				      strerror(errno));
 		return KSFT_FAIL;
 	}
 
-	ksft_test_result_pass("default SWMMU mode is off\n");
+	SWMMU_TEST_PASS("default SWMMU mode is off\n");
 	return KSFT_PASS;
 }
 
@@ -1890,12 +1902,12 @@ static int test_enable_swmmu(void)
 {
 
 	if (swmmu_set_mode(PR_SWMMU_ON) < 0) {
-		ksft_test_result_fail("PR_SWMMU_ON failed: %s\n",
+		SWMMU_TEST_FAIL("PR_SWMMU_ON failed: %s\n",
 				      strerror(errno));
 		return KSFT_FAIL;
 	}
 
-	ksft_test_result_pass("%s: pass\n", __func__);
+	SWMMU_TEST_PASS("%s: pass\n", __func__);
 	return KSFT_PASS;
 }
 
@@ -1908,7 +1920,7 @@ static int test_enable_and_mapping(void)
 	p = mmap(NULL, getpagesize(), PROT_READ | PROT_WRITE,
 		MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (p == MAP_FAILED) {
-		ksft_test_result_fail("mmap failed (%p)): %s\n",
+		SWMMU_TEST_FAIL("mmap failed (%p)): %s\n",
 				p, strerror(errno));
 		return KSFT_FAIL;
 	}
@@ -1927,22 +1939,22 @@ static int test_enable_and_mapping(void)
 	errno = 0;
 	ret = swmmu_set_mode(PR_SWMMU_OFF);
 	if (ret != -1 || errno != EBUSY) {
-		ksft_test_result_fail("disabling with a live mapping returns EBUSY\n");
+		SWMMU_TEST_FAIL("disabling with a live mapping returns EBUSY\n");
 		return KSFT_FAIL;
 	}
 
 	if ((munmap(p, getpagesize()), 0)) {
-		ksft_test_result_fail("munmap failed (%p)): %s\n",
+		SWMMU_TEST_FAIL("munmap failed (%p)): %s\n",
 				p, strerror(errno));
 		return KSFT_FAIL;
 	}
 
-	ksft_test_result_pass("%s: pass\n", __func__);
+	SWMMU_TEST_PASS("%s: pass\n", __func__);
 	return KSFT_PASS;
 out:
 	munmap(p, getpagesize());
 
-	ksft_test_result_fail("%s: pass\n", __func__);
+	SWMMU_TEST_FAIL("%s: pass\n", __func__);
 	return KSFT_FAIL;
 
 }
@@ -2045,11 +2057,11 @@ cleanup:
 	swmmu_set_mode(PR_SWMMU_OFF);
 
 	if (failure) {
-		ksft_test_result_fail("%s: %s\n", __func__, failure);
+		SWMMU_TEST_FAIL("%s: %s\n", __func__, failure);
 		return KSFT_FAIL;
 	}
 
-	ksft_test_result_pass("%s\n", __func__);
+	SWMMU_TEST_PASS("%s\n", __func__);
 	return KSFT_PASS;
 }
 
@@ -2095,17 +2107,17 @@ static int test_fork_mode_inheritance(void)
 
 cleanup:
 	/* FIXME: set_mode crashes; fix it later */
-	ksft_test_result_pass("%s\n", __func__);
+	SWMMU_TEST_PASS("%s\n", __func__);
 	return KSFT_PASS;
 
 	swmmu_set_mode(PR_SWMMU_OFF);
 
 	if (failure) {
-		ksft_test_result_fail("%s: %s\n", __func__, failure);
+		SWMMU_TEST_FAIL("%s: %s\n", __func__, failure);
 		return KSFT_FAIL;
 	}
 
-	ksft_test_result_pass("child inherits enabled SWMMU mode\n");
+	SWMMU_TEST_PASS("child inherits enabled SWMMU mode\n");
 	return KSFT_PASS;
 }
 
@@ -2280,16 +2292,16 @@ cleanup:
 		munmap((void *)mapping, ps);
 
 	/* FIXME: set_mode crashes; fix it later */
-	ksft_test_result_pass("%s\n", __func__);
+	SWMMU_TEST_PASS("%s\n", __func__);
 	return KSFT_PASS;
 	swmmu_set_mode(PR_SWMMU_OFF);
 
 	if (failure) {
-		ksft_test_result_fail("%s: %s\n", __func__, failure);
+		SWMMU_TEST_FAIL("%s: %s\n", __func__, failure);
 		return KSFT_FAIL;
 	}
 
-	ksft_test_result_pass("eager-copy fork keeps child mapping isolated\n");
+	SWMMU_TEST_PASS("eager-copy fork keeps child mapping isolated\n");
 	return KSFT_PASS;
 }
 
@@ -2305,7 +2317,7 @@ static int test_standard_mmap_rejects_nonexact_old_range(void)
 		    MAP_PRIVATE | MAP_ANONYMOUS,
 		    -1, 0);
 	if (base == MAP_FAILED) {
-		ksft_test_result_fail("mmap failed: %s\n",
+		SWMMU_TEST_FAIL("mmap failed: %s\n",
 				      strerror(errno));
 		return KSFT_FAIL;
 	}
@@ -2318,14 +2330,14 @@ static int test_standard_mmap_rejects_nonexact_old_range(void)
 	 */
 	result = mremap(base, ps, ps, 0);
 	if (result != MAP_FAILED) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"partial old range unexpectedly succeeded\n");
 		munmap(result, ps * 2);
 		return KSFT_FAIL;
 	}
 
 	if (errno != EINVAL) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"partial old range returned unexpected errno: %s\n",
 			strerror(errno));
 		munmap(base, ps * 2);
@@ -2334,19 +2346,19 @@ static int test_standard_mmap_rejects_nonexact_old_range(void)
 
 	value = nommu_swmmu_load_u64(base, sizeof(value));
 	if (value != 0x12345678) {
-		ksft_test_result_fail(
+		SWMMU_TEST_FAIL(
 			"mapping changed after rejected partial remap\n");
 		munmap(base, ps * 2);
 		return KSFT_FAIL;
 	}
 
 	if (munmap(base, ps * 2) != 0) {
-		ksft_test_result_fail("munmap failed: %s\n",
+		SWMMU_TEST_FAIL("munmap failed: %s\n",
 				      strerror(errno));
 		return KSFT_FAIL;
 	}
 
-	ksft_test_result_pass(
+	SWMMU_TEST_PASS(
 		"non-exact old mremap ranges are rejected safely\n");
 	return KSFT_PASS;
 }
