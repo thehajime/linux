@@ -1390,6 +1390,7 @@ __do_mmap_swmmu(struct mm_struct *mm,
 	struct nommu_swmmu_backing *backing;
 	struct nommu_swmmu_vma *swmmu_vma;
 	struct vm_area_struct *vma;
+	struct vm_area_struct *replace_vma = NULL;
 	VMA_ITERATOR(vmi, mm, 0);
 	unsigned long start;
 	unsigned long end;
@@ -1439,8 +1440,16 @@ __do_mmap_swmmu(struct mm_struct *mm,
 			if (flags & MAP_FIXED_NOREPLACE)
 				return -EEXIST;
 
-			/* MAP_FIXED replacement is not implemented yet. */
-			return -EEXIST;
+			/*
+			 * First version supports replacing one complete
+			 * SWMMU VMA only.
+			 */
+			if (vma->vm_start != addr ||
+				vma->vm_end != end ||
+				!vma->vm_swmmu_data)
+				return -EOPNOTSUPP;
+
+			replace_vma = vma;
 		}
 
 		start = addr;
@@ -1496,18 +1505,39 @@ __do_mmap_swmmu(struct mm_struct *mm,
 
 	vma_iter_config(&vmi, start, end);
 	ret = vma_iter_prealloc(&vmi, vma);
-	if (ret) {
-		vma->vm_swmmu_data = NULL;
-		swmmu_vma_data_free(space, swmmu_vma);
-		vm_area_free(vma);
-		swmmu_backing_release(space, backing);
-		return ret;
+	if (ret)
+		goto rollback_new_mapping;
+
+	if (replace_vma) {
+		vma_start_write(replace_vma);
+		vma_start_write(vma);
 	}
 
 	vma_iter_store_new(&vmi, vma);
-	mm->map_count++;
 
+	/* MAP_FIXED with replacement */
+	if (replace_vma) {
+		vma_mark_detached(replace_vma);
+		mm->map_count--;
+
+		nommu_swmmu_vma_close(mm, replace_vma);
+		vma_close(replace_vma);
+
+		if (replace_vma->vm_file)
+			fput(replace_vma->vm_file);
+
+		vm_area_free(replace_vma);
+	}
+
+	mm->map_count++;
 	return start;
+
+rollback_new_mapping:
+	vma->vm_swmmu_data = NULL;
+	swmmu_vma_data_free(space, swmmu_vma);
+	vm_area_free(vma);
+	swmmu_backing_release(space, backing);
+	return ret;
 }
 
 /*
