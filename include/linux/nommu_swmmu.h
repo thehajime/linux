@@ -127,6 +127,23 @@ int nommu_swmmu_kunit_vma_dup(
 void nommu_swmmu_kunit_vma_release(
 	struct nommu_swmmu_space *space,
 	struct nommu_swmmu_vma *data);
+
+unsigned long nommu_swmmu_kunit_mmap_mm(
+	struct mm_struct *mm,
+	unsigned long addr,
+	unsigned long len,
+	unsigned long prot,
+	unsigned long flags);
+
+int nommu_swmmu_kunit_load_mm(struct mm_struct *mm,
+			      uintptr_t address,
+			      size_t size,
+			      u64 *value);
+
+int nommu_swmmu_kunit_store_mm(struct mm_struct *mm,
+			       uintptr_t address,
+			       size_t size,
+			       u64 value);
 #endif
 
 struct nommu_swmmu_space *nommu_swmmu_current(void);

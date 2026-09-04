@@ -903,6 +903,38 @@ long nommu_swmmu_store_u64(void *address, size_t size, uint64_t value)
 	return ret;
 }
 
+#if IS_ENABLED(CONFIG_NOMMU_SWMMU_KUNIT_TEST)
+int nommu_swmmu_kunit_load_mm(struct mm_struct *mm,
+			      uintptr_t address,
+			      size_t size,
+			      u64 *value)
+{
+	if (!mm || !value)
+		return -EINVAL;
+
+	if (size != 1 && size != 2 &&
+	    size != 4 && size != 8)
+		return -EINVAL;
+
+	return swmmu_copy_from_mm(mm, address, value, size);
+}
+
+int nommu_swmmu_kunit_store_mm(struct mm_struct *mm,
+			       uintptr_t address,
+			       size_t size,
+			       u64 value)
+{
+	if (!mm)
+		return -EINVAL;
+
+	if (size != 1 && size != 2 &&
+	    size != 4 && size != 8)
+		return -EINVAL;
+
+	return swmmu_copy_to_mm(mm, address, &value, size);
+}
+#endif
+
 int nommu_swmmu_unmap(struct nommu_swmmu_space *space,
 		      unsigned long address,
 		      size_t size)
@@ -1342,22 +1374,19 @@ void nommu_swmmu_vma_expand_abort(struct nommu_swmmu_space *space,
 	swmmu_resize_abort(space, tx);
 }
 
-/*
- * currently, file, prot, populate, uf are not used and ignored.
- * will be updated.
- */
-static unsigned long do_mmap_swmmu(struct file *file,
-			unsigned long addr,
-			unsigned long len,
-			unsigned long prot,
-			unsigned long flags,
-			vma_flags_t vma_flags,
-			unsigned long pgoff,
-			unsigned long *populate,
-			struct list_head *uf)
+static unsigned long
+__do_mmap_swmmu(struct mm_struct *mm,
+		struct file *file,
+		unsigned long addr,
+		unsigned long len,
+		unsigned long prot,
+		unsigned long flags,
+		vma_flags_t vma_flags,
+		unsigned long pgoff,
+		unsigned long *populate,
+		struct list_head *uf)
 {
-	struct mm_struct *mm = current->mm;
-	struct nommu_swmmu_space *space = mm->swmmu_space;
+	struct nommu_swmmu_space *space;
 	struct nommu_swmmu_backing *backing;
 	struct nommu_swmmu_vma *swmmu_vma;
 	struct vm_area_struct *vma;
@@ -1366,6 +1395,13 @@ static unsigned long do_mmap_swmmu(struct file *file,
 	unsigned long end;
 	int ret;
 	unsigned int access;
+
+	if (!mm)
+		return -EINVAL;
+
+	space = mm->swmmu_space;
+	if (!space)
+		return -EINVAL;
 
 	mmap_assert_write_locked(mm);
 
@@ -1473,6 +1509,55 @@ static unsigned long do_mmap_swmmu(struct file *file,
 
 	return start;
 }
+
+/*
+ * currently, file, prot, populate, uf are not used and ignored.
+ * will be updated.
+ */
+static unsigned long do_mmap_swmmu(struct file *file,
+			unsigned long addr,
+			unsigned long len,
+			unsigned long prot,
+			unsigned long flags,
+			vma_flags_t vma_flags,
+			unsigned long pgoff,
+			unsigned long *populate,
+			struct list_head *uf)
+{
+	if (!current->mm)
+		return -EINVAL;
+
+	return __do_mmap_swmmu(current->mm, file, addr, len,
+			       prot, flags, vma_flags,
+			       pgoff, populate, uf);
+}
+
+#if IS_ENABLED(CONFIG_NOMMU_SWMMU_KUNIT_TEST)
+unsigned long nommu_swmmu_kunit_mmap_mm(
+	struct mm_struct *mm,
+	unsigned long addr,
+	unsigned long len,
+	unsigned long prot,
+	unsigned long flags)
+{
+	unsigned long populate = 0;
+	unsigned long ret;
+
+	if (!mm || !len)
+		return -EINVAL;
+
+	mmap_write_lock(mm);
+
+	ret = __do_mmap_swmmu(mm, NULL, addr, len,
+			      prot, flags,
+			      EMPTY_VMA_FLAGS, 0,
+			      &populate, NULL);
+
+	mmap_write_unlock(mm);
+
+	return ret;
+}
+#endif
 
 static void swmmu_split_abort(struct vm_area_struct *vma,
 			struct vm_area_struct *new,
