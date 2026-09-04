@@ -523,15 +523,14 @@ static void nommu_swmmu_mm_mremap_expand_rollback_test(struct kunit *test)
 			0);
 }
 
-
-static int nommu_swmmu_mm_ctx_init(struct kunit *test)
+static int nommu_swmmu_mm_ctx_create(struct nommu_swmmu_mm_test_ctx *ctx,
+				struct kunit *test)
 {
-	struct nommu_swmmu_mm_test_ctx *ctx;
 	struct nommu_swmmu_space *old_space;
 	int ret;
 
-	ctx = kunit_kzalloc(test, sizeof(*ctx), GFP_KERNEL);
-	KUNIT_ASSERT_NOT_NULL(test, ctx);
+	if (!ctx)
+		return -EINVAL;
 
 	ctx->mm = mm_alloc();
 	if (!ctx->mm)
@@ -563,8 +562,203 @@ static int nommu_swmmu_mm_ctx_init(struct kunit *test)
 	}
 
 	ctx->mm->swmmu_mode = NOMMU_SWMMU_ON;
-	test->priv = ctx;
 
+	return 0;
+}
+
+static int test_dup_mmap(struct mm_struct *dst,
+			 struct mm_struct *src)
+{
+	int ret;
+
+	mmap_write_lock(src);
+	mmap_write_lock_nested(dst, SINGLE_DEPTH_NESTING);
+
+	ret = nommu_swmmu_dup_mmap(dst, src);
+
+	mmap_write_unlock(dst);
+	mmap_write_unlock(src);
+
+	return ret;
+}
+
+static void nommu_swmmu_mm_ctx_destroy(
+	struct nommu_swmmu_mm_test_ctx *ctx)
+{
+	if (!ctx || !ctx->mm)
+		return;
+
+	nommu_swmmu_space_detach(ctx->mm);
+	mmput(ctx->mm);
+
+	ctx->mm = NULL;
+	ctx->space = NULL;
+}
+
+KUNIT_DEFINE_ACTION_WRAPPER(
+	nommu_swmmu_mm_ctx_destroy_action,
+	nommu_swmmu_mm_ctx_destroy,
+	struct nommu_swmmu_mm_test_ctx *);
+
+static void nommu_swmmu_mm_fork_clone_test(struct kunit *test)
+{
+	struct nommu_swmmu_mm_test_ctx *parent;
+	struct nommu_swmmu_mm_test_ctx *child;
+	unsigned long address;
+	u64 value;
+	int ret;
+
+	parent = kunit_kzalloc(test, sizeof(*parent), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, parent);
+
+	child = kunit_kzalloc(test, sizeof(*child), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, child);
+
+	ret = nommu_swmmu_mm_ctx_create(parent, test);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	ret = kunit_add_action_or_reset(test,
+					nommu_swmmu_mm_ctx_destroy_action,
+					parent);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	ret = nommu_swmmu_mm_ctx_create(child, test);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	ret = kunit_add_action_or_reset(test,
+					nommu_swmmu_mm_ctx_destroy_action,
+					child);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+
+
+	address = nommu_swmmu_kunit_mmap_mm(
+		parent->mm,
+		0,
+		SWMMU_PAGE_SIZE,
+		PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS);
+	KUNIT_ASSERT_GT(test, address, 0UL);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_store_mm(parent->mm,
+						   address,
+						   sizeof(value),
+						   41),
+			0);
+
+	ret = test_dup_mmap(child->mm, parent->mm);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_load_mm(child->mm,
+						  address,
+						  sizeof(value),
+						  &value),
+			0);
+	KUNIT_EXPECT_EQ(test, value, 41ULL);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_store_mm(child->mm,
+						   address,
+						   sizeof(value),
+						   42),
+			0);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_load_mm(parent->mm,
+						  address,
+						  sizeof(value),
+						  &value),
+			0);
+	KUNIT_EXPECT_EQ(test, value, 41ULL);
+}
+
+static void nommu_swmmu_mm_fork_rollback_test(struct kunit *test)
+{
+	struct nommu_swmmu_mm_test_ctx *parent;
+	struct nommu_swmmu_mm_test_ctx *child;
+	unsigned long address;
+	u64 value;
+	int ret;
+
+	parent = kunit_kzalloc(test, sizeof(*parent), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, parent);
+
+	child = kunit_kzalloc(test, sizeof(*child), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, child);
+
+	ret = nommu_swmmu_mm_ctx_create(parent, test);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	ret = kunit_add_action_or_reset(test,
+					nommu_swmmu_mm_ctx_destroy_action,
+					parent);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	ret = nommu_swmmu_mm_ctx_create(child, test);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	ret = kunit_add_action_or_reset(test,
+					nommu_swmmu_mm_ctx_destroy_action,
+					child);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+
+	address = nommu_swmmu_kunit_mmap_mm(
+		parent->mm,
+		0,
+		SWMMU_PAGE_SIZE,
+		PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS);
+	KUNIT_ASSERT_GT(test, address, 0UL);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_store_mm(parent->mm,
+						   address,
+						   sizeof(value),
+						   41),
+			0);
+
+	test_alloc_fail_at(TEST_FAIL_ZALLOC, 0);
+
+	ret = test_dup_mmap(child->mm, parent->mm);
+	KUNIT_EXPECT_EQ(test, ret, -ENOMEM);
+
+	test_alloc_reset();
+
+	/*
+	 * Parent remains intact.
+	 */
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_load_mm(parent->mm,
+						  address,
+						  sizeof(value),
+						  &value),
+			0);
+	KUNIT_EXPECT_EQ(test, value, 41ULL);
+
+	/*
+	 * Child must not retain a partially published VMA.
+	 */
+	KUNIT_EXPECT_EQ(test, child->mm->map_count, 0);
+}
+
+
+static int nommu_swmmu_mm_ctx_init(struct kunit *test)
+{
+	struct nommu_swmmu_mm_test_ctx *ctx;
+	int ret;
+
+	ctx = kunit_kzalloc(test, sizeof(*ctx), GFP_KERNEL);
+	if (!ctx)
+		return -ENOMEM;
+
+	ret = nommu_swmmu_mm_ctx_create(ctx, test);
+	if (ret)
+		return ret;
+
+	test->priv = ctx;
 	return 0;
 }
 
@@ -587,6 +781,8 @@ static struct kunit_case nommu_swmmu_mm_test_cases[] = {
 	KUNIT_CASE(nommu_swmmu_mm_mremap_shrink_test),
 	KUNIT_CASE(nommu_swmmu_mm_mremap_expand_test),
 	KUNIT_CASE(nommu_swmmu_mm_mremap_expand_rollback_test),
+	KUNIT_CASE(nommu_swmmu_mm_fork_clone_test),
+	KUNIT_CASE(nommu_swmmu_mm_fork_rollback_test),
 	{}
 };
 
