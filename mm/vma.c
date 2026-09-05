@@ -1353,12 +1353,11 @@ static void vms_clean_up_area(struct vma_munmap_struct *vms,
  * needed to be done once the vma maple tree is updated.
  */
 static void vms_complete_munmap_vmas(struct vma_munmap_struct *vms,
-		struct ma_state *mas_detach)
+		struct ma_state *mas_detach,
+		struct mm_struct *mm)
 {
 	struct vm_area_struct *vma;
-	struct mm_struct *mm;
 
-	mm = current->mm;
 	mm->map_count -= vms->vma_count;
 	mm->locked_vm -= vms->locked_vm;
 	if (vms->unlock)
@@ -1626,7 +1625,7 @@ int do_vmi_align_munmap(struct vma_iterator *vmi, struct vm_area_struct *vma,
 		goto clear_tree_failed;
 
 	/* Point of no return */
-	vms_complete_munmap_vmas(&vms, &mas_detach);
+	vms_complete_munmap_vmas(&vms, &mas_detach, mm);
 	return 0;
 
 clear_tree_failed:
@@ -2428,7 +2427,7 @@ static void vms_abort_munmap_vmas(struct vma_munmap_struct *vms,
 	mas_set_range(mas, vms->start, vms->end - 1);
 	mas_store_gfp(mas, NULL, GFP_KERNEL|__GFP_NOFAIL);
 	/* Clean up the insertion of the unfortunate gap */
-	vms_complete_munmap_vmas(vms, mas_detach);
+	vms_complete_munmap_vmas(vms, mas_detach, vms->vma->vm_mm);
 }
 
 static void update_ksm_flags(struct mmap_state *map)
@@ -2663,7 +2662,7 @@ static void __mmap_complete(struct mmap_state *map, struct vm_area_struct *vma)
 	perf_event_mmap(vma);
 
 	/* Unmap any existing mapping in the area. */
-	vms_complete_munmap_vmas(&map->vms, &map->mas_detach);
+	vms_complete_munmap_vmas(&map->vms, &map->mas_detach, mm);
 
 	vm_stat_account(mm, vma->vm_flags, map->pglen);
 	if (vma_test(vma, VMA_LOCKED_BIT)) {
