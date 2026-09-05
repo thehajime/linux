@@ -80,6 +80,7 @@ struct nommu_swmmu_vma_tx {
 	/* Fixed-range replacement state. */
 	struct vm_area_struct *old_vma;
 	struct vm_area_struct *new_vma;
+	struct vm_area_struct *right_vma;
 
 	struct nommu_swmmu_vma *left_data;
 	struct nommu_swmmu_vma *right_data;
