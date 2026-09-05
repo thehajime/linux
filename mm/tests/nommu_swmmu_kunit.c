@@ -1297,15 +1297,13 @@ static void nommu_swmmu_mm_map_fixed_tail_replace_test(struct kunit *test)
 	KUNIT_ASSERT_EQ(test, ret, 0);
 }
 
-static void nommu_swmmu_mm_map_fixed_middle_replace_unsupported_test(struct kunit *test)
+static void nommu_swmmu_mm_map_fixed_middle_replace_test(struct kunit *test)
 {
 	struct nommu_swmmu_mm_test_ctx *ctx = test->priv;
 	unsigned long old_addr;
 	unsigned long replacement;
 	u64 value;
 	int ret;
-
-	kunit_skip(test, "%s: not implemented yet", __func__);
 
 	old_addr = nommu_swmmu_kunit_mmap_mm(
 		ctx->mm,
@@ -1431,7 +1429,7 @@ static struct kunit_case nommu_swmmu_mm_test_cases[] = {
 	KUNIT_CASE(nommu_swmmu_mm_map_fixed_head_replace_test),
 	KUNIT_CASE(nommu_swmmu_mm_map_fixed_head_replace_rollback_test),
 	KUNIT_CASE(nommu_swmmu_mm_map_fixed_tail_replace_test),
-	KUNIT_CASE(nommu_swmmu_mm_map_fixed_middle_replace_unsupported_test),
+	KUNIT_CASE(nommu_swmmu_mm_map_fixed_middle_replace_test),
 	{}
 };
 

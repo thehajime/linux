@@ -88,6 +88,7 @@ struct nommu_swmmu_vma_tx {
 
 	unsigned long replace_start;
 	unsigned long replace_end;
+	unsigned int replacement_access;
 
 	bool retained_ref_held;
 };

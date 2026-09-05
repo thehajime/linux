@@ -1240,6 +1240,129 @@ static void swmmu_split_commit(struct vm_area_struct *vma,
 	space->ops->dealloc(tx);
 }
 
+static void swmmu_split_abort(struct vm_area_struct *vma,
+			struct vm_area_struct *new,
+			void *state)
+{
+	struct nommu_swmmu_space *space = vma->vm_mm->swmmu_space;
+	struct nommu_swmmu_vma_tx *tx = state;
+
+	if (!tx)
+		return;
+
+	if (tx->new_vma_data)
+		space->ops->dealloc(tx->new_vma_data);
+
+	if (tx->backing_ref_held)
+		swmmu_backing_release(space, tx->old_backing);
+
+	space->ops->dealloc(tx);
+}
+
+static void nommu_swmmu_remove_detached_vma(struct mm_struct *mm,
+					struct vm_area_struct *vma)
+{
+	if (!mm || !vma)
+		return;
+
+	nommu_swmmu_vma_close(mm, vma);
+	vma_close(vma);
+
+	if (vma->vm_file)
+		fput(vma->vm_file);
+
+	vm_area_free(vma);
+}
+
+static int nommu_swmmu_replace_prepare(struct vma_replace_struct *vrs)
+{
+	struct nommu_swmmu_vma_tx *tx;
+	struct vm_area_struct *insert;
+	struct mm_struct *mm;
+	struct nommu_swmmu_space *space;
+	struct nommu_swmmu_backing *backing;
+	struct nommu_swmmu_vma *data;
+	unsigned long length;
+	unsigned int access = 0;
+
+	if (!vrs || !vrs->vms || !vrs->insert)
+		return -EINVAL;
+
+	tx = vrs->backend_state;
+	if (!tx)
+		return -EINVAL;
+
+	insert = vrs->insert;
+	mm = insert->vm_mm;
+	space = mm->swmmu_space;
+	length = insert->vm_end - insert->vm_start;
+
+	if (!space || !length)
+		return -EINVAL;
+
+	if (insert->vm_flags & VM_READ)
+		access |= NOMMU_SWMMU_READ;
+	if (insert->vm_flags & VM_WRITE)
+		access |= NOMMU_SWMMU_WRITE;
+	if (insert->vm_flags & VM_EXEC)
+		access |= NOMMU_SWMMU_EXEC;
+
+	backing = swmmu_backing_alloc(space, length);
+	if (!backing)
+		return -ENOMEM;
+
+	data = swmmu_vma_data_create(space, backing);
+	if (!data) {
+		swmmu_backing_release(space, backing);
+		return -ENOMEM;
+	}
+
+	data->access = tx->replacement_access;
+	insert->vm_swmmu_data = data;
+	vrs->backend_state = data;
+
+	return 0;
+}
+
+static void nommu_swmmu_replace_abort(struct vma_replace_struct *vrs)
+{
+	struct vm_area_struct *insert;
+	struct mm_struct *mm;
+
+	if (!vrs || !vrs->insert)
+		return;
+
+	insert = vrs->insert;
+	mm = insert->vm_mm;
+
+	if (insert->vm_swmmu_data) {
+		swmmu_vma_data_release(mm->swmmu_space,
+				       insert->vm_swmmu_data);
+		insert->vm_swmmu_data = NULL;
+	}
+
+	vrs->backend_state = NULL;
+}
+
+static void nommu_swmmu_replace_commit(
+	struct vma_replace_struct *vrs)
+{
+	if (!vrs)
+		return;
+
+	vrs->backend_state = NULL;
+}
+
+static const struct vma_backend_ops nommu_swmmu_vma_backend_ops = {
+	.split_prepare = swmmu_split_prepare,
+	.split_commit = swmmu_split_commit,
+	.split_abort = swmmu_split_abort,
+	.remove_detached = nommu_swmmu_remove_detached_vma,
+	.replace_prepare = nommu_swmmu_replace_prepare,
+	.replace_commit = nommu_swmmu_replace_commit,
+	.replace_abort = nommu_swmmu_replace_abort,
+};
+
 int nommu_swmmu_expand_prepare(struct nommu_swmmu_space *space,
 				struct vm_area_struct *vma,
 				unsigned long new_end,
@@ -1569,6 +1692,80 @@ abort:
 	return ret;
 }
 
+static unsigned long swmmu_mmap_fixed_middle_replace(struct mm_struct *mm,
+						struct nommu_swmmu_space *space,
+						struct vm_area_struct *old_vma,
+						unsigned long start,
+						unsigned long end,
+						unsigned long prot,
+						vma_flags_t vma_flags,
+						unsigned long pgoff)
+{
+	struct vm_area_struct *new_vma;
+	struct vma_munmap_struct vms;
+	struct vma_replace_struct vrs;
+	struct maple_tree mt_detach;
+	MA_STATE(mas_detach, &mt_detach, 0, 0);
+	VMA_ITERATOR(vmi, mm, start);
+	struct nommu_swmmu_vma_tx tx = {};
+	int ret;
+
+	if (!old_vma->vm_swmmu_data ||
+	    old_vma->vm_file ||
+	    old_vma->vm_region)
+		return -EOPNOTSUPP;
+
+	new_vma = vm_area_dup(old_vma);
+	if (!new_vma)
+		return -ENOMEM;
+
+	if (prot & PROT_READ)
+		tx.replacement_access |= NOMMU_SWMMU_READ;
+	if (prot & PROT_WRITE)
+		tx.replacement_access |= NOMMU_SWMMU_WRITE;
+	if (prot & PROT_EXEC)
+		tx.replacement_access |= NOMMU_SWMMU_EXEC;
+
+	new_vma->vm_mm = mm;
+	new_vma->vm_start = start;
+	new_vma->vm_end = end;
+	new_vma->vm_swmmu_data = NULL;
+	vm_flags_init(new_vma, vma_flags_to_legacy(vma_flags));
+	vma_set_pgoff(new_vma, pgoff);
+
+	mt_init_flags(&mt_detach,
+		      vmi.mas.tree->ma_flags &
+		      MT_FLAGS_LOCK_MASK);
+	mt_on_stack(mt_detach);
+
+	vma_init_munmap(&vms, &vmi, old_vma,
+			start, end, NULL, false,
+			&nommu_swmmu_vma_backend_ops);
+
+	vma_replace_init(&vrs, &vms, new_vma,
+			 &nommu_swmmu_vma_backend_ops);
+	vrs.backend_state = &tx;
+
+	ret = vma_replace_prepare(&vrs, &mas_detach);
+	if (ret)
+		goto abort;
+
+	vma_replace_commit(&vrs, &mas_detach, mm,
+			   nommu_swmmu_remove_detached_vma);
+
+	__mt_destroy(&mt_detach);
+
+	validate_mm(mm);
+	nommu_swmmu_validate(mm);
+
+	return start;
+
+abort:
+	vma_replace_abort(&vrs, &mas_detach);
+	__mt_destroy(&mt_detach);
+	return ret;
+}
+
 static unsigned long
 __do_mmap_swmmu(struct mm_struct *mm,
 		struct file *file,
@@ -1667,7 +1864,12 @@ __do_mmap_swmmu(struct mm_struct *mm,
 			else
 				return -EINVAL;
 
-			if (kind != NOMMU_SWMMU_REPLACE_EXACT)
+			if (kind == NOMMU_SWMMU_REPLACE_MIDDLE)
+				return swmmu_mmap_fixed_middle_replace(
+					mm, space, replace_vma,
+					addr, end, prot,
+					vma_flags, pgoff);
+			else if (kind != NOMMU_SWMMU_REPLACE_EXACT)
 				return swmmu_mmap_fixed_replace(mm, kind,
 								space, replace_vma, addr, end,
 								prot, vma_flags, pgoff);
@@ -1824,124 +2026,6 @@ int nommu_swmmu_kunit_unmap_mm(struct mm_struct *mm,
 	return ret;
 }
 #endif
-
-static void swmmu_split_abort(struct vm_area_struct *vma,
-			struct vm_area_struct *new,
-			void *state)
-{
-	struct nommu_swmmu_space *space = vma->vm_mm->swmmu_space;
-	struct nommu_swmmu_vma_tx *tx = state;
-
-	if (!tx)
-		return;
-
-	if (tx->new_vma_data)
-		space->ops->dealloc(tx->new_vma_data);
-
-	if (tx->backing_ref_held)
-		swmmu_backing_release(space, tx->old_backing);
-
-	space->ops->dealloc(tx);
-}
-
-static void nommu_swmmu_remove_detached_vma(struct mm_struct *mm,
-					struct vm_area_struct *vma)
-{
-	if (!mm || !vma)
-		return;
-
-	nommu_swmmu_vma_close(mm, vma);
-	vma_close(vma);
-
-	if (vma->vm_file)
-		fput(vma->vm_file);
-
-	vm_area_free(vma);
-}
-
-static int nommu_swmmu_replace_prepare(struct vma_replace_struct *vrs)
-{
-	struct vm_area_struct *insert;
-	struct mm_struct *mm;
-	struct nommu_swmmu_space *space;
-	struct nommu_swmmu_backing *backing;
-	struct nommu_swmmu_vma *data;
-	unsigned long length;
-	unsigned int access = 0;
-
-	if (!vrs || !vrs->vms || !vrs->insert)
-		return -EINVAL;
-
-	insert = vrs->insert;
-	mm = insert->vm_mm;
-	space = mm->swmmu_space;
-	length = insert->vm_end - insert->vm_start;
-
-	if (!space || !length)
-		return -EINVAL;
-
-	if (insert->vm_flags & VM_READ)
-		access |= NOMMU_SWMMU_READ;
-	if (insert->vm_flags & VM_WRITE)
-		access |= NOMMU_SWMMU_WRITE;
-	if (insert->vm_flags & VM_EXEC)
-		access |= NOMMU_SWMMU_EXEC;
-
-	backing = swmmu_backing_alloc(space, length);
-	if (!backing)
-		return -ENOMEM;
-
-	data = swmmu_vma_data_create(space, backing);
-	if (!data) {
-		swmmu_backing_release(space, backing);
-		return -ENOMEM;
-	}
-
-	data->access = access;
-	insert->vm_swmmu_data = data;
-	vrs->backend_state = data;
-
-	return 0;
-}
-
-static void nommu_swmmu_replace_abort(struct vma_replace_struct *vrs)
-{
-	struct vm_area_struct *insert;
-	struct mm_struct *mm;
-
-	if (!vrs || !vrs->insert)
-		return;
-
-	insert = vrs->insert;
-	mm = insert->vm_mm;
-
-	if (insert->vm_swmmu_data) {
-		swmmu_vma_data_release(mm->swmmu_space,
-				       insert->vm_swmmu_data);
-		insert->vm_swmmu_data = NULL;
-	}
-
-	vrs->backend_state = NULL;
-}
-
-static void nommu_swmmu_replace_commit(
-	struct vma_replace_struct *vrs)
-{
-	if (!vrs)
-		return;
-
-	vrs->backend_state = NULL;
-}
-
-static const struct vma_backend_ops nommu_swmmu_vma_backend_ops = {
-	.split_prepare = swmmu_split_prepare,
-	.split_commit = swmmu_split_commit,
-	.split_abort = swmmu_split_abort,
-	.remove_detached = nommu_swmmu_remove_detached_vma,
-	.replace_prepare = nommu_swmmu_replace_prepare,
-	.replace_commit = nommu_swmmu_replace_commit,
-	.replace_abort = nommu_swmmu_replace_abort,
-};
 
 static int nommu_swmmu_unmap_shared_range(struct mm_struct *mm,
 					  struct vma_iterator *vmi,
