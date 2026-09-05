@@ -1766,6 +1766,74 @@ abort:
 	return ret;
 }
 
+static unsigned long swmmu_mmap_fixed_range_replace(struct mm_struct *mm,
+						struct nommu_swmmu_space *space,
+						unsigned long start,
+						unsigned long end,
+						unsigned long prot,
+						vma_flags_t vma_flags,
+						unsigned long pgoff)
+{
+	struct vm_area_struct *insert;
+	struct vma_munmap_struct vms;
+	struct vma_replace_struct vrs;
+	struct maple_tree mt_detach;
+	MA_STATE(mas_detach, &mt_detach, 0, 0);
+	VMA_ITERATOR(vmi, mm, start);
+	struct nommu_swmmu_vma_tx tx = {};
+	int ret;
+
+	insert = vm_area_alloc(mm);
+	if (!insert)
+		return -ENOMEM;
+
+	insert->vm_start = start;
+	insert->vm_end = end;
+	insert->vm_mm = mm;
+	vm_flags_init(insert, vma_flags_to_legacy(vma_flags));
+	vma_set_pgoff(insert, pgoff);
+	insert->vm_swmmu_data = NULL;
+
+	if (prot & PROT_READ)
+		tx.replacement_access |= NOMMU_SWMMU_READ;
+	if (prot & PROT_WRITE)
+		tx.replacement_access |= NOMMU_SWMMU_WRITE;
+	if (prot & PROT_EXEC)
+		tx.replacement_access |= NOMMU_SWMMU_EXEC;
+
+	mt_init_flags(&mt_detach,
+		      vmi.mas.tree->ma_flags &
+		      MT_FLAGS_LOCK_MASK);
+	mt_on_stack(mt_detach);
+
+	vma_init_munmap(&vms, &vmi, vma_find(&vmi, end),
+			start, end, NULL, false,
+			&nommu_swmmu_vma_backend_ops);
+
+	vma_replace_init(&vrs, &vms, insert,
+			 &nommu_swmmu_vma_backend_ops);
+	vrs.backend_state = &tx;
+
+	ret = vma_replace_prepare(&vrs, &mas_detach);
+	if (ret)
+		goto abort;
+
+	vma_replace_commit(&vrs, &mas_detach, mm,
+			   nommu_swmmu_remove_detached_vma);
+
+	__mt_destroy(&mt_detach);
+
+	validate_mm(mm);
+	nommu_swmmu_validate(mm);
+
+	return start;
+
+abort:
+	vma_replace_abort(&vrs, &mas_detach);
+	__mt_destroy(&mt_detach);
+	return ret;
+}
+
 static unsigned long
 __do_mmap_swmmu(struct mm_struct *mm,
 		struct file *file,
@@ -1838,11 +1906,9 @@ __do_mmap_swmmu(struct mm_struct *mm,
 			if (overlap_count)
 				return -EEXIST;
 		} else if (overlap_count > 1) {
-			/*
-			 * Multiple-VMA replacement requires the later
-			 * split/remove transaction.
-			 */
-			return -EOPNOTSUPP;
+			return swmmu_mmap_fixed_range_replace(
+				mm, space, addr, end,
+				prot, vma_flags, pgoff);
 		}
 
 		if (overlap_count == 1) {

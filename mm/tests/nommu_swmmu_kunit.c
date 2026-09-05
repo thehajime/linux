@@ -1501,6 +1501,137 @@ static void nommu_swmmu_mm_map_fixed_middle_replace_rollback_test(
 			0);
 }
 
+static void nommu_swmmu_mm_map_fixed_multi_vma_replace_test(struct kunit *test)
+{
+	struct nommu_swmmu_mm_test_ctx *ctx = test->priv;
+	const unsigned long base = 0x1000000000UL;
+	unsigned long first;
+	unsigned long second;
+	unsigned long replacement;
+	u64 value;
+	int ret;
+
+	/*
+	 * First VMA:
+	 *     [base, base + 2 * PAGE)
+	 */
+	first = nommu_swmmu_kunit_mmap_mm(
+		ctx->mm,
+		base,
+		SWMMU_PAGE_SIZE * 2,
+		PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS |
+		MAP_FIXED_NOREPLACE);
+	KUNIT_ASSERT_EQ(test, first, base);
+
+	/*
+	 * Second VMA:
+	 *     [base + 3 * PAGE, base + 5 * PAGE)
+	 *
+	 * This leaves one page unmapped between the two VMAs.
+	 */
+	second = nommu_swmmu_kunit_mmap_mm(
+		ctx->mm,
+		base + 3 * SWMMU_PAGE_SIZE,
+		SWMMU_PAGE_SIZE * 2,
+		PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS |
+		MAP_FIXED_NOREPLACE);
+	KUNIT_ASSERT_EQ(test,
+			second,
+			base + 3 * SWMMU_PAGE_SIZE);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_store_mm(
+				ctx->mm,
+				base,
+				sizeof(value),
+				41),
+			0);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_store_mm(
+				ctx->mm,
+				base + 4 * SWMMU_PAGE_SIZE,
+				sizeof(value),
+				43),
+			0);
+
+	/*
+	 * Replace:
+	 *
+	 *     [base + PAGE, base + 4 * PAGE)
+	 *
+	 * This overlaps:
+	 *     - the tail of the first VMA;
+	 *     - the gap;
+	 *     - the head of the second VMA.
+	 */
+	replacement = nommu_swmmu_kunit_mmap_mm(
+		ctx->mm,
+		base + SWMMU_PAGE_SIZE,
+		SWMMU_PAGE_SIZE * 3,
+		PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS |
+		MAP_FIXED);
+	KUNIT_ASSERT_EQ(test,
+			replacement,
+			base + SWMMU_PAGE_SIZE);
+
+	/* Prefix from the first VMA remains intact. */
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_load_mm(
+				ctx->mm,
+				base,
+				sizeof(value),
+				&value),
+			0);
+	KUNIT_EXPECT_EQ(test, value, 41ULL);
+
+	/* Replacement pages have fresh zero-filled backing. */
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_load_mm(
+				ctx->mm,
+				base + SWMMU_PAGE_SIZE,
+				sizeof(value),
+				&value),
+			0);
+	KUNIT_EXPECT_EQ(test, value, 0ULL);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_load_mm(
+				ctx->mm,
+				base + 2 * SWMMU_PAGE_SIZE,
+				sizeof(value),
+				&value),
+			0);
+	KUNIT_EXPECT_EQ(test, value, 0ULL);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_load_mm(
+				ctx->mm,
+				base + 3 * SWMMU_PAGE_SIZE,
+				sizeof(value),
+				&value),
+			0);
+	KUNIT_EXPECT_EQ(test, value, 0ULL);
+
+	/* Suffix from the second VMA remains intact. */
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_load_mm(
+				ctx->mm,
+				base + 4 * SWMMU_PAGE_SIZE,
+				sizeof(value),
+				&value),
+			0);
+	KUNIT_EXPECT_EQ(test, value, 43ULL);
+
+	ret = nommu_swmmu_kunit_unmap_mm(ctx->mm,
+					 base,
+					 SWMMU_PAGE_SIZE * 5);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+}
+
 static int nommu_swmmu_mm_ctx_init(struct kunit *test)
 {
 	struct nommu_swmmu_mm_test_ctx *ctx;
@@ -1548,6 +1679,7 @@ static struct kunit_case nommu_swmmu_mm_test_cases[] = {
 	KUNIT_CASE(nommu_swmmu_mm_map_fixed_tail_replace_test),
 	KUNIT_CASE(nommu_swmmu_mm_map_fixed_middle_replace_test),
 	KUNIT_CASE(nommu_swmmu_mm_map_fixed_middle_replace_rollback_test),
+	KUNIT_CASE(nommu_swmmu_mm_map_fixed_multi_vma_replace_test),
 	{}
 };
 
