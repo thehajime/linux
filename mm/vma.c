@@ -1393,205 +1393,6 @@ static void vms_complete_munmap_vmas(struct vma_munmap_struct *vms,
 }
 
 /*
- * reattach_vmas() - Undo any munmap work and free resources
- * @mas_detach: The maple state with the detached maple tree
- *
- * Reattach any detached vmas and free up the maple tree used to track the vmas.
- */
-static void reattach_vmas(struct ma_state *mas_detach)
-{
-	struct vm_area_struct *vma;
-
-	mas_set(mas_detach, 0);
-	mas_for_each(mas_detach, vma, ULONG_MAX)
-		vma_mark_attached(vma);
-
-	__mt_destroy(mas_detach->tree);
-}
-
-/*
- * vms_gather_munmap_vmas() - Put all VMAs within a range into a maple tree
- * for removal at a later date.  Handles splitting first and last if necessary
- * and marking the vmas as isolated.
- *
- * @vms: The vma munmap struct
- * @mas_detach: The maple state tracking the detached tree
- *
- * Return: 0 on success, error otherwise
- */
-static int vms_gather_munmap_vmas(struct vma_munmap_struct *vms,
-		struct ma_state *mas_detach)
-{
-	struct vm_area_struct *next = NULL;
-	int error;
-
-	/*
-	 * If we need to split any vma, do it now to save pain later.
-	 * Does it split the first one?
-	 */
-	if (vms->start > vms->vma->vm_start) {
-
-		/*
-		 * Make sure that map_count on return from munmap() will
-		 * not exceed its limit; but let map_count go just above
-		 * its limit temporarily, to help free resources as expected.
-		 */
-		if (vms->end < vms->vma->vm_end &&
-		    vms->vma->vm_mm->map_count >= get_sysctl_max_map_count()) {
-			error = -ENOMEM;
-			goto map_count_exceeded;
-		}
-
-		/* Don't bother splitting the VMA if we can't unmap it anyway */
-		if (vma_is_sealed(vms->vma)) {
-			error = -EPERM;
-			goto start_split_failed;
-		}
-
-		error = vma_split_backend(vms->vmi, vms->vma, vms->start, 1, vms->backend);
-		if (error)
-			goto start_split_failed;
-	}
-	vms->prev = vma_prev(vms->vmi);
-	if (vms->prev)
-		vms->unmap_start = vms->prev->vm_end;
-
-	/*
-	 * Detach a range of VMAs from the mm. Using next as a temp variable as
-	 * it is always overwritten.
-	 */
-	for_each_vma_range(*(vms->vmi), next, vms->end) {
-		long nrpages;
-
-		if (vma_is_sealed(next)) {
-			error = -EPERM;
-			goto modify_vma_failed;
-		}
-		/* Does it split the end? */
-		if (next->vm_end > vms->end) {
-			error = vma_split_backend(vms->vmi, next, vms->end, 0, vms->backend);
-			if (error)
-				goto end_split_failed;
-		}
-		vma_start_write(next);
-		mas_set(mas_detach, vms->vma_count++);
-		error = mas_store_gfp(mas_detach, next, GFP_KERNEL);
-		if (error)
-			goto munmap_gather_failed;
-
-		vma_mark_detached(next);
-		nrpages = vma_pages(next);
-
-		vms->nr_pages += nrpages;
-		if (vma_test(next, VMA_LOCKED_BIT))
-			vms->locked_vm += nrpages;
-
-		if (vma_test(next, VMA_ACCOUNT_BIT))
-			vms->nr_accounted += nrpages;
-
-		if (is_exec_mapping(next->vm_flags))
-			vms->exec_vm += nrpages;
-		else if (is_stack_mapping(next->vm_flags))
-			vms->stack_vm += nrpages;
-		else if (is_data_mapping_vma_flags(&next->flags))
-			vms->data_vm += nrpages;
-
-		if (vms->uf) {
-			/*
-			 * If userfaultfd_unmap_prep returns an error the vmas
-			 * will remain split, but userland will get a
-			 * highly unexpected error anyway. This is no
-			 * different than the case where the first of the two
-			 * __split_vma fails, but we don't undo the first
-			 * split, despite we could. This is unlikely enough
-			 * failure that it's not worth optimizing it for.
-			 */
-			error = userfaultfd_unmap_prep(next, vms->start,
-						       vms->end, vms->uf);
-			if (error)
-				goto userfaultfd_error;
-		}
-#ifdef CONFIG_DEBUG_VM_MAPLE_TREE
-		BUG_ON(next->vm_start < vms->start);
-		BUG_ON(next->vm_start > vms->end);
-#endif
-	}
-
-	vms->next = vma_next(vms->vmi);
-	if (vms->next)
-		vms->unmap_end = vms->next->vm_start;
-
-#if defined(CONFIG_DEBUG_VM_MAPLE_TREE)
-	/* Make sure no VMAs are about to be lost. */
-	{
-		MA_STATE(test, mas_detach->tree, 0, 0);
-		struct vm_area_struct *vma_mas, *vma_test;
-		int test_count = 0;
-
-		vma_iter_set(vms->vmi, vms->start);
-		rcu_read_lock();
-		vma_test = mas_find(&test, vms->vma_count - 1);
-		for_each_vma_range(*(vms->vmi), vma_mas, vms->end) {
-			BUG_ON(vma_mas != vma_test);
-			test_count++;
-			vma_test = mas_next(&test, vms->vma_count - 1);
-		}
-		rcu_read_unlock();
-		BUG_ON(vms->vma_count != test_count);
-	}
-#endif
-
-	while (vma_iter_addr(vms->vmi) > vms->start)
-		vma_iter_prev_range(vms->vmi);
-
-	vms->clear_ptes = true;
-	return 0;
-
-userfaultfd_error:
-munmap_gather_failed:
-end_split_failed:
-modify_vma_failed:
-	reattach_vmas(mas_detach);
-start_split_failed:
-map_count_exceeded:
-	return error;
-}
-
-/*
- * init_vma_munmap() - Initializer wrapper for vma_munmap_struct
- * @vms: The vma munmap struct
- * @vmi: The vma iterator
- * @vma: The first vm_area_struct to munmap
- * @start: The aligned start address to munmap
- * @end: The aligned end address to munmap
- * @uf: The userfaultfd list_head
- * @unlock: Unlock after the operation.  Only unlocked on success
- */
-static void init_vma_munmap(struct vma_munmap_struct *vms,
-		struct vma_iterator *vmi, struct vm_area_struct *vma,
-		unsigned long start, unsigned long end, struct list_head *uf,
-		bool unlock, const struct vma_backend_ops *backend)
-{
-	vms->vmi = vmi;
-	vms->vma = vma;
-	vms->backend = backend;
-	if (vma) {
-		vms->start = start;
-		vms->end = end;
-	} else {
-		vms->start = vms->end = 0;
-	}
-	vms->unlock = unlock;
-	vms->uf = uf;
-	vms->vma_count = 0;
-	vms->nr_pages = vms->locked_vm = vms->nr_accounted = 0;
-	vms->exec_vm = vms->stack_vm = vms->data_vm = 0;
-	vms->unmap_start = FIRST_USER_ADDRESS;
-	vms->unmap_end = USER_PGTABLES_CEILING;
-	vms->clear_ptes = false;
-}
-
-/*
  * do_vmi_align_munmap() - munmap the aligned region from @start to @end.
  * @vmi: The vma iterator
  * @vma: The starting vm_area_struct
@@ -1616,8 +1417,8 @@ int do_vmi_align_munmap(struct vma_iterator *vmi, struct vm_area_struct *vma,
 	struct vma_munmap_struct vms;
 	int error;
 
-	init_vma_munmap(&vms, vmi, vma, start, end, uf, unlock, NULL);
-	error = vms_gather_munmap_vmas(&vms, &mas_detach);
+	vma_init_munmap(&vms, vmi, vma, start, end, uf, unlock, NULL);
+	error = vms_gather_range(&vms, &mas_detach);
 	if (error)
 		goto gather_failed;
 
@@ -1630,7 +1431,7 @@ int do_vmi_align_munmap(struct vma_iterator *vmi, struct vm_area_struct *vma,
 	return 0;
 
 clear_tree_failed:
-	reattach_vmas(&mas_detach);
+	vma_reattach_vmas(&mas_detach);
 gather_failed:
 	validate_mm(mm);
 	return error;
@@ -2418,7 +2219,7 @@ static void vms_abort_munmap_vmas(struct vma_munmap_struct *vms,
 		return;
 
 	if (vms->clear_ptes)
-		return reattach_vmas(mas_detach);
+		return vma_reattach_vmas(mas_detach);
 
 	/*
 	 * Aborting cannot just call the vm_ops open() because they are often
@@ -2470,7 +2271,7 @@ static int __mmap_setup(struct mmap_state *map, struct vm_area_desc *desc,
 
 	/* Find the first overlapping VMA and initialise unmap state. */
 	vms->vma = vma_find(vmi, map->end);
-	init_vma_munmap(vms, vmi, vms->vma, map->addr, map->end, uf,
+	vma_init_munmap(vms, vmi, vms->vma, map->addr, map->end, uf,
 			/* unlock = */ false, NULL);
 
 	/* OK, we have overlapping VMAs - prepare to unmap them. */
@@ -2480,7 +2281,7 @@ static int __mmap_setup(struct mmap_state *map, struct vm_area_desc *desc,
 		mt_on_stack(map->mt_detach);
 		mas_init(&map->mas_detach, &map->mt_detach, /* addr = */ 0);
 		/* Prepare to unmap any existing mapping in the area */
-		error = vms_gather_munmap_vmas(vms, &map->mas_detach);
+		error = vms_gather_range(vms, &map->mas_detach);
 		if (error) {
 			/* On error VMAs will already have been reattached. */
 			vms->nr_pages = 0;

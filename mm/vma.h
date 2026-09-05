@@ -902,4 +902,18 @@ int vma_range_count_overlaps(struct mm_struct *mm,
 			     unsigned long end,
 			     struct vm_area_struct **single);
 
+void vma_init_munmap(struct vma_munmap_struct *vms,
+		     struct vma_iterator *vmi,
+		     struct vm_area_struct *vma,
+		     unsigned long start,
+		     unsigned long end,
+		     struct list_head *uf,
+		     bool unlock,
+		     const struct vma_backend_ops *backend);
+
+int vma_gather_range(struct vma_munmap_struct *vms,
+		     struct ma_state *mas_detach);
+
+void vma_reattach_vmas(struct ma_state *mas_detach);
+
 #endif	/* __MM_VMA_H */

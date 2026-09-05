@@ -11,5 +11,6 @@
 #include <linux/mmap_lock.h>
 #include <linux/rwsem.h>
 #include <linux/mm_inline.h>
+#include <linux/userfaultfd_k.h>
 
 #endif /* __MM_VMA_COMMON_INTERNAL_H */
