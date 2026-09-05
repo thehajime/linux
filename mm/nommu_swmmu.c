@@ -1859,13 +1859,134 @@ static void nommu_swmmu_remove_detached_vma(struct mm_struct *mm,
 	vm_area_free(vma);
 }
 
+static int nommu_swmmu_replace_prepare(struct vma_replace_struct *vrs)
+{
+	struct vm_area_struct *insert;
+	struct mm_struct *mm;
+	struct nommu_swmmu_space *space;
+	struct nommu_swmmu_backing *backing;
+	struct nommu_swmmu_vma *data;
+	unsigned long length;
+	unsigned int access = 0;
+
+	if (!vrs || !vrs->vms || !vrs->insert)
+		return -EINVAL;
+
+	insert = vrs->insert;
+	mm = insert->vm_mm;
+	space = mm->swmmu_space;
+	length = insert->vm_end - insert->vm_start;
+
+	if (!space || !length)
+		return -EINVAL;
+
+	if (insert->vm_flags & VM_READ)
+		access |= NOMMU_SWMMU_READ;
+	if (insert->vm_flags & VM_WRITE)
+		access |= NOMMU_SWMMU_WRITE;
+	if (insert->vm_flags & VM_EXEC)
+		access |= NOMMU_SWMMU_EXEC;
+
+	backing = swmmu_backing_alloc(space, length);
+	if (!backing)
+		return -ENOMEM;
+
+	data = swmmu_vma_data_create(space, backing);
+	if (!data) {
+		swmmu_backing_release(space, backing);
+		return -ENOMEM;
+	}
+
+	data->access = access;
+	insert->vm_swmmu_data = data;
+	vrs->backend_state = data;
+
+	return 0;
+}
+
+static void nommu_swmmu_replace_abort(struct vma_replace_struct *vrs)
+{
+	struct vm_area_struct *insert;
+	struct mm_struct *mm;
+
+	if (!vrs || !vrs->insert)
+		return;
+
+	insert = vrs->insert;
+	mm = insert->vm_mm;
+
+	if (insert->vm_swmmu_data) {
+		swmmu_vma_data_release(mm->swmmu_space,
+				       insert->vm_swmmu_data);
+		insert->vm_swmmu_data = NULL;
+	}
+
+	vrs->backend_state = NULL;
+}
+
+static void nommu_swmmu_replace_commit(
+	struct vma_replace_struct *vrs)
+{
+	if (!vrs)
+		return;
+
+	vrs->backend_state = NULL;
+}
 
 static const struct vma_backend_ops nommu_swmmu_vma_backend_ops = {
 	.split_prepare = swmmu_split_prepare,
 	.split_commit = swmmu_split_commit,
 	.split_abort = swmmu_split_abort,
 	.remove_detached = nommu_swmmu_remove_detached_vma,
+	.replace_prepare = nommu_swmmu_replace_prepare,
+	.replace_commit = nommu_swmmu_replace_commit,
+	.replace_abort = nommu_swmmu_replace_abort,
 };
+
+static int nommu_swmmu_unmap_shared_range(struct mm_struct *mm,
+					  struct vma_iterator *vmi,
+					  struct vm_area_struct *vma,
+					  unsigned long start,
+					  unsigned long end,
+					  struct list_head *uf)
+{
+	struct maple_tree mt_detach;
+	MA_STATE(mas_detach, &mt_detach, 0, 0);
+	struct vma_munmap_struct vms;
+	int ret;
+
+	mt_init_flags(&mt_detach,
+		      vmi->mas.tree->ma_flags &
+		      MT_FLAGS_LOCK_MASK);
+	mt_on_stack(mt_detach);
+
+	vma_init_munmap(&vms, vmi, vma, start, end,
+			uf, false,
+			&nommu_swmmu_vma_backend_ops);
+
+	ret = vma_gather_range(&vms, &mas_detach);
+	if (ret)
+		goto out_destroy;
+
+	ret = vma_iter_clear_gfp(vmi, start, end, GFP_KERNEL);
+	if (ret) {
+		vma_reattach_vmas(&mas_detach);
+		goto out_destroy;
+	}
+
+	mm->map_count -= vms.vma_count;
+
+	vma_remove_detached(&vms, &mas_detach, mm,
+			    nommu_swmmu_remove_detached_vma);
+
+out_destroy:
+	__mt_destroy(&mt_detach);
+
+	validate_mm(mm);
+	nommu_swmmu_validate(mm);
+
+	return ret;
+}
 
 static int
 nommu_swmmu_validate_mmap_request(struct file *file,
@@ -1926,63 +2047,12 @@ unsigned long do_mmap(struct file *file,
 			     vma_flags, pgoff, populate, uf);
 }
 
-static int nommu_swmmu_remove_vma(struct mm_struct *mm,
-				   struct vma_iterator *vmi,
-				   struct vm_area_struct *vma)
-{
-	struct vm_area_struct *tree_vma;
-	struct vm_area_struct *removed;
-	unsigned long start;
-
-	if (!mm || !vmi || !vma)
-		return -EINVAL;
-
-	start = vma->vm_start;
-
-	if (vma->vm_mm != mm || start >= vma->vm_end)
-		return -EINVAL;
-
-	/*
-	 * Confirm that the iterator identifies this exact VMA.
-	 */
-	vma_iter_reset(vmi);
-	vma_iter_set(vmi, start);
-
-	tree_vma = vma_iter_load(vmi);
-	if (tree_vma != vma)
-		return -EFAULT;
-
-	/*
-	 * Remove the complete existing Maple entry. Unlike
-	 * vma_iter_clear(), this does not install an explicit NULL
-	 * range into the VMA tree.
-	 */
-	removed = mas_erase(&vmi->mas);
-	if (removed != vma)
-		return -EFAULT;
-
-	/*
-	 * Existing teardown sequence.
-	 */
-	nommu_swmmu_vma_close(mm, vma);
-	vma_close(vma);
-
-	if (vma->vm_file)
-		fput(vma->vm_file);
-
-	mm->map_count--;
-	vm_area_free(vma);
-
-	return 0;
-}
-
 int do_munmap(struct mm_struct *mm,
 	unsigned long start, size_t len, struct list_head *uf)
 {
 	VMA_ITERATOR(vmi, mm, start);
 	struct vm_area_struct *vma;
 	unsigned long end;
-	int ret;
 
 	len = PAGE_ALIGN(len);
 	if (len == 0)
@@ -1995,144 +2065,8 @@ int do_munmap(struct mm_struct *mm,
 
 	vma = vma_find(&vmi, end);
 	if (vma && vma->vm_swmmu_data) {
-		/* FIXME: until split is implemented */
-		if (start < vma->vm_start ||
-			end > vma->vm_end)
-			return -EINVAL;
-
-		/* head removal */
-		if (start == vma->vm_start && end < vma->vm_end) {
-			struct vm_area_struct *remove_vma;
-
-			ret = vma_split_backend(&vmi, vma, end, true,
-						&nommu_swmmu_vma_backend_ops);
-			if (ret)
-				return ret;
-
-			VMA_ITERATOR(split_vmi, mm, start);
-			remove_vma = vma_iter_load(&split_vmi);
-			if (WARN_ON_ONCE(!remove_vma ||
-						remove_vma == vma ||
-						remove_vma->vm_start != start ||
-						remove_vma->vm_end != end))
-				return -EFAULT;
-
-			ret = nommu_swmmu_remove_vma(mm, &split_vmi, remove_vma);
-			if (ret)
-				return ret;
-
-			validate_mm(mm);
-			nommu_swmmu_validate(mm);
-			return 0;
-		}
-
-		/* tail removal */
-		if (start > vma->vm_start && end == vma->vm_end) {
-			struct nommu_swmmu_vma_tx vma_tx;
-			unsigned long new_len;
-
-			new_len = start - vma->vm_start;
-			ret = swmmu_resize_prepare(mm->swmmu_space,
-						vma->vm_swmmu_data,
-						new_len,
-						&vma_tx);
-			if (ret)
-				return ret;
-
-			ret = vma_shrink(&vmi, vma, start);
-			if (ret) {
-				swmmu_resize_abort(mm->swmmu_space, &vma_tx);
-				return ret;
-			}
-
-			swmmu_resize_commit(mm->swmmu_space, &vma_tx);
-
-			validate_mm(mm);
-			nommu_swmmu_validate(mm);
-			return 0;
-		}
-
-		/* middle removal */
-		if (start > vma->vm_start && end < vma->vm_end) {
-			struct vm_area_struct *right;
-			struct vm_area_struct *middle;
-			unsigned long old_end = vma->vm_end;
-
-			VMA_ITERATOR(first_vmi, mm, start);
-			ret = vma_split_backend(&first_vmi, vma, start, false,
-						&nommu_swmmu_vma_backend_ops);
-			if (ret)
-				return ret;
-
-			VMA_ITERATOR(right_vmi, mm, start);
-			/*
-			 * Find the right-hand VMA created by the first split.
-			 */
-			right = vma_iter_load(&right_vmi);
-			if (WARN_ON_ONCE(!right ||
-						right == vma ||
-						right->vm_start != start ||
-						right->vm_end != old_end))
-				return -EFAULT;
-
-			VMA_ITERATOR(second_vmi, mm, start);
-			ret = vma_split_backend(&second_vmi, right, end, true,
-						&nommu_swmmu_vma_backend_ops);
-			if (ret)
-				return ret;
-
-			VMA_ITERATOR(remove_vmi, mm, start);
-			/*
-			 * Rediscover the middle VMA created by the second split.
-			 */
-			middle = vma_iter_load(&remove_vmi);
-			if (!middle ||
-				middle == right ||
-				vma_iter_addr(&remove_vmi) != start ||
-				vma_iter_end(&remove_vmi) != end)
-				return -EFAULT;
-
-			if (WARN_ON_ONCE(!middle ||
-						middle == right ||
-						middle->vm_start != start ||
-						middle->vm_end != end))
-				return -EFAULT;
-
-			ret = nommu_swmmu_remove_vma(mm, &remove_vmi, middle);
-			if (ret)
-				return ret;
-
-			validate_mm(mm);
-			nommu_swmmu_validate(mm);
-			return 0;
-		}
-
-		/* complete removal */
-		if (start == vma->vm_start &&
-			end == vma->vm_end) {
-			vma_iter_reset(&vmi);
-			vma_iter_config(&vmi, vma->vm_start, vma->vm_end);
-			if (vma_iter_prealloc(&vmi, NULL)) {
-				pr_warn("Allocation of vma tree for process %d failed\n",
-					current->pid);
-				return -ENOMEM;
-			}
-
-			/* remove from the MM's tree and list */
-			vma_iter_clear(&vmi);
-			vma->vm_mm->map_count--;
-
-			nommu_swmmu_vma_close(mm, vma);
-			vma_close(vma);
-			vm_area_free(vma);
-
-			validate_mm(mm);
-			nommu_swmmu_validate(mm);
-			return 0;
-		}
-
-		/* should not reach here */
-		return -EOPNOTSUPP;
+		return nommu_swmmu_unmap_shared_range(
+			mm, &vmi, vma, start, end, uf);
 	}
 
 	return do_munmap_nommu(mm, start, len, uf);

@@ -61,6 +61,13 @@ struct vma_munmap_struct {
 	unsigned long data_vm;
 };
 
+struct vma_replace_struct {
+	struct vma_munmap_struct *vms;
+	struct vm_area_struct *insert;
+	const struct vma_backend_ops *backend;
+	void *backend_state;
+};
+
 enum vma_merge_state {
 	VMA_MERGE_START,
 	VMA_MERGE_ERROR_NOMEM,
@@ -892,6 +899,10 @@ struct vma_backend_ops {
 
 	void (*remove_detached)(struct mm_struct *mm,
 		       struct vm_area_struct *vma);
+
+	int (*replace_prepare)(struct vma_replace_struct *vrs);
+	void (*replace_commit)(struct vma_replace_struct *vrs);
+	void (*replace_abort)(struct vma_replace_struct *vrs);
 };
 
 int vma_split_backend(struct vma_iterator *vmi,
@@ -927,5 +938,22 @@ void vma_remove_detached(struct vma_munmap_struct *vms,
 	struct ma_state *mas_detach,
 	struct mm_struct *mm,
 	vma_remove_detached_fn remove);
+
+void vma_replace_init(
+	struct vma_replace_struct *vrs,
+	struct vma_munmap_struct *vms,
+	struct vm_area_struct *insert,
+	const struct vma_backend_ops *backend);
+
+int vma_replace_prepare(struct vma_replace_struct *vrs,
+			struct ma_state *mas_detach);
+
+void vma_replace_commit(struct vma_replace_struct *vrs,
+			struct ma_state *mas_detach,
+			struct mm_struct *mm,
+			vma_remove_detached_fn remove);
+
+void vma_replace_abort(struct vma_replace_struct *vrs,
+		       struct ma_state *mas_detach);
 
 #endif	/* __MM_VMA_H */

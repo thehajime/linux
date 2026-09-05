@@ -99,6 +99,17 @@ void vma_remove_detached(struct vma_munmap_struct *vms,
 		remove(mm, vma);
 }
 
+void vma_replace_init(struct vma_replace_struct *vrs,
+		struct vma_munmap_struct *vms,
+		struct vm_area_struct *insert,
+		const struct vma_backend_ops *backend)
+{
+	memset(vrs, 0, sizeof(*vrs));
+
+	vrs->vms = vms;
+	vrs->insert = insert;
+	vrs->backend = backend;
+}
 
 static void
 debug_dump_vma_range(const char *where,
@@ -587,4 +598,92 @@ err_file:
 err_free_vma:
 	vm_area_free(new);
 	return ret;
+}
+
+int vma_replace_prepare(struct vma_replace_struct *vrs,
+			struct ma_state *mas_detach)
+{
+	struct vma_munmap_struct *vms;
+	int ret;
+
+	if (!vrs || !vrs->vms || !vrs->insert || !mas_detach)
+		return -EINVAL;
+
+	vms = vrs->vms;
+
+	if (vrs->backend && vrs->backend->replace_prepare) {
+		ret = vrs->backend->replace_prepare(vrs);
+		if (ret)
+			return ret;
+	}
+
+	ret = vma_gather_range(vms, mas_detach);
+	if (ret)
+		goto abort_backend;
+
+	vma_iter_reset(vms->vmi);
+	vma_iter_config(vms->vmi, vms->start, vms->end);
+
+	ret = vma_iter_prealloc(vms->vmi, vrs->insert);
+	if (ret) {
+		vma_reattach_vmas(mas_detach);
+		goto abort_backend;
+	}
+
+	return 0;
+
+abort_backend:
+	if (vrs->backend && vrs->backend->replace_abort)
+		vrs->backend->replace_abort(vrs);
+
+	return ret;
+}
+
+void vma_replace_commit(struct vma_replace_struct *vrs,
+			struct ma_state *mas_detach,
+			struct mm_struct *mm,
+			vma_remove_detached_fn remove)
+{
+	struct vma_munmap_struct *vms;
+
+	if (!vrs || !vrs->vms || !vrs->insert ||
+	    !mas_detach || !mm || !remove)
+		return;
+
+	vms = vrs->vms;
+
+	/*
+	 * vma_replace_prepare() preallocated this store.
+	 */
+	vma_iter_store_new(vms->vmi, vrs->insert);
+
+	mm->map_count -= vms->vma_count;
+	mm->map_count++;
+
+	if (vrs->backend && vrs->backend->replace_commit)
+		vrs->backend->replace_commit(vrs);
+
+	vma_remove_detached(vms, mas_detach, mm, remove);
+
+	vrs->insert = NULL;
+	vrs->backend_state = NULL;
+}
+
+void vma_replace_abort(struct vma_replace_struct *vrs,
+		       struct ma_state *mas_detach)
+{
+	if (!vrs || !vrs->vms || !mas_detach)
+		return;
+
+	vma_reattach_vmas(mas_detach);
+
+	if (vrs->backend && vrs->backend->replace_abort)
+		vrs->backend->replace_abort(vrs);
+
+	if (vrs->insert) {
+		vm_area_free(vrs->insert);
+		vrs->insert = NULL;
+	}
+
+	vrs->backend_state = NULL;
 }
