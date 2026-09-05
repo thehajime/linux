@@ -262,69 +262,6 @@ static void nommu_swmmu_clone_item_abort(struct mm_struct *dst,
 	vm_area_free(item->dst_vma);
 }
 
-static struct nommu_swmmu_vma *find_swmmu_vma(struct mm_struct *mm,
-					unsigned long address,
-					size_t size)
-{
-	struct vm_area_struct *vma;
-	unsigned long end;
-
-	if (!size || address > ULONG_MAX - (size - 1))
-		return NULL;
-
-	end = address + size;
-
-	vma = find_vma(mm, address);
-	if (!vma ||
-		!vma->vm_swmmu_data ||
-		address < vma->vm_start ||
-		end > vma->vm_end)
-		return NULL;
-
-	return vma->vm_swmmu_data;
-}
-
-static struct vm_area_struct *find_swmmu_vma_exact(struct mm_struct *mm,
-						unsigned long start,
-						size_t length)
-{
-	struct vm_area_struct *vma;
-	unsigned long end;
-
-	if (!length || start > ULONG_MAX - length)
-		return NULL;
-
-	end = start + length;
-
-	vma = find_vma(mm, start);
-	if (!vma ||
-	    vma->vm_start != start ||
-	    vma->vm_end != end ||
-	    !vma->vm_swmmu_data)
-		return NULL;
-
-	return vma;
-}
-
-static struct vm_area_struct *find_swmmu_vma_covering(struct mm_struct *mm,
-						unsigned long address,
-						size_t size)
-{
-	struct vm_area_struct *vma;
-
-	if (!size || address > ULONG_MAX - (size - 1))
-		return NULL;
-
-	vma = find_vma(mm, address);
-	if (!vma ||
-	    !vma->vm_swmmu_data ||
-	    address < vma->vm_start ||
-	    size > vma->vm_end - address)
-		return NULL;
-
-	return vma;
-}
-
 static int swmmu_find_free_range(struct mm_struct *mm,
 				unsigned long min,
 				size_t length,
