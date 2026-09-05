@@ -103,6 +103,43 @@ debug_dump_vma_range(const char *where,
 		vma_iter_end(&vmi));
 }
 
+
+
+int vma_range_count_overlaps(struct mm_struct *mm, unsigned long start,
+			unsigned long end, struct vm_area_struct **single)
+{
+	VMA_ITERATOR(vmi, mm, start);
+	struct vm_area_struct *vma;
+	int count = 0;
+
+	if (!mm || !single || start >= end)
+		return -EINVAL;
+
+	mmap_assert_locked(mm);
+	*single = NULL;
+
+	vma = vma_find(&vmi, end);
+	while (vma && vma->vm_start < end) {
+		if (vma->vm_end > start &&
+		    vma->vm_start < end) {
+			if (count == 0)
+				*single = vma;
+
+			count++;
+
+			/*
+			 * Callers currently only distinguish zero,
+			 * one, or multiple overlaps.
+			 */
+			if (count > 1)
+				return 2;
+		}
+		vma = vma_next(&vmi);
+	}
+	return count;
+}
+
+
 /**
  * vma_shrink() - Shrink the end of a VMA
  * @vmi: The vma iterator

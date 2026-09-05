@@ -287,40 +287,6 @@ static int swmmu_find_free_range(struct mm_struct *mm,
 	return 0;
 }
 
-static int swmmu_count_overlaps(struct mm_struct *mm,
-				unsigned long start,
-				unsigned long end,
-				struct vm_area_struct **single)
-{
-	VMA_ITERATOR(vmi, mm, start);
-	struct vm_area_struct *vma;
-	int count = 0;
-
-	*single = NULL;
-
-	vma = vma_find(&vmi, end);
-	while (vma && vma->vm_start < end) {
-		/*
-		 * vma_find() should already return the first VMA
-		 * overlapping or following @start, but keep the
-		 * half-open interval check explicit.
-		 */
-		if (vma->vm_end > start &&
-		    vma->vm_start < end) {
-			count++;
-
-			if (count == 1)
-				*single = vma;
-			else
-				return count;
-		}
-
-		vma = vma_next(&vmi);
-	}
-
-	return count;
-}
-
 /*
  * Create a space using @mem_ops.
  * The operation table must remain alive for the lifetime of the space.
@@ -1667,7 +1633,7 @@ __do_mmap_swmmu(struct mm_struct *mm,
 			return -EINVAL;
 		end = addr + len;
 
-		overlap_count = swmmu_count_overlaps(mm, addr, end, &replace_vma);
+		overlap_count = vma_range_count_overlaps(mm, addr, end, &replace_vma);
 		if (overlap_count < 0)
 			return overlap_count;
 

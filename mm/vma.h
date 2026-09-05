@@ -896,4 +896,9 @@ int vma_split_backend(struct vma_iterator *vmi,
 		      int new_below,
 		      const struct vma_backend_ops *backend);
 
+int vma_range_count_overlaps(struct mm_struct *mm,
+			     unsigned long start,
+			     unsigned long end,
+			     struct vm_area_struct **single);
+
 #endif	/* __MM_VMA_H */
