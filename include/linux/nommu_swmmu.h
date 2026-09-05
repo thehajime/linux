@@ -49,10 +49,18 @@ enum nommu_swmmu_vma_tx_type {
 	NOMMU_SWMMU_VMA_TX_RESIZE,
 	NOMMU_SWMMU_VMA_TX_SPLIT,
 	NOMMU_SWMMU_VMA_TX_EXPAND,
+	NOMMU_SWMMU_VMA_TX_FIXED_REPLACE,
+};
+
+enum nommu_swmmu_replace_kind {
+	NOMMU_SWMMU_REPLACE_HEAD,
+	NOMMU_SWMMU_REPLACE_TAIL,
+	NOMMU_SWMMU_REPLACE_MIDDLE,
 };
 
 struct nommu_swmmu_vma_tx {
 	enum nommu_swmmu_vma_tx_type type;
+	enum nommu_swmmu_replace_kind kind;
 
 	struct nommu_swmmu_vma *vma_data;
 	struct nommu_swmmu_vma *new_vma_data;
@@ -68,6 +76,17 @@ struct nommu_swmmu_vma_tx {
 
 	bool backing_ref_held;
 
+	/* Fixed-range replacement state. */
+	struct vm_area_struct *old_vma;
+	struct vm_area_struct *new_vma;
+
+	struct nommu_swmmu_vma *retained_data;
+	struct nommu_swmmu_vma *replacement_data;
+
+	unsigned long replace_start;
+	unsigned long replace_end;
+
+	bool retained_ref_held;
 };
 
 struct vm_area_struct;

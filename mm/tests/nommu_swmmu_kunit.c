@@ -1020,15 +1020,12 @@ static void nommu_swmmu_mm_map_fixed_replace_test(struct kunit *test)
 	KUNIT_ASSERT_EQ(test, ret, 0);
 }
 
-static void nommu_swmmu_mm_map_fixed_head_replace_unsupported_test(struct kunit *test)
+static void nommu_swmmu_mm_map_fixed_head_replace_test(struct kunit *test)
 {
 	struct nommu_swmmu_mm_test_ctx *ctx = test->priv;
 	unsigned long old_addr;
 	unsigned long replacement;
 	u64 value;
-
-	kunit_skip(test,
-		"partial MAP_FIXED head replacement is not implemented");
 
 	old_addr = nommu_swmmu_kunit_mmap_mm(
 		ctx->mm,
@@ -1099,6 +1096,131 @@ static void nommu_swmmu_mm_map_fixed_head_replace_unsupported_test(struct kunit 
 			0);
 }
 
+#define SWMMU_FIXED_HEAD_ZALLOC_POINTS	4
+#define SWMMU_FIXED_HEAD_PAGE_POINTS	1
+static void nommu_swmmu_mm_map_fixed_head_replace_rollback_test(
+	struct kunit *test)
+{
+	struct nommu_swmmu_mm_test_ctx *ctx = test->priv;
+	unsigned long old_addr;
+	unsigned long replacement;
+	u64 value;
+	unsigned int fail_at;
+	int ret;
+
+	old_addr = nommu_swmmu_kunit_mmap_mm(
+		ctx->mm,
+		0x1000000000UL,
+		SWMMU_PAGE_SIZE * 2,
+		PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS |
+		MAP_FIXED_NOREPLACE);
+	KUNIT_ASSERT_EQ(test, old_addr, 0x1000000000UL);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_store_mm(ctx->mm,
+						   old_addr,
+						   sizeof(value),
+						   41),
+			0);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_store_mm(
+				ctx->mm,
+				old_addr + SWMMU_PAGE_SIZE,
+				sizeof(value),
+				42),
+			0);
+
+	for (fail_at = 0;
+	     fail_at < SWMMU_FIXED_HEAD_ZALLOC_POINTS;
+	     fail_at++) {
+		test_alloc_reset();
+		test_alloc_fail_at(TEST_FAIL_ZALLOC, fail_at);
+
+		replacement = nommu_swmmu_kunit_mmap_mm(
+			ctx->mm,
+			old_addr,
+			SWMMU_PAGE_SIZE,
+			PROT_READ | PROT_WRITE,
+			MAP_PRIVATE | MAP_ANONYMOUS |
+			MAP_FIXED);
+
+		KUNIT_EXPECT_EQ(test,
+				replacement,
+				(unsigned long)-ENOMEM);
+
+		test_alloc_reset();
+
+		/*
+		 * The original two-page VMA must remain unchanged.
+		 */
+		KUNIT_ASSERT_EQ(test,
+				nommu_swmmu_kunit_load_mm(
+					ctx->mm,
+					old_addr,
+					sizeof(value),
+					&value),
+				0);
+		KUNIT_EXPECT_EQ(test, value, 41ULL);
+
+		KUNIT_ASSERT_EQ(test,
+				nommu_swmmu_kunit_load_mm(
+					ctx->mm,
+					old_addr + SWMMU_PAGE_SIZE,
+					sizeof(value),
+					&value),
+				0);
+		KUNIT_EXPECT_EQ(test, value, 42ULL);
+
+		expect_allocations_balanced(test);
+	}
+
+	for (fail_at = 0; fail_at < SWMMU_FIXED_HEAD_PAGE_POINTS;
+	     fail_at++) {
+		test_alloc_reset();
+		test_alloc_fail_at(TEST_FAIL_PAGE_ALLOC, fail_at);
+
+		replacement = nommu_swmmu_kunit_mmap_mm(
+			ctx->mm,
+			old_addr,
+			SWMMU_PAGE_SIZE,
+			PROT_READ | PROT_WRITE,
+			MAP_PRIVATE | MAP_ANONYMOUS |
+			MAP_FIXED);
+
+		KUNIT_EXPECT_EQ(test, replacement,
+				(unsigned long)-ENOMEM);
+
+		test_alloc_reset();
+
+		KUNIT_ASSERT_EQ(test,
+				nommu_swmmu_kunit_load_mm(
+					ctx->mm,
+					old_addr,
+					sizeof(value),
+					&value),
+				0);
+		KUNIT_EXPECT_EQ(test, value, 41ULL);
+
+		KUNIT_ASSERT_EQ(test,
+				nommu_swmmu_kunit_load_mm(
+					ctx->mm,
+					old_addr + SWMMU_PAGE_SIZE,
+					sizeof(value),
+					&value),
+				0);
+		KUNIT_EXPECT_EQ(test, value, 42ULL);
+
+		expect_allocations_balanced(test);
+	}
+
+	ret = nommu_swmmu_kunit_unmap_mm(ctx->mm,
+					 old_addr,
+					 SWMMU_PAGE_SIZE * 2);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+}
+
 
 static int nommu_swmmu_mm_ctx_init(struct kunit *test)
 {
@@ -1142,7 +1264,8 @@ static struct kunit_case nommu_swmmu_mm_test_cases[] = {
 	KUNIT_CASE(nommu_swmmu_mm_fork_zalloc_rollback_test),
 	KUNIT_CASE(nommu_swmmu_mm_fork_page_alloc_rollback_test),
 	KUNIT_CASE(nommu_swmmu_mm_map_fixed_replace_test),
-	KUNIT_CASE(nommu_swmmu_mm_map_fixed_head_replace_unsupported_test),
+	KUNIT_CASE(nommu_swmmu_mm_map_fixed_head_replace_test),
+	KUNIT_CASE(nommu_swmmu_mm_map_fixed_head_replace_rollback_test),
 	{}
 };
 

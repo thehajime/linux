@@ -689,8 +689,9 @@ static void *__swmmu_translate_mm(struct mm_struct *mm,
 	struct vm_area_struct *vma;
 	struct nommu_swmmu_vma *swmmu_vma;
 	struct nommu_swmmu_backing *backing;
-	size_t offset;
+	size_t vma_offset;
 	size_t page_index;
+	size_t page_offset;
 
 	mmap_assert_locked(mm);
 
@@ -721,19 +722,18 @@ static void *__swmmu_translate_mm(struct mm_struct *mm,
 		return NULL;
 	}
 
-	offset = swmmu_vma->page_offset +
-		(address - vma->vm_start);
-
-	page_index = offset / SWMMU_PAGE_SIZE;
-	offset %= SWMMU_PAGE_SIZE;
+	vma_offset = address - vma->vm_start;
+	page_index = swmmu_vma->page_offset +
+		vma_offset / SWMMU_PAGE_SIZE;
+	page_offset = vma_offset % SWMMU_PAGE_SIZE;
 
 	if (page_index >= backing->page_count ||
-		offset + size > SWMMU_PAGE_SIZE) {
+		page_offset + size > SWMMU_PAGE_SIZE) {
 		*status = -EINVAL;
 		return NULL;
 	}
 
-	return page_address(backing->pages[page_index]) + offset;
+	return page_address(backing->pages[page_index]) + page_offset;
 }
 
 static int swmmu_copy_from_mm(struct mm_struct *mm,
@@ -1407,6 +1407,233 @@ void nommu_swmmu_vma_expand_abort(struct nommu_swmmu_space *space,
 	swmmu_resize_abort(space, tx);
 }
 
+static int swmmu_fixed_replace_prepare(struct nommu_swmmu_space *space,
+				struct vm_area_struct *old_vma,
+				unsigned long split_addr,
+				struct nommu_swmmu_vma_tx *tx)
+{
+	struct nommu_swmmu_vma *old_data;
+	struct nommu_swmmu_vma *suffix;
+	unsigned long split_pages;
+
+	if (!space || !old_vma || !tx)
+		return -EINVAL;
+
+	old_data = old_vma->vm_swmmu_data;
+	if (!old_data || !old_data->backing)
+		return -EINVAL;
+
+	if (split_addr <= old_vma->vm_start ||
+	    split_addr >= old_vma->vm_end)
+		return -EINVAL;
+
+	if (!IS_ALIGNED(split_addr - old_vma->vm_start,
+			SWMMU_PAGE_SIZE))
+		return -EINVAL;
+
+	split_pages = (split_addr - old_vma->vm_start) /
+		      SWMMU_PAGE_SIZE;
+
+	if (!split_pages ||
+	    split_pages >= old_data->page_count)
+		return -EINVAL;
+
+	if (old_data->page_offset > old_data->backing->page_count ||
+	    old_data->page_count >
+	    old_data->backing->page_count - old_data->page_offset)
+		return -EINVAL;
+
+	suffix = space->ops->zalloc(sizeof(*suffix), GFP_KERNEL);
+	if (!suffix)
+		return -ENOMEM;
+
+	refcount_inc(&old_data->backing->refs);
+
+	suffix->backing = old_data->backing;
+	suffix->page_offset = old_data->page_offset + split_pages;
+	suffix->page_count = old_data->page_count - split_pages;
+	suffix->access = old_data->access;
+
+	memset(tx, 0, sizeof(*tx));
+
+	tx->type = NOMMU_SWMMU_VMA_TX_FIXED_REPLACE;
+	tx->kind = NOMMU_SWMMU_REPLACE_HEAD;
+	tx->old_vma = old_vma;
+	tx->vma_data = old_data;
+	tx->retained_data = suffix;
+	tx->replace_start = old_vma->vm_start;
+	tx->replace_end = split_addr;
+	tx->retained_ref_held = true;
+
+	return 0;
+}
+
+static void swmmu_fixed_replace_commit(struct nommu_swmmu_space *space,
+				struct nommu_swmmu_vma_tx *tx)
+{
+	struct nommu_swmmu_vma *old_data;
+
+	if (!space || !tx ||
+	    tx->type != NOMMU_SWMMU_VMA_TX_FIXED_REPLACE)
+		return;
+
+	if (WARN_ON_ONCE(!tx->old_vma ||
+				!tx->vma_data ||
+				!tx->retained_data))
+		return;
+
+	old_data = tx->vma_data;
+	tx->old_vma->vm_swmmu_data = tx->retained_data;
+	tx->retained_data = NULL;
+	tx->retained_ref_held = false;
+	tx->vma_data = NULL;
+
+	/*
+	 * The retained view holds its own backing reference, so the
+	 * old view can now be released.
+	 */
+	swmmu_vma_data_release(space, old_data);
+
+	tx->old_vma = NULL;
+	tx->new_vma = NULL;
+	tx->type = 0;
+}
+
+static void swmmu_fixed_replace_abort(struct nommu_swmmu_space *space,
+				struct nommu_swmmu_vma_tx *tx)
+{
+	if (!space || !tx ||
+	    tx->type != NOMMU_SWMMU_VMA_TX_FIXED_REPLACE)
+		return;
+
+	if (tx->retained_data) {
+		swmmu_vma_data_release(space, tx->retained_data);
+		tx->retained_data = NULL;
+	}
+
+	if (tx->replacement_data) {
+		swmmu_vma_data_release(space, tx->replacement_data);
+		tx->replacement_data = NULL;
+	}
+
+	if (tx->new_vma) {
+		vm_area_free(tx->new_vma);
+		tx->new_vma = NULL;
+	}
+
+	tx->retained_ref_held = false;
+	tx->vma_data = NULL;
+	tx->old_vma = NULL;
+	tx->type = 0;
+}
+
+
+static unsigned long swmmu_mmap_fixed_head_replace(struct mm_struct *mm,
+						struct nommu_swmmu_space *space,
+						struct vm_area_struct *old_vma,
+						unsigned long start,
+						unsigned long end,
+						unsigned long prot,
+						vma_flags_t vma_flags,
+						unsigned long pgoff)
+{
+	struct nommu_swmmu_vma_tx tx = {};
+	struct nommu_swmmu_backing *backing;
+	struct vm_area_struct *new_vma;
+	VMA_ITERATOR(vmi, mm, start);
+	unsigned long length = end - start;
+	unsigned int access = 0;
+	unsigned long split_pages;
+	int ret;
+
+	if (!old_vma->vm_swmmu_data ||
+	    old_vma->vm_file ||
+	    old_vma->vm_region)
+		return -EOPNOTSUPP;
+
+	ret = swmmu_fixed_replace_prepare(space, old_vma, end, &tx);
+	if (ret)
+		return ret;
+
+	if (prot & PROT_READ)
+		access |= NOMMU_SWMMU_READ;
+	if (prot & PROT_WRITE)
+		access |= NOMMU_SWMMU_WRITE;
+	if (prot & PROT_EXEC)
+		access |= NOMMU_SWMMU_EXEC;
+
+	backing = swmmu_backing_alloc(space, length);
+	if (!backing) {
+		ret = -ENOMEM;
+		goto abort;
+	}
+
+	tx.replacement_data =
+		swmmu_vma_data_create(space, backing);
+	if (!tx.replacement_data) {
+		swmmu_backing_release(space, backing);
+		ret = -ENOMEM;
+		goto abort;
+	}
+
+	/*
+	 * swmmu_vma_data_create() takes ownership of @backing.
+	 */
+	tx.replacement_data->access = access;
+
+	new_vma = vm_area_dup(old_vma);
+	if (!new_vma) {
+		ret = -ENOMEM;
+		goto abort;
+	}
+
+	tx.new_vma = new_vma;
+
+	new_vma->vm_mm = mm;
+	new_vma->vm_start = start;
+	new_vma->vm_end = end;
+	new_vma->vm_swmmu_data = NULL;
+	vma_set_pgoff(new_vma, pgoff);
+
+	/*
+	 * The store range is the replacement prefix. Maple Tree keeps
+	 * the remainder of old_vma's original range as the suffix.
+	 */
+	vma_iter_config(&vmi, start, end);
+	ret = vma_iter_prealloc(&vmi, new_vma);
+	if (ret)
+		goto abort;
+
+	new_vma->vm_swmmu_data = tx.replacement_data;
+	tx.replacement_data = NULL;
+
+	vma_start_write(old_vma);
+	vma_start_write(new_vma);
+
+	split_pages = (end - old_vma->vm_start) / SWMMU_PAGE_SIZE;
+
+	/*
+	 * This is the point of no return: preallocation succeeded and
+	 * the following store must not fail.
+	 */
+	old_vma->vm_start = end;
+	vma_add_pgoff(old_vma, split_pages);
+
+	vma_iter_store_new(&vmi, new_vma);
+
+	mm->map_count++;
+	swmmu_fixed_replace_commit(space, &tx);
+
+	validate_mm(mm);
+	nommu_swmmu_validate(mm);
+
+	return start;
+
+abort:
+	swmmu_fixed_replace_abort(space, &tx);
+	return ret;
+}
+
 static unsigned long
 __do_mmap_swmmu(struct mm_struct *mm,
 		struct file *file,
@@ -1516,8 +1743,13 @@ __do_mmap_swmmu(struct mm_struct *mm,
 		}
 
 		/* FIXME: to be impleneted */
-		if (head_replace || middle_replace || tail_replace)
+		if (middle_replace || tail_replace)
 			return -EOPNOTSUPP;
+
+		if (head_replace)
+			return swmmu_mmap_fixed_head_replace(mm,
+				space, replace_vma, addr, end,
+				prot, vma_flags, pgoff);
 
 		start = addr;
 	}
