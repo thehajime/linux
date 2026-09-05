@@ -1844,10 +1844,27 @@ static void swmmu_split_abort(struct vm_area_struct *vma,
 	space->ops->dealloc(tx);
 }
 
+static void nommu_swmmu_remove_detached_vma(struct mm_struct *mm,
+					struct vm_area_struct *vma)
+{
+	if (!mm || !vma)
+		return;
+
+	nommu_swmmu_vma_close(mm, vma);
+	vma_close(vma);
+
+	if (vma->vm_file)
+		fput(vma->vm_file);
+
+	vm_area_free(vma);
+}
+
+
 static const struct vma_backend_ops nommu_swmmu_vma_backend_ops = {
 	.split_prepare = swmmu_split_prepare,
 	.split_commit = swmmu_split_commit,
 	.split_abort = swmmu_split_abort,
+	.remove_detached = nommu_swmmu_remove_detached_vma,
 };
 
 static int

@@ -889,6 +889,9 @@ struct vma_backend_ops {
 	void (*split_abort)(struct vm_area_struct *vma,
 			    struct vm_area_struct *new,
 			    void *state);
+
+	void (*remove_detached)(struct mm_struct *mm,
+		       struct vm_area_struct *vma);
 };
 
 int vma_split_backend(struct vma_iterator *vmi,
@@ -915,5 +918,14 @@ int vma_gather_range(struct vma_munmap_struct *vms,
 		     struct ma_state *mas_detach);
 
 void vma_reattach_vmas(struct ma_state *mas_detach);
+
+typedef void (*vma_remove_detached_fn)(
+	struct mm_struct *mm,
+	struct vm_area_struct *vma);
+
+void vma_remove_detached(struct vma_munmap_struct *vms,
+	struct ma_state *mas_detach,
+	struct mm_struct *mm,
+	vma_remove_detached_fn remove);
 
 #endif	/* __MM_VMA_H */

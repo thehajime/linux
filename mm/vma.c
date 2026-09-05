@@ -502,6 +502,15 @@ void remove_vma(struct vm_area_struct *vma)
 	vm_area_free(vma);
 }
 
+static void vma_remove_detached_mmu(struct mm_struct *mm,
+				struct vm_area_struct *vma)
+{
+	/*
+	 * Use the exact remove_vma() signature in this branch.
+	 */
+	remove_vma(vma);
+}
+
 /*
  * Get rid of page table information in the indicated region.
  *
@@ -1381,8 +1390,7 @@ static void vms_complete_munmap_vmas(struct vma_munmap_struct *vms,
 
 	/* Remove and clean up vmas */
 	mas_set(mas_detach, 0);
-	mas_for_each(mas_detach, vma, ULONG_MAX)
-		remove_vma(vma);
+	vma_remove_detached(&vms, mas_detach, mm, vma_remove_detached_mmu);
 
 	vm_unacct_memory(vms->nr_accounted);
 	validate_mm(mm);

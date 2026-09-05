@@ -83,6 +83,23 @@ void vma_backend_split_adjust(struct vm_area_struct *vma,
 
 #endif /* !CONFIG_MMU */
 
+void vma_remove_detached(struct vma_munmap_struct *vms,
+			struct ma_state *mas_detach,
+			struct mm_struct *mm,
+			vma_remove_detached_fn remove)
+{
+	struct vm_area_struct *vma;
+
+	if (!mm || !remove)
+		return;
+
+	mas_set(mas_detach, 0);
+
+	mas_for_each(mas_detach, vma, ULONG_MAX)
+		remove(mm, vma);
+}
+
+
 static void
 debug_dump_vma_range(const char *where,
 		     struct vm_area_struct *vma)
