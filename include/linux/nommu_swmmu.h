@@ -53,6 +53,7 @@ enum nommu_swmmu_vma_tx_type {
 };
 
 enum nommu_swmmu_replace_kind {
+	NOMMU_SWMMU_REPLACE_EXACT,
 	NOMMU_SWMMU_REPLACE_HEAD,
 	NOMMU_SWMMU_REPLACE_TAIL,
 	NOMMU_SWMMU_REPLACE_MIDDLE,
@@ -80,7 +81,8 @@ struct nommu_swmmu_vma_tx {
 	struct vm_area_struct *old_vma;
 	struct vm_area_struct *new_vma;
 
-	struct nommu_swmmu_vma *retained_data;
+	struct nommu_swmmu_vma *left_data;
+	struct nommu_swmmu_vma *right_data;
 	struct nommu_swmmu_vma *replacement_data;
 
 	unsigned long replace_start;
