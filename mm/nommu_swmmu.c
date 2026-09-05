@@ -1020,6 +1020,20 @@ int swmmu_clone_space(struct nommu_swmmu_space *parent,
 	return -EOPNOTSUPP;
 }
 
+static unsigned int swmmu_access_from_prot(unsigned long prot)
+{
+	unsigned int access = NOMMU_SWMMU_NONE;
+
+	if (prot & PROT_READ)
+		access |= NOMMU_SWMMU_READ;
+	if (prot & PROT_WRITE)
+		access |= NOMMU_SWMMU_WRITE;
+	if (prot & PROT_EXEC)
+		access |= NOMMU_SWMMU_EXEC;
+
+	return access;
+}
+
 static int swmmu_resize_prepare(struct nommu_swmmu_space *space,
 				struct nommu_swmmu_vma *vma_data,
 				size_t new_size,
@@ -1433,6 +1447,34 @@ void nommu_swmmu_vma_expand_abort(struct nommu_swmmu_space *space,
 	swmmu_resize_abort(space, tx);
 }
 
+static struct vm_area_struct *swmmu_fixed_alloc_vma(struct mm_struct *mm,
+						struct vm_area_struct *template,
+						unsigned long start,
+						unsigned long end,
+						vma_flags_t vma_flags,
+						unsigned long pgoff)
+{
+	struct vm_area_struct *vma;
+
+	if (template)
+		vma = vm_area_dup(template);
+	else
+		vma = vm_area_alloc(mm);
+
+	if (!vma)
+		return NULL;
+
+	vma->vm_mm = mm;
+	vma->vm_start = start;
+	vma->vm_end = end;
+	vma->vm_swmmu_data = NULL;
+
+	vm_flags_init(vma, vma_flags_to_legacy(vma_flags));
+	vma_set_pgoff(vma, pgoff);
+
+	return vma;
+}
+
 static int swmmu_fixed_replace_prepare(struct nommu_swmmu_space *space,
 				struct vm_area_struct *old_vma,
 				unsigned long start,
@@ -1607,13 +1649,6 @@ static unsigned long swmmu_mmap_fixed_replace(struct mm_struct *mm,
 	if (ret)
 		return ret;
 
-	if (prot & PROT_READ)
-		access |= NOMMU_SWMMU_READ;
-	if (prot & PROT_WRITE)
-		access |= NOMMU_SWMMU_WRITE;
-	if (prot & PROT_EXEC)
-		access |= NOMMU_SWMMU_EXEC;
-
 	backing = swmmu_backing_alloc(space, length);
 	if (!backing) {
 		ret = -ENOMEM;
@@ -1628,24 +1663,16 @@ static unsigned long swmmu_mmap_fixed_replace(struct mm_struct *mm,
 		goto abort;
 	}
 
-	/*
-	 * swmmu_vma_data_create() takes ownership of @backing.
-	 */
-	tx.replacement_data->access = access;
-
-	new_vma = vm_area_dup(old_vma);
+	new_vma = swmmu_fixed_alloc_vma(mm, old_vma, start, end, vma_flags,
+					pgoff);
 	if (!new_vma) {
 		ret = -ENOMEM;
 		goto abort;
 	}
 
 	tx.new_vma = new_vma;
-
-	new_vma->vm_mm = mm;
-	new_vma->vm_start = start;
-	new_vma->vm_end = end;
-	new_vma->vm_swmmu_data = NULL;
-	vma_set_pgoff(new_vma, pgoff);
+	access = swmmu_access_from_prot(prot);
+	tx.replacement_data->access = access;
 
 	/*
 	 * The store range is the replacement prefix. Maple Tree keeps
@@ -1715,23 +1742,12 @@ static unsigned long swmmu_mmap_fixed_middle_replace(struct mm_struct *mm,
 	    old_vma->vm_region)
 		return -EOPNOTSUPP;
 
-	new_vma = vm_area_dup(old_vma);
+	new_vma = swmmu_fixed_alloc_vma(mm, old_vma, start, end,
+					vma_flags, pgoff);
 	if (!new_vma)
 		return -ENOMEM;
 
-	if (prot & PROT_READ)
-		tx.replacement_access |= NOMMU_SWMMU_READ;
-	if (prot & PROT_WRITE)
-		tx.replacement_access |= NOMMU_SWMMU_WRITE;
-	if (prot & PROT_EXEC)
-		tx.replacement_access |= NOMMU_SWMMU_EXEC;
-
-	new_vma->vm_mm = mm;
-	new_vma->vm_start = start;
-	new_vma->vm_end = end;
-	new_vma->vm_swmmu_data = NULL;
-	vm_flags_init(new_vma, vma_flags_to_legacy(vma_flags));
-	vma_set_pgoff(new_vma, pgoff);
+	tx.replacement_access = swmmu_access_from_prot(prot);
 
 	mt_init_flags(&mt_detach,
 		      vmi.mas.tree->ma_flags &
@@ -1783,23 +1799,14 @@ static unsigned long swmmu_mmap_fixed_range_replace(struct mm_struct *mm,
 	struct nommu_swmmu_vma_tx tx = {};
 	int ret;
 
-	insert = vm_area_alloc(mm);
+	insert = swmmu_fixed_alloc_vma(mm, NULL, start, end,
+				vma_flags, pgoff);
 	if (!insert)
 		return -ENOMEM;
 
-	insert->vm_start = start;
-	insert->vm_end = end;
-	insert->vm_mm = mm;
-	vm_flags_init(insert, vma_flags_to_legacy(vma_flags));
-	vma_set_pgoff(insert, pgoff);
 	insert->vm_swmmu_data = NULL;
 
-	if (prot & PROT_READ)
-		tx.replacement_access |= NOMMU_SWMMU_READ;
-	if (prot & PROT_WRITE)
-		tx.replacement_access |= NOMMU_SWMMU_WRITE;
-	if (prot & PROT_EXEC)
-		tx.replacement_access |= NOMMU_SWMMU_EXEC;
+	tx.replacement_access = swmmu_access_from_prot(prot);
 
 	mt_init_flags(&mt_detach,
 		      vmi.mas.tree->ma_flags &
@@ -1956,30 +1963,16 @@ __do_mmap_swmmu(struct mm_struct *mm,
 	}
 	end = start + PAGE_ALIGN(len);
 
-	access = 0;
-	if (prot & PROT_READ)
-		access |= NOMMU_SWMMU_READ;
-	if (prot & PROT_WRITE)
-		access |= NOMMU_SWMMU_WRITE;
-	if (prot & PROT_EXEC)
-		access |= NOMMU_SWMMU_EXEC;
-
-
 	backing = swmmu_backing_alloc(space, end - start);
 	if (!backing)
 		return -ENOMEM;
 
-	vma = vm_area_alloc(mm);
+	vma = swmmu_fixed_alloc_vma(mm, NULL, start, end,
+					vma_flags, pgoff);
 	if (!vma) {
 		swmmu_backing_release(space, backing);
 		return -ENOMEM;
 	}
-
-	vm_flags_init(vma, vma_flags_to_legacy(vma_flags));
-	vma_set_pgoff(vma, pgoff);
-
-	vma->vm_start = start;
-	vma->vm_end = end;
 
 	swmmu_vma = swmmu_vma_data_create(space, backing);
 	if (!swmmu_vma) {
@@ -1988,6 +1981,7 @@ __do_mmap_swmmu(struct mm_struct *mm,
 		return -ENOMEM;
 	}
 
+	access = swmmu_access_from_prot(prot);
 	swmmu_vma->access = access;
 	vma->vm_swmmu_data = swmmu_vma;
 
