@@ -675,7 +675,7 @@ static int split_vma(struct vma_iterator *vmi, struct vm_area_struct *vma,
 	if (vma->vm_mm->map_count >= get_sysctl_max_map_count())
 		return -ENOMEM;
 
-	return __split_vma(vmi, vma, addr, new_below);
+	return vma_split_backend(vmi, vma, addr, new_below, NULL);
 }
 
 /*
@@ -1448,7 +1448,7 @@ static int vms_gather_munmap_vmas(struct vma_munmap_struct *vms,
 			goto start_split_failed;
 		}
 
-		error = __split_vma(vms->vmi, vms->vma, vms->start, 1);
+		error = vma_split_backend(vms->vmi, vms->vma, vms->start, 1, vms->backend);
 		if (error)
 			goto start_split_failed;
 	}
@@ -1469,7 +1469,7 @@ static int vms_gather_munmap_vmas(struct vma_munmap_struct *vms,
 		}
 		/* Does it split the end? */
 		if (next->vm_end > vms->end) {
-			error = __split_vma(vms->vmi, next, vms->end, 0);
+			error = vma_split_backend(vms->vmi, next, vms->end, 0, vms->backend);
 			if (error)
 				goto end_split_failed;
 		}
@@ -1570,10 +1570,11 @@ map_count_exceeded:
 static void init_vma_munmap(struct vma_munmap_struct *vms,
 		struct vma_iterator *vmi, struct vm_area_struct *vma,
 		unsigned long start, unsigned long end, struct list_head *uf,
-		bool unlock)
+		bool unlock, const struct vma_backend_ops *backend)
 {
 	vms->vmi = vmi;
 	vms->vma = vma;
+	vms->backend = backend;
 	if (vma) {
 		vms->start = start;
 		vms->end = end;
@@ -1615,7 +1616,7 @@ int do_vmi_align_munmap(struct vma_iterator *vmi, struct vm_area_struct *vma,
 	struct vma_munmap_struct vms;
 	int error;
 
-	init_vma_munmap(&vms, vmi, vma, start, end, uf, unlock);
+	init_vma_munmap(&vms, vmi, vma, start, end, uf, unlock, NULL);
 	error = vms_gather_munmap_vmas(&vms, &mas_detach);
 	if (error)
 		goto gather_failed;
@@ -2470,7 +2471,7 @@ static int __mmap_setup(struct mmap_state *map, struct vm_area_desc *desc,
 	/* Find the first overlapping VMA and initialise unmap state. */
 	vms->vma = vma_find(vmi, map->end);
 	init_vma_munmap(vms, vmi, vms->vma, map->addr, map->end, uf,
-			/* unlock = */ false);
+			/* unlock = */ false, NULL);
 
 	/* OK, we have overlapping VMAs - prepare to unmap them. */
 	if (vms->vma) {
