@@ -1632,6 +1632,216 @@ static void nommu_swmmu_mm_map_fixed_multi_vma_replace_test(struct kunit *test)
 	KUNIT_ASSERT_EQ(test, ret, 0);
 }
 
+static void nommu_swmmu_mm_map_fixed_multi_vma_replace_rollback_test(
+	struct kunit *test)
+{
+	struct nommu_swmmu_mm_test_ctx *ctx = test->priv;
+	const unsigned long base = 0x1000000000UL;
+	unsigned long first;
+	unsigned long second;
+	unsigned long replacement;
+	unsigned long old_map_count;
+	u64 value;
+	int ret;
+
+	first = nommu_swmmu_kunit_mmap_mm(
+		ctx->mm,
+		base,
+		SWMMU_PAGE_SIZE * 2,
+		PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS |
+		MAP_FIXED_NOREPLACE);
+	KUNIT_ASSERT_EQ(test, first, base);
+
+	second = nommu_swmmu_kunit_mmap_mm(
+		ctx->mm,
+		base + 3 * SWMMU_PAGE_SIZE,
+		SWMMU_PAGE_SIZE * 2,
+		PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS |
+		MAP_FIXED_NOREPLACE);
+	KUNIT_ASSERT_EQ(test,
+			second,
+			base + 3 * SWMMU_PAGE_SIZE);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_store_mm(
+				ctx->mm, base, sizeof(value), 41),
+			0);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_store_mm(
+				ctx->mm,
+				base + SWMMU_PAGE_SIZE,
+				sizeof(value),
+				42),
+			0);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_store_mm(
+				ctx->mm,
+				base + 3 * SWMMU_PAGE_SIZE,
+				sizeof(value),
+				43),
+			0);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_store_mm(
+				ctx->mm,
+				base + 4 * SWMMU_PAGE_SIZE,
+				sizeof(value),
+				44),
+			0);
+
+	old_map_count = ctx->mm->map_count;
+
+	/*
+	 * Fail the first SWMMU backend allocation during replacement.
+	 * The original mappings must remain untouched.
+	 */
+	test_alloc_fail_at(TEST_FAIL_ZALLOC, 0);
+
+	replacement = nommu_swmmu_kunit_mmap_mm(
+		ctx->mm,
+		base + SWMMU_PAGE_SIZE,
+		3 * SWMMU_PAGE_SIZE,
+		PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED);
+
+	KUNIT_EXPECT_EQ(test, replacement,
+			(unsigned long)-ENOMEM);
+
+	test_alloc_reset();
+
+	KUNIT_EXPECT_EQ(test, ctx->mm->map_count, old_map_count);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_load_mm(
+				ctx->mm, base, sizeof(value), &value),
+			0);
+	KUNIT_EXPECT_EQ(test, value, 41ULL);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_load_mm(
+				ctx->mm,
+				base + SWMMU_PAGE_SIZE,
+				sizeof(value),
+				&value),
+			0);
+	KUNIT_EXPECT_EQ(test, value, 42ULL);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_load_mm(
+				ctx->mm,
+				base + 3 * SWMMU_PAGE_SIZE,
+				sizeof(value),
+				&value),
+			0);
+	KUNIT_EXPECT_EQ(test, value, 43ULL);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_load_mm(
+				ctx->mm,
+				base + 4 * SWMMU_PAGE_SIZE,
+				sizeof(value),
+				&value),
+			0);
+	KUNIT_EXPECT_EQ(test, value, 44ULL);
+
+	/*
+	 * The gap must remain unmapped.
+	 */
+	ret = nommu_swmmu_kunit_load_mm(
+		ctx->mm,
+		base + 2 * SWMMU_PAGE_SIZE,
+		sizeof(value),
+		&value);
+	KUNIT_EXPECT_EQ(test, ret, -EFAULT);
+
+	ret = nommu_swmmu_kunit_unmap_mm(
+		ctx->mm, base, 2 * SWMMU_PAGE_SIZE);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	ret = nommu_swmmu_kunit_unmap_mm(
+		ctx->mm,
+		base + 3 * SWMMU_PAGE_SIZE,
+		2 * SWMMU_PAGE_SIZE);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+}
+
+static void nommu_swmmu_mm_map_fixed_tail_replace_rollback_test(
+	struct kunit *test)
+{
+	struct nommu_swmmu_mm_test_ctx *ctx = test->priv;
+	const unsigned long base = 0x1000000000UL;
+	unsigned long address;
+	unsigned long replacement;
+	unsigned long old_map_count;
+	u64 value;
+	int ret;
+
+	address = nommu_swmmu_kunit_mmap_mm(
+		ctx->mm,
+		base,
+		2 * SWMMU_PAGE_SIZE,
+		PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS |
+		MAP_FIXED_NOREPLACE);
+	KUNIT_ASSERT_EQ(test, address, base);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_store_mm(
+				ctx->mm, base, sizeof(value), 41),
+			0);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_store_mm(
+				ctx->mm,
+				base + SWMMU_PAGE_SIZE,
+				sizeof(value),
+				42),
+			0);
+
+	old_map_count = ctx->mm->map_count;
+
+	test_alloc_fail_at(TEST_FAIL_ZALLOC, 0);
+
+	replacement = nommu_swmmu_kunit_mmap_mm(
+		ctx->mm,
+		base + SWMMU_PAGE_SIZE,
+		SWMMU_PAGE_SIZE,
+		PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED);
+
+	KUNIT_EXPECT_EQ(test, replacement,
+			(unsigned long)-ENOMEM);
+
+	test_alloc_reset();
+
+	KUNIT_EXPECT_EQ(test, ctx->mm->map_count, old_map_count);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_load_mm(
+				ctx->mm, base, sizeof(value), &value),
+			0);
+	KUNIT_EXPECT_EQ(test, value, 41ULL);
+
+	KUNIT_ASSERT_EQ(test,
+			nommu_swmmu_kunit_load_mm(
+				ctx->mm,
+				base + SWMMU_PAGE_SIZE,
+				sizeof(value),
+				&value),
+			0);
+	KUNIT_EXPECT_EQ(test, value, 42ULL);
+
+	ret = nommu_swmmu_kunit_unmap_mm(
+		ctx->mm, base, 2 * SWMMU_PAGE_SIZE);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+}
+
+
+
 static int nommu_swmmu_mm_ctx_init(struct kunit *test)
 {
 	struct nommu_swmmu_mm_test_ctx *ctx;
@@ -1680,6 +1890,8 @@ static struct kunit_case nommu_swmmu_mm_test_cases[] = {
 	KUNIT_CASE(nommu_swmmu_mm_map_fixed_middle_replace_test),
 	KUNIT_CASE(nommu_swmmu_mm_map_fixed_middle_replace_rollback_test),
 	KUNIT_CASE(nommu_swmmu_mm_map_fixed_multi_vma_replace_test),
+	KUNIT_CASE(nommu_swmmu_mm_map_fixed_multi_vma_replace_rollback_test),
+	KUNIT_CASE(nommu_swmmu_mm_map_fixed_tail_replace_rollback_test),
 	{}
 };
 
