@@ -1840,6 +1840,77 @@ static void nommu_swmmu_mm_map_fixed_tail_replace_rollback_test(
 	KUNIT_ASSERT_EQ(test, ret, 0);
 }
 
+static void nommu_swmmu_mm_mremap_maymove_test(struct kunit *test)
+{
+	struct nommu_swmmu_mm_test_ctx *ctx = test->priv;
+	const unsigned long base = 0x1000000000UL;
+	unsigned long source;
+	unsigned long guard;
+	unsigned long moved;
+	u64 value;
+	int ret;
+
+	kunit_skip(test, "%s: not implemented yet", __func__);
+
+	source = nommu_swmmu_kunit_mmap_mm(
+		ctx->mm,
+		base,
+		SWMMU_PAGE_SIZE,
+		PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS |
+		MAP_FIXED_NOREPLACE);
+	KUNIT_ASSERT_EQ(test, source, base);
+
+	guard = nommu_swmmu_kunit_mmap_mm(
+		ctx->mm,
+		base + SWMMU_PAGE_SIZE,
+		SWMMU_PAGE_SIZE,
+		PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS |
+		MAP_FIXED_NOREPLACE);
+	KUNIT_ASSERT_EQ(test, guard, base + SWMMU_PAGE_SIZE);
+
+	ret = nommu_swmmu_kunit_store_mm(
+		ctx->mm, source, sizeof(value), 0x12345678);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	moved = nommu_swmmu_kunit_mremap_mm(
+		ctx->mm,
+		source,
+		SWMMU_PAGE_SIZE,
+		2 * SWMMU_PAGE_SIZE,
+		MREMAP_MAYMOVE,
+		0);
+
+	KUNIT_ASSERT_NE(test, moved, (unsigned long)-EINVAL);
+	KUNIT_ASSERT_NE(test, moved, source);
+
+	ret = nommu_swmmu_kunit_load_mm(
+		ctx->mm, moved, sizeof(value), &value);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+	KUNIT_EXPECT_EQ(test, value, 0x12345678ULL);
+
+	ret = nommu_swmmu_kunit_load_mm(
+		ctx->mm,
+		moved + SWMMU_PAGE_SIZE,
+		sizeof(value),
+		&value);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+	KUNIT_EXPECT_EQ(test, value, 0ULL);
+
+	ret = nommu_swmmu_kunit_load_mm(
+		ctx->mm, source, sizeof(value), &value);
+	KUNIT_EXPECT_EQ(test, ret, -EFAULT);
+
+	ret = nommu_swmmu_kunit_unmap_mm(
+		ctx->mm, guard, SWMMU_PAGE_SIZE);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	ret = nommu_swmmu_kunit_unmap_mm(
+		ctx->mm, moved, 2 * SWMMU_PAGE_SIZE);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+}
+
 
 
 static int nommu_swmmu_mm_ctx_init(struct kunit *test)
@@ -1892,6 +1963,7 @@ static struct kunit_case nommu_swmmu_mm_test_cases[] = {
 	KUNIT_CASE(nommu_swmmu_mm_map_fixed_multi_vma_replace_test),
 	KUNIT_CASE(nommu_swmmu_mm_map_fixed_multi_vma_replace_rollback_test),
 	KUNIT_CASE(nommu_swmmu_mm_map_fixed_tail_replace_rollback_test),
+	KUNIT_CASE(nommu_swmmu_mm_mremap_maymove_test),
 	{}
 };
 
