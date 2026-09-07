@@ -66,6 +66,7 @@ struct swmmu_pagetable_tx {
 	unsigned long drop_first;
 	unsigned long drop_nr_ptes;
 	struct swmmu_pte *drop_saved;
+	bool move_reuses_pagetable;
 };
 
 
@@ -1841,6 +1842,7 @@ static int swmmu_move_prepare(struct vma_remap_struct *vrm,
 		}
 
 		tx->new_range = new_range;
+		tx->move_reuses_pagetable = true;
 		*state = tx;
 		return 0;
 	}
@@ -1899,6 +1901,11 @@ static void swmmu_move_commit(struct vma_remap_struct *vrm,
 	dst->vm_swmmu_pt_range = tx->new_range;
 	tx->new_range = NULL;
 
+	if (tx->move_reuses_pagetable) {
+		tx->source->first = 0;
+		tx->source->nr_ptes = 0;
+	}
+
 	tx->source = NULL;
 	tx->new_vma = NULL;
 	tx->kind = 0;
@@ -1921,7 +1928,12 @@ static void swmmu_move_abort(struct vma_remap_struct *vrm,
 	space = src->vm_mm->swmmu_space;
 
 	if (tx->new_range) {
-		swmmu_pagetable_range_release_locked(space, tx->new_range);
+		if (tx->move_reuses_pagetable)
+			swmmu_pagetable_range_put_locked(space, tx->new_range);
+		else
+			swmmu_pagetable_range_release_locked(space,
+							tx->new_range);
+
 		tx->new_range = NULL;
 	}
 
@@ -2751,6 +2763,55 @@ int do_munmap(struct mm_struct *mm,
 	return do_munmap_nommu(mm, start, len, uf);
 }
 
+static unsigned long swmmu_mremap_move(struct mm_struct *mm,
+				       struct vm_area_struct *src,
+				       unsigned long old_len,
+				       unsigned long new_len)
+{
+	struct vma_remap_struct vrm = {};
+	struct vm_area_struct *dst;
+	unsigned long new_addr;
+	int ret;
+
+	ret = swmmu_find_free_range(mm, SWMMU_VA_BASE, new_len, &new_addr);
+	if (ret)
+		return ret;
+
+	dst = vm_area_dup(src);
+	if (!dst)
+		return -ENOMEM;
+
+	dst->vm_mm = mm;
+	dst->vm_start = new_addr;
+	dst->vm_end = new_addr + new_len;
+	dst->vm_swmmu_pt_range = NULL;
+
+	vma_set_pgoff(dst, src->vm_pgoff);
+
+	vrm.mm = mm;
+	vrm.addr = src->vm_start;
+	vrm.old_len = old_len;
+	vrm.new_len = new_len;
+	vrm.new_addr = new_addr;
+	vrm.vma = src;
+	vrm.new_vma = dst;
+	vrm.backend = &nommu_swmmu_vma_backend_ops;
+
+	ret = vma_move_at(&vrm, src, dst);
+	if (ret) {
+		/*
+		 * vma_move_at() owns cleanup after it starts.
+		 * Before that point, the destination is still caller-owned.
+		 */
+		if (!vrm.move_backend_active)
+			vm_area_free(dst);
+
+		return ret;
+	}
+
+	return new_addr;
+}
+
 static unsigned long
 __do_mremap(struct mm_struct *mm,
 	    unsigned long addr,
@@ -2763,7 +2824,7 @@ __do_mremap(struct mm_struct *mm,
 	struct vm_area_struct *vma;
 	struct swmmu_pagetable_tx vma_tx;
 	struct vm_area_struct *next;
-	int ret;
+	unsigned long ret;
 	unsigned long end;
 
 	mmap_assert_write_locked(mm);
@@ -2782,9 +2843,12 @@ __do_mremap(struct mm_struct *mm,
 	end = addr + old_len;
 	vma = vma_find(&vmi, end);
 
-	if (!vma || !vma->vm_swmmu_pt_range)
+	if (!vma || !vma->vm_swmmu_pt_range) {
+		if (mm != current->mm)
+			return -EINVAL;
 		return do_mremap_nommu(addr, old_len, new_len,
 				flags, new_addr);
+	}
 
 	/*
 	 * The current SWMMU implementation only supports remapping
@@ -2794,7 +2858,7 @@ __do_mremap(struct mm_struct *mm,
 		end != vma->vm_end)
 		return -EINVAL;
 
-	if (flags & (MREMAP_MAYMOVE | MREMAP_FIXED))
+	if (flags & MREMAP_FIXED)
 		return -EINVAL;
 
 	next = vma_next(&vmi);
@@ -2841,13 +2905,22 @@ __do_mremap(struct mm_struct *mm,
 		};
 
 		ret = vma_expand(&vmg);
+		if (!ret)
+			goto remap_success;
+
+		if (ret != -ENOMEM ||
+			!(flags & MREMAP_MAYMOVE))
+			return ret;
+
+		/* in-place expansion failed and relocation was requested */
+		ret = swmmu_mremap_move(mm, vma, old_len, new_len);
 		if (ret)
 			return ret;
 	}
 
+remap_success:
 	validate_mm(mm);
 	nommu_swmmu_validate(mm);
-
 	return vma->vm_start;
 }
 

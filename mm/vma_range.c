@@ -129,6 +129,110 @@ void vma_move_abort(struct vma_remap_struct *vrm)
 	vrm->move_backend_prepared = false;
 }
 
+int vma_move_at(struct vma_remap_struct *vrm, struct vm_area_struct *src,
+		struct vm_area_struct *dst)
+{
+	struct maple_tree mt_detach;
+	MA_STATE(mas_detach, &mt_detach, 0, 0);
+	struct vma_munmap_struct vms;
+	VMA_ITERATOR(dst_vmi, vrm->mm, dst->vm_start);
+	int ret;
+
+	if (!vrm || !vrm->mm || !src || !dst ||
+	    !vrm->backend ||
+	    !vrm->backend->remove_detached)
+		return -EINVAL;
+
+	if (src->vm_start != vrm->addr ||
+	    src->vm_end != vrm->addr + vrm->old_len)
+		return -EOPNOTSUPP;
+
+	/*
+	 * The first move implementation handles a complete source VMA.
+	 * MREMAP_FIXED and overlapping destinations use other paths.
+	 */
+	if (dst->vm_start != vrm->new_addr ||
+	    dst->vm_end != vrm->new_addr + vrm->new_len)
+		return -EINVAL;
+
+	mt_init_flags(&mt_detach,
+		      vrm->mm->mm_mt.ma_flags & MT_FLAGS_LOCK_MASK);
+	mt_on_stack(mt_detach);
+
+	VMA_ITERATOR(vmi, vrm->mm, src->vm_start);
+	vrm->vmi = &vmi;
+
+	vma_init_munmap(&vms, vrm->vmi, src,
+			src->vm_start, src->vm_end,
+			vrm->uf_unmap, false,
+			vrm->backend);
+
+	/*
+	 * Prepare the backend while the source is still fully valid.
+	 */
+	ret = vma_move_prepare(vrm, src, dst);
+	if (ret)
+		goto out_destroy;
+
+	/*
+	 * Gather the source into the detached tree. For this first
+	 * version, the exact-range check above means no split is needed.
+	 */
+	ret = vma_gather_range(&vms, &mas_detach);
+	if (ret)
+		goto abort_backend;
+
+	/*
+	 * Clear the source range from the main VMA tree. The detached
+	 * source remains available for rollback.
+	 */
+	ret = vma_iter_clear_gfp(
+		vrm->vmi, src->vm_start, src->vm_end, GFP_KERNEL);
+	if (ret)
+		goto reattach;
+
+	/*
+	 * Prepare the destination insertion after clearing the source.
+	 * This avoids using two stale Maple states.
+	 */
+	vma_iter_reset(&dst_vmi);
+	vma_iter_config(&dst_vmi, dst->vm_start, dst->vm_end);
+
+	ret = vma_iter_prealloc(&dst_vmi, dst);
+	if (ret)
+		goto reattach;
+
+	/*
+	 * No operation below this point may fail.
+	 */
+	vma_start_write(src);
+	vma_start_write(dst);
+
+	vma_iter_store_new(&dst_vmi, dst);
+
+	/*
+	 * One source VMA is replaced by one destination VMA.
+	 */
+	vrm->mm->map_count -= vms.vma_count;
+	vrm->mm->map_count++;
+
+	vma_move_commit(vrm);
+
+	vma_remove_detached(&vms, &mas_detach, vrm->mm,
+			    vrm->backend->remove_detached);
+
+	__mt_destroy(&mt_detach);
+	return 0;
+
+reattach:
+	vma_reattach_vmas(&mas_detach);
+abort_backend:
+	vma_move_abort(vrm);
+out_destroy:
+	__mt_destroy(&mt_detach);
+	return ret;
+}
+
 void vma_remove_detached(struct vma_munmap_struct *vms,
 			struct ma_state *mas_detach,
 			struct mm_struct *mm,

@@ -1821,10 +1821,10 @@ static int test_standard_mmap_expand_rejects_maymove(void)
 	nommu_swmmu_store_u64(base, sizeof(value), 5678);
 
 	result = mremap(base, ps, ps * 2, MREMAP_MAYMOVE);
-	if (result != MAP_FAILED) {
+	if (result == MAP_FAILED) {
 		SWMMU_TEST_FAIL(
-			"MREMAP_MAYMOVE unexpectedly succeeded\n");
-		munmap(result, ps * 2);
+			"mremap(MREMAP_MAYMOVE) failed\n");
+		munmap(result, ps);
 		return KSFT_FAIL;
 	}
 
@@ -1832,11 +1832,11 @@ static int test_standard_mmap_expand_rejects_maymove(void)
 	if (value != 5678) {
 		SWMMU_TEST_FAIL(
 			"mapping was modified after rejected expansion\n");
-		munmap(base, ps);
+		munmap(base, ps * 2);
 		return KSFT_FAIL;
 	}
 
-	if (munmap(base, ps) != 0) {
+	if (munmap(base, ps * 2) != 0) {
 		SWMMU_TEST_FAIL(
 			"munmap after rejected expansion failed: %s\n",
 			strerror(errno));

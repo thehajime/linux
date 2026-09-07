@@ -1246,6 +1246,7 @@ static int copy_vma_and_data(struct vma_remap_struct *vrm,
 		vrm->vmi_needs_invalidate = true;
 
 	vrm->vma = vma;
+	vrm->new_vma = new_vma;
 	err = vma_move_prepare(vrm, vma, new_vma);
 	if (err) {
 		*new_vma_ptr = new_vma;
@@ -1355,6 +1356,9 @@ static unsigned long move_vma(struct vma_remap_struct *vrm)
 		unmap_source_vma(vrm);
 		return err;
 	}
+
+	vrm->new_vma = NULL;
+
 	/*
 	 * If we failed to move page tables we still do total_vm increment
 	 * since do_munmap() will decrement it by old_len == new_len.

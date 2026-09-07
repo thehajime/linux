@@ -103,6 +103,7 @@ struct vma_remap_struct {
 	/* VMA state, determined in do_mremap(). */
 	struct vm_area_struct *vma;
 	struct vm_area_struct *new_vma;
+	struct vma_iterator *vmi;
 
 	/* Internal state, determined in do_mremap(). */
 	unsigned long delta;		/* Absolute delta of old_len,new_len. */
@@ -1042,5 +1043,9 @@ int vma_move_prepare(struct vma_remap_struct *vrm,
 void vma_move_commit(struct vma_remap_struct *vrm);
 
 void vma_move_abort(struct vma_remap_struct *vrm);
+
+int vma_move_at(struct vma_remap_struct *vrm,
+		struct vm_area_struct *src,
+		struct vm_area_struct *dst);
 
 #endif	/* __MM_VMA_H */
