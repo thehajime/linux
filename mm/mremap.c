@@ -32,46 +32,6 @@
 
 #include "internal.h"
 
-/* Classify the kind of remap operation being performed. */
-enum mremap_type {
-	MREMAP_INVALID,		/* Initial state. */
-	MREMAP_NO_RESIZE,	/* old_len == new_len, if not moved, do nothing. */
-	MREMAP_SHRINK,		/* old_len > new_len. */
-	MREMAP_EXPAND,		/* old_len < new_len. */
-};
-
-/*
- * Describes a VMA mremap() operation and is threaded throughout it.
- *
- * Any of the fields may be mutated by the operation, however these values will
- * always accurately reflect the remap (for instance, we may adjust lengths and
- * delta to account for hugetlb alignment).
- */
-struct vma_remap_struct {
-	/* User-provided state. */
-	unsigned long addr;	/* User-specified address from which we remap. */
-	unsigned long old_len;	/* Length of range being remapped. */
-	unsigned long new_len;	/* Desired new length of mapping. */
-	const unsigned long flags; /* user-specified MREMAP_* flags. */
-	unsigned long new_addr;	/* Optionally, desired new address. */
-
-	/* uffd state. */
-	struct vm_userfaultfd_ctx *uf;
-	struct list_head *uf_unmap_early;
-	struct list_head *uf_unmap;
-
-	/* VMA state, determined in do_mremap(). */
-	struct vm_area_struct *vma;
-
-	/* Internal state, determined in do_mremap(). */
-	unsigned long delta;		/* Absolute delta of old_len,new_len. */
-	bool populate_expand;		/* mlock()'d expanded, must populate. */
-	enum mremap_type remap_type;	/* expand, shrink, etc. */
-	bool mmap_locked;		/* Is mm currently write-locked? */
-	unsigned long charged;		/* If VMA_ACCOUNT_BIT, # pgs to account */
-	bool vmi_needs_invalidate;	/* Is the VMA iterator invalidated? */
-};
-
 static pud_t *get_old_pud(struct mm_struct *mm, unsigned long addr)
 {
 	pgd_t *pgd;
@@ -1159,7 +1119,7 @@ static unsigned long prep_move_vma(struct vma_remap_struct *vrm)
  */
 static void unmap_source_vma(struct vma_remap_struct *vrm)
 {
-	struct mm_struct *mm = current->mm;
+	struct mm_struct *mm = vrm->mm;
 	unsigned long addr = vrm->addr;
 	unsigned long len = vrm->old_len;
 	struct vm_area_struct *vma = vrm->vma;
@@ -1349,7 +1309,7 @@ static void dontunmap_complete(struct vma_remap_struct *vrm,
 
 static unsigned long move_vma(struct vma_remap_struct *vrm)
 {
-	struct mm_struct *mm = current->mm;
+	struct mm_struct *mm = vrm->mm;
 	struct vm_area_struct *new_vma;
 	unsigned long hiwater_vm;
 	int err;
@@ -1446,7 +1406,7 @@ static unsigned long shrink_vma(struct vma_remap_struct *vrm,
  */
 static unsigned long mremap_to(struct vma_remap_struct *vrm)
 {
-	struct mm_struct *mm = current->mm;
+	struct mm_struct *mm = vrm->mm;
 	unsigned long err;
 
 	if (vrm->flags & MREMAP_FIXED) {
@@ -1735,7 +1695,7 @@ static bool vma_multi_allowed(struct vm_area_struct *vma)
 static int check_prep_vma(struct vma_remap_struct *vrm)
 {
 	struct vm_area_struct *vma = vrm->vma;
-	struct mm_struct *mm = current->mm;
+	struct mm_struct *mm = vrm->mm;
 	unsigned long addr = vrm->addr;
 	unsigned long old_len, new_len, pgoff;
 
@@ -2059,6 +2019,9 @@ SYSCALL_DEFINE5(mremap, unsigned long, addr, unsigned long, old_len,
 		.uf_unmap = &uf_unmap,
 
 		.remap_type = MREMAP_INVALID, /* We set later. */
+		.mm = current->mm,
+		.backend = NULL,
+		.backend_state = NULL,
 	};
 
 	return do_mremap(&vrm);

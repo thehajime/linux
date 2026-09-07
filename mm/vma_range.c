@@ -83,6 +83,35 @@ void vma_backend_split_adjust(struct vm_area_struct *vma,
 
 #endif /* !CONFIG_MMU */
 
+static int vma_move_prepare(struct vma_remap_struct *vrm,
+			    struct vm_area_struct *src,
+			    struct vm_area_struct *dst)
+{
+	if (!vrm->backend || !vrm->backend->move_prepare)
+		return 0;
+
+	return vrm->backend->move_prepare(
+		vrm, src, dst, &vrm->backend_state);
+}
+
+static void vma_move_commit(struct vma_remap_struct *vrm,
+			    struct vm_area_struct *src,
+			    struct vm_area_struct *dst)
+{
+	if (vrm->backend && vrm->backend->move_commit)
+		vrm->backend->move_commit(
+			vrm, src, dst, vrm->backend_state);
+}
+
+static void vma_move_abort(struct vma_remap_struct *vrm,
+			   struct vm_area_struct *src,
+			   struct vm_area_struct *dst)
+{
+	if (vrm->backend && vrm->backend->move_abort)
+		vrm->backend->move_abort(
+			vrm, src, dst, vrm->backend_state);
+}
+
 void vma_remove_detached(struct vma_munmap_struct *vms,
 			struct ma_state *mas_detach,
 			struct mm_struct *mm,

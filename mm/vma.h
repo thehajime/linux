@@ -70,6 +70,50 @@ struct vma_replace_struct {
 	void *backend_state;
 };
 
+/* Classify the kind of remap operation being performed. */
+enum mremap_type {
+	MREMAP_INVALID,		/* Initial state. */
+	MREMAP_NO_RESIZE,	/* old_len == new_len, if not moved, do nothing. */
+	MREMAP_SHRINK,		/* old_len > new_len. */
+	MREMAP_EXPAND,		/* old_len < new_len. */
+};
+
+/*
+ * Describes a VMA mremap() operation and is threaded throughout it.
+ *
+ * Any of the fields may be mutated by the operation, however these values will
+ * always accurately reflect the remap (for instance, we may adjust lengths and
+ * delta to account for hugetlb alignment).
+ */
+struct vma_remap_struct {
+	/* User-provided state. */
+	unsigned long addr;	/* User-specified address from which we remap. */
+	unsigned long old_len;	/* Length of range being remapped. */
+	unsigned long new_len;	/* Desired new length of mapping. */
+	const unsigned long flags; /* user-specified MREMAP_* flags. */
+	unsigned long new_addr;	/* Optionally, desired new address. */
+
+	/* uffd state. */
+	struct vm_userfaultfd_ctx *uf;
+	struct list_head *uf_unmap_early;
+	struct list_head *uf_unmap;
+
+	/* VMA state, determined in do_mremap(). */
+	struct vm_area_struct *vma;
+
+	/* Internal state, determined in do_mremap(). */
+	unsigned long delta;		/* Absolute delta of old_len,new_len. */
+	bool populate_expand;		/* mlock()'d expanded, must populate. */
+	enum mremap_type remap_type;	/* expand, shrink, etc. */
+	bool mmap_locked;		/* Is mm currently write-locked? */
+	unsigned long charged;		/* If VMA_ACCOUNT_BIT, # pgs to account */
+	bool vmi_needs_invalidate;	/* Is the VMA iterator invalidated? */
+
+	/* Mapping backend state. */
+	const struct vma_backend_ops *backend;
+	void *backend_state;
+};
+
 struct vma_backend_ops {
 	int (*split_prepare)(struct vm_area_struct *vma,
 			     struct vm_area_struct *new,
@@ -103,6 +147,21 @@ struct vma_backend_ops {
 
 	void (*expand_abort)(struct vm_area_struct *vma,
 			    void *state);
+
+	int (*move_prepare)(struct vma_remap_struct *vrm,
+			struct vm_area_struct *src,
+			struct vm_area_struct *dst,
+			void **state);
+
+	void (*move_commit)(struct vma_remap_struct *vrm,
+			struct vm_area_struct *src,
+			struct vm_area_struct *dst,
+			void *state);
+
+	void (*move_abort)(struct vma_remap_struct *vrm,
+			struct vm_area_struct *src,
+			struct vm_area_struct *dst,
+			void *state);
 };
 
 enum vma_merge_state {
