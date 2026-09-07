@@ -393,12 +393,65 @@ static void nommu_swmmu_pagetable_drop_range_test(struct kunit *test)
 	expect_allocations_balanced(test);
 }
 
+static void nommu_swmmu_pagetable_range_release_test(struct kunit *test)
+{
+	struct nommu_swmmu_test_ctx *ctx = test->priv;
+	struct swmmu_pagetable *pt;
+	struct swmmu_pagetable_range *left;
+	struct swmmu_pagetable_range *middle;
+	struct swmmu_pagetable_range *right;
+	struct page *page;
+	int ret;
+
+	test_alloc_reset();
+
+	ret = nommu_swmmu_kunit_pagetable_alloc(
+		ctx->space, 3 * SWMMU_PAGE_SIZE, &pt);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	ret = nommu_swmmu_kunit_range_create(
+		ctx->space, pt, 0, 1,
+		NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE, &left);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	ret = nommu_swmmu_kunit_range_create(
+		ctx->space, pt, 1, 1,
+		NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE, &middle);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	ret = nommu_swmmu_kunit_range_create(
+		ctx->space, pt, 2, 1,
+		NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE, &right);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	nommu_swmmu_kunit_pagetable_release(ctx->space, pt);
+
+	nommu_swmmu_kunit_pagetable_range_release(
+		ctx->space, middle);
+
+	page = nommu_swmmu_kunit_pagetable_page(
+		nommu_swmmu_kunit_range_pagetable(left), 0);
+	KUNIT_EXPECT_NOT_NULL(test, page);
+
+	page = nommu_swmmu_kunit_pagetable_page(
+		nommu_swmmu_kunit_range_pagetable(right), 2);
+	KUNIT_EXPECT_NOT_NULL(test, page);
+
+	nommu_swmmu_kunit_pagetable_range_release(
+		ctx->space, left);
+	nommu_swmmu_kunit_pagetable_range_release(
+		ctx->space, right);
+
+	expect_allocations_balanced(test);
+}
+
 static struct kunit_case nommu_swmmu_test_cases[] = {
 	KUNIT_CASE(nommu_swmmu_pagetable_alloc_test),
 	KUNIT_CASE(nommu_swmmu_pagetable_zalloc_failure_test),
 	KUNIT_CASE(nommu_swmmu_pagetable_page_failure_test),
 	KUNIT_CASE(nommu_swmmu_vma_dup_offset_test),
 	KUNIT_CASE(nommu_swmmu_pagetable_drop_range_test),
+	KUNIT_CASE(nommu_swmmu_pagetable_range_release_test),
 	{}
 };
 

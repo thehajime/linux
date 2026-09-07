@@ -1390,7 +1390,7 @@ static void vms_complete_munmap_vmas(struct vma_munmap_struct *vms,
 
 	/* Remove and clean up vmas */
 	mas_set(mas_detach, 0);
-	vma_remove_detached(&vms, mas_detach, mm, vma_remove_detached_mmu);
+	vma_remove_detached(vms, mas_detach, mm, vma_remove_detached_mmu);
 
 	vm_unacct_memory(vms->nr_accounted);
 	validate_mm(mm);
@@ -1426,7 +1426,7 @@ int do_vmi_align_munmap(struct vma_iterator *vmi, struct vm_area_struct *vma,
 	int error;
 
 	vma_init_munmap(&vms, vmi, vma, start, end, uf, unlock, NULL);
-	error = vms_gather_range(&vms, &mas_detach);
+	error = vma_gather_range(&vms, &mas_detach);
 	if (error)
 		goto gather_failed;
 
@@ -2289,7 +2289,7 @@ static int __mmap_setup(struct mmap_state *map, struct vm_area_desc *desc,
 		mt_on_stack(map->mt_detach);
 		mas_init(&map->mas_detach, &map->mt_detach, /* addr = */ 0);
 		/* Prepare to unmap any existing mapping in the area */
-		error = vms_gather_range(vms, &map->mas_detach);
+		error = vma_gather_range(vms, &map->mas_detach);
 		if (error) {
 			/* On error VMAs will already have been reattached. */
 			vms->nr_pages = 0;

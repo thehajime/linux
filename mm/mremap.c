@@ -1245,6 +1245,12 @@ static int copy_vma_and_data(struct vma_remap_struct *vrm,
 	if (vma != vrm->vma)
 		vrm->vmi_needs_invalidate = true;
 
+	err = vma_move_prepare(vrm, vma, new_vma);
+	if (err) {
+		*new_vma_ptr = new_vma;
+		return err;
+	}
+
 	vrm->vma = vma;
 	pmc.old = vma;
 	pmc.new = new_vma;
@@ -1267,10 +1273,13 @@ static int copy_vma_and_data(struct vma_remap_struct *vrm,
 		pmc_revert.need_rmap_locks = true;
 		move_page_tables(&pmc_revert);
 
+		vma_move_abort(vrm, vma, new_vma);
+
 		vrm->vma = new_vma;
 		vrm->old_len = vrm->new_len;
 		vrm->addr = vrm->new_addr;
 	} else {
+		vma_move_commit(vrm, vma, new_vma);
 		mremap_userfaultfd_prep(new_vma, vrm->uf);
 	}
 
@@ -1338,6 +1347,14 @@ static unsigned long move_vma(struct vma_remap_struct *vrm)
 	if (err && !new_vma)
 		return err;
 
+	/* previously allocated resource by abort */
+	if (err && vrm->move_backend_active && !vrm->move_backend_prepared) {
+		vrm->vma = new_vma;
+		vrm->addr = vrm->new_addr;
+		vrm->old_len = vrm->new_len;
+		unmap_source_vma(vrm);
+		return err;
+	}
 	/*
 	 * If we failed to move page tables we still do total_vm increment
 	 * since do_munmap() will decrement it by old_len == new_len.

@@ -86,6 +86,8 @@ enum mremap_type {
  * delta to account for hugetlb alignment).
  */
 struct vma_remap_struct {
+	struct mm_struct *mm;
+
 	/* User-provided state. */
 	unsigned long addr;	/* User-specified address from which we remap. */
 	unsigned long old_len;	/* Length of range being remapped. */
@@ -112,6 +114,9 @@ struct vma_remap_struct {
 	/* Mapping backend state. */
 	const struct vma_backend_ops *backend;
 	void *backend_state;
+
+	bool move_backend_active;
+	bool move_backend_prepared;
 };
 
 struct vma_backend_ops {
@@ -1028,5 +1033,12 @@ void vma_replace_commit(struct vma_replace_struct *vrs,
 
 void vma_replace_abort(struct vma_replace_struct *vrs,
 		       struct ma_state *mas_detach);
+
+int vma_move_prepare(struct vma_remap_struct *vrm, struct vm_area_struct *src,
+		struct vm_area_struct *dst);
+void vma_move_commit(struct vma_remap_struct *vrm, struct vm_area_struct *src,
+		struct vm_area_struct *dst);
+void vma_move_abort(struct vma_remap_struct *vrm, struct vm_area_struct *src,
+		struct vm_area_struct *dst);
 
 #endif	/* __MM_VMA_H */
