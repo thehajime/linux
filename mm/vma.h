@@ -121,6 +121,24 @@ struct vma_remap_struct {
 	bool move_backend_prepared;
 };
 
+struct vma_move_replace_struct {
+	struct mm_struct *mm;
+	struct vma_remap_struct *remap;
+	struct vm_area_struct *src;
+	struct vm_area_struct *dst;
+
+	struct vma_munmap_struct *target_vms;
+	struct ma_state *target_detach;
+
+	const struct vma_mapping_ops *backend;
+	void *backend_state;
+
+	bool backend_prepared;
+	bool target_gathered;
+	bool target_cleared;
+	bool dst_published;
+};
+
 struct vma_mapping_ops {
 	int (*split_prepare)(struct vm_area_struct *vma,
 			     struct vm_area_struct *new,
@@ -1048,4 +1066,16 @@ int vma_move_at(struct vma_remap_struct *vrm,
 		struct vm_area_struct *src,
 		struct vm_area_struct *dst);
 
+void vma_move_replace_init(struct vma_move_replace_struct *vmrs,
+			   struct vma_remap_struct *remap,
+			   struct vm_area_struct *src,
+			   struct vm_area_struct *dst,
+			   struct vma_munmap_struct *target_vms,
+			   struct ma_state *target_detach,
+			   const struct vma_mapping_ops *backend);
+int vma_move_replace_prepare(struct vma_move_replace_struct *vmrs);
+
+void vma_move_replace_commit(struct vma_move_replace_struct *vmrs);
+
+void vma_move_replace_abort(struct vma_move_replace_struct *vmrs);
 #endif	/* __MM_VMA_H */

@@ -2764,26 +2764,41 @@ int do_munmap(struct mm_struct *mm,
 }
 
 static unsigned long swmmu_mremap_move(struct mm_struct *mm,
-				       struct vm_area_struct *src,
-				       unsigned long old_len,
-				       unsigned long new_len)
+				struct vm_area_struct *src,
+				unsigned long old_len,
+				unsigned long new_len,
+				unsigned long flags,
+				unsigned long new_addr)
 {
 	struct vma_remap_struct vrm = {};
 	struct vm_area_struct *dst;
-	unsigned long new_addr;
+	unsigned long dest_addr;
 	int ret;
 
-	ret = swmmu_find_free_range(mm, SWMMU_VA_BASE, new_len, &new_addr);
-	if (ret)
-		return ret;
+	if (flags & MREMAP_FIXED) {
+		struct vm_area_struct *target;
+
+		VMA_ITERATOR(target_vmi, mm, new_addr);
+
+		target = vma_iter_load(&target_vmi);
+		if (target)
+			return -EOPNOTSUPP;
+
+		dest_addr = new_addr;
+	} else {
+		ret = swmmu_find_free_range(
+			mm, SWMMU_VA_BASE, new_len, &dest_addr);
+		if (ret)
+			return ret;
+	}
 
 	dst = vm_area_dup(src);
 	if (!dst)
 		return -ENOMEM;
 
 	dst->vm_mm = mm;
-	dst->vm_start = new_addr;
-	dst->vm_end = new_addr + new_len;
+	dst->vm_start = dest_addr;
+	dst->vm_end = dest_addr + new_len;
 	dst->vm_swmmu_pt_range = NULL;
 
 	vma_set_pgoff(dst, src->vm_pgoff);
@@ -2792,7 +2807,7 @@ static unsigned long swmmu_mremap_move(struct mm_struct *mm,
 	vrm.addr = src->vm_start;
 	vrm.old_len = old_len;
 	vrm.new_len = new_len;
-	vrm.new_addr = new_addr;
+	vrm.new_addr = dest_addr;
 	vrm.vma = src;
 	vrm.new_vma = dst;
 	vrm.backend = &swmmu_vma_mapping_ops;
@@ -2809,7 +2824,7 @@ static unsigned long swmmu_mremap_move(struct mm_struct *mm,
 		return ret;
 	}
 
-	return new_addr;
+	return dest_addr;
 }
 
 static unsigned long
@@ -2826,12 +2841,9 @@ __do_mremap(struct mm_struct *mm,
 	struct vm_area_struct *next;
 	unsigned long ret;
 	unsigned long end;
+	unsigned long result;
 
 	mmap_assert_write_locked(mm);
-
-	/* not implemented yet */
-	if (new_addr)
-		return -EINVAL;
 
 	old_len = PAGE_ALIGN(old_len);
 	if (old_len == 0)
@@ -2858,7 +2870,30 @@ __do_mremap(struct mm_struct *mm,
 		end != vma->vm_end)
 		return -EINVAL;
 
-	if (flags & MREMAP_FIXED)
+	if (flags & MREMAP_FIXED) {
+		if (!(flags & MREMAP_MAYMOVE) ||
+			!new_addr ||
+			!PAGE_ALIGNED(new_addr))
+			return -EINVAL;
+
+		if (new_len > ULONG_MAX - new_addr)
+			return -EINVAL;
+
+		if (new_len < old_len)
+			return -EOPNOTSUPP;
+
+		result = swmmu_mremap_move(mm, vma, old_len, new_len,
+					flags, new_addr);
+		if (IS_ERR_VALUE(result))
+			return result;
+
+		goto remap_success;
+
+	} else if (new_addr) {
+		return -EINVAL;
+	}
+
+	if (flags & MREMAP_DONTUNMAP)
 		return -EINVAL;
 
 	next = vma_next(&vmi);
@@ -2870,7 +2905,7 @@ __do_mremap(struct mm_struct *mm,
 	if (!new_len)
 		return -EINVAL;
 
-	if (new_len == old_len)
+	if (new_len == old_len && !(flags & MREMAP_FIXED))
 		return vma->vm_start;
 
 	if (new_len < old_len) {
@@ -2891,6 +2926,8 @@ __do_mremap(struct mm_struct *mm,
 		down_write(&mm->swmmu_space->lock);
 		swmmu_resize_commit(mm->swmmu_space, &vma_tx);
 		up_write(&mm->swmmu_space->lock);
+
+		result = vma->vm_start;
 	} else {
 		/* growth */
 		struct vma_merge_struct vmg = {
@@ -2901,27 +2938,27 @@ __do_mremap(struct mm_struct *mm,
 			.target = vma,
 			.next = next,
 			.just_expand = true,
-			.backend = &nommu_swmmu_vma_backend_ops,
+			.backend = &swmmu_vma_mapping_ops,
 		};
 
 		ret = vma_expand(&vmg);
-		if (!ret)
-			goto remap_success;
-
-		if (ret != -ENOMEM ||
-			!(flags & MREMAP_MAYMOVE))
+		if (!ret) {
+			result = vma->vm_start;
+		} else if (ret == -ENOMEM &&
+			(flags & MREMAP_MAYMOVE)) {
+			result = swmmu_mremap_move(mm, vma, old_len, new_len,
+						flags, new_addr);
+			if (IS_ERR_VALUE(result))
+				return result;
+		} else {
 			return ret;
-
-		/* in-place expansion failed and relocation was requested */
-		ret = swmmu_mremap_move(mm, vma, old_len, new_len);
-		if (ret)
-			return ret;
+		}
 	}
 
 remap_success:
 	validate_mm(mm);
 	nommu_swmmu_validate(mm);
-	return vma->vm_start;
+	return result;
 }
 
 unsigned long do_mremap(unsigned long addr,
