@@ -252,7 +252,7 @@ void vma_remove_detached(struct vma_munmap_struct *vms,
 void vma_replace_init(struct vma_replace_struct *vrs,
 		struct vma_munmap_struct *vms,
 		struct vm_area_struct *insert,
-		const struct vma_backend_ops *backend)
+		const struct vma_mapping_ops *backend)
 {
 	memset(vrs, 0, sizeof(*vrs));
 
@@ -331,7 +331,7 @@ int vma_range_count_overlaps(struct mm_struct *mm, unsigned long start,
 void vma_init_munmap(struct vma_munmap_struct *vms,
 		struct vma_iterator *vmi, struct vm_area_struct *vma,
 		unsigned long start, unsigned long end, struct list_head *uf,
-		bool unlock, const struct vma_backend_ops *backend)
+		bool unlock, const struct vma_mapping_ops *backend)
 {
 	vms->vmi = vmi;
 	vms->vma = vma;
@@ -632,7 +632,7 @@ int vma_split_backend(struct vma_iterator *vmi,
 		      struct vm_area_struct *vma,
 		      unsigned long addr,
 		      int new_below,
-		      const struct vma_backend_ops *backend)
+		      const struct vma_mapping_ops *backend)
 {
 	struct vma_prepare vp;
 	struct vm_area_struct *new;

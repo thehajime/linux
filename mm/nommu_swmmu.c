@@ -1945,7 +1945,7 @@ static void swmmu_move_abort(struct vma_remap_struct *vrm,
 	up_write(&space->lock);
 }
 
-static const struct vma_backend_ops nommu_swmmu_vma_backend_ops = {
+static const struct vma_mapping_ops swmmu_vma_mapping_ops = {
 	.split_prepare = swmmu_split_prepare,
 	.split_commit = swmmu_split_commit,
 	.split_abort = swmmu_split_abort,
@@ -2277,10 +2277,10 @@ static unsigned long swmmu_mmap_fixed_middle_replace(struct mm_struct *mm,
 
 	vma_init_munmap(&vms, &vmi, old_vma,
 			start, end, NULL, false,
-			&nommu_swmmu_vma_backend_ops);
+			&swmmu_vma_mapping_ops);
 
 	vma_replace_init(&vrs, &vms, new_vma,
-			 &nommu_swmmu_vma_backend_ops);
+			 &swmmu_vma_mapping_ops);
 	vrs.backend_state = &tx;
 
 	ret = vma_replace_prepare(&vrs, &mas_detach);
@@ -2335,10 +2335,10 @@ static unsigned long swmmu_mmap_fixed_range_replace(struct mm_struct *mm,
 
 	vma_init_munmap(&vms, &vmi, vma_find(&vmi, end),
 			start, end, NULL, false,
-			&nommu_swmmu_vma_backend_ops);
+			&swmmu_vma_mapping_ops);
 
 	vma_replace_init(&vrs, &vms, insert,
-			 &nommu_swmmu_vma_backend_ops);
+			 &swmmu_vma_mapping_ops);
 	vrs.backend_state = &tx;
 
 	ret = vma_replace_prepare(&vrs, &mas_detach);
@@ -2654,7 +2654,7 @@ static int nommu_swmmu_unmap_shared_range(struct mm_struct *mm,
 
 	vma_init_munmap(&vms, vmi, vma, start, end,
 			uf, false,
-			&nommu_swmmu_vma_backend_ops);
+			&swmmu_vma_mapping_ops);
 
 	ret = vma_gather_range(&vms, &mas_detach);
 	if (ret)
@@ -2795,7 +2795,7 @@ static unsigned long swmmu_mremap_move(struct mm_struct *mm,
 	vrm.new_addr = new_addr;
 	vrm.vma = src;
 	vrm.new_vma = dst;
-	vrm.backend = &nommu_swmmu_vma_backend_ops;
+	vrm.backend = &swmmu_vma_mapping_ops;
 
 	ret = vma_move_at(&vrm, src, dst);
 	if (ret) {

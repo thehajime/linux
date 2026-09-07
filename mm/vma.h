@@ -14,7 +14,7 @@
 #ifndef __MM_VMA_H
 #define __MM_VMA_H
 
-struct vma_backend_ops;
+struct vma_mapping_ops;
 
 /*
  * VMA lock generalization
@@ -45,7 +45,7 @@ struct vma_munmap_struct {
 	struct vm_area_struct *vma;     /* The first vma to munmap */
 	struct vm_area_struct *prev;    /* vma before the munmap area */
 	struct vm_area_struct *next;    /* vma after the munmap area */
-	const struct vma_backend_ops *backend;
+	const struct vma_mapping_ops *backend;
 	struct list_head *uf;           /* Userfaultfd list_head */
 	unsigned long start;            /* Aligned start addr (inclusive) */
 	unsigned long end;              /* Aligned end addr (exclusive) */
@@ -66,7 +66,7 @@ struct vma_munmap_struct {
 struct vma_replace_struct {
 	struct vma_munmap_struct *vms;
 	struct vm_area_struct *insert;
-	const struct vma_backend_ops *backend;
+	const struct vma_mapping_ops *backend;
 	void *backend_state;
 };
 
@@ -114,14 +114,14 @@ struct vma_remap_struct {
 	bool vmi_needs_invalidate;	/* Is the VMA iterator invalidated? */
 
 	/* Mapping backend state. */
-	const struct vma_backend_ops *backend;
+	const struct vma_mapping_ops *backend;
 	void *backend_state;
 
 	bool move_backend_active;
 	bool move_backend_prepared;
 };
 
-struct vma_backend_ops {
+struct vma_mapping_ops {
 	int (*split_prepare)(struct vm_area_struct *vma,
 			     struct vm_area_struct *new,
 			     unsigned long addr,
@@ -276,7 +276,7 @@ struct vma_merge_struct {
 	 */
 	bool __remove_next :1;
 
-	const struct vma_backend_ops *backend;
+	const struct vma_mapping_ops *backend;
 	void *backend_state;
 };
 
@@ -989,7 +989,7 @@ int vma_split_backend(struct vma_iterator *vmi,
 		      struct vm_area_struct *vma,
 		      unsigned long addr,
 		      int new_below,
-		      const struct vma_backend_ops *backend);
+		      const struct vma_mapping_ops *backend);
 
 int vma_range_count_overlaps(struct mm_struct *mm,
 			     unsigned long start,
@@ -1003,7 +1003,7 @@ void vma_init_munmap(struct vma_munmap_struct *vms,
 		     unsigned long end,
 		     struct list_head *uf,
 		     bool unlock,
-		     const struct vma_backend_ops *backend);
+		     const struct vma_mapping_ops *backend);
 
 int vma_gather_range(struct vma_munmap_struct *vms,
 		     struct ma_state *mas_detach);
@@ -1023,7 +1023,7 @@ void vma_replace_init(
 	struct vma_replace_struct *vrs,
 	struct vma_munmap_struct *vms,
 	struct vm_area_struct *insert,
-	const struct vma_backend_ops *backend);
+	const struct vma_mapping_ops *backend);
 
 int vma_replace_prepare(struct vma_replace_struct *vrs,
 			struct ma_state *mas_detach);
