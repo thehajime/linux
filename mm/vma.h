@@ -15,6 +15,7 @@
 #define __MM_VMA_H
 
 struct vma_mapping_ops;
+struct pagetable_move_control;
 
 /*
  * VMA lock generalization
@@ -187,6 +188,9 @@ struct vma_mapping_ops {
 			struct vm_area_struct *src,
 			struct vm_area_struct *dst,
 			void *state);
+
+	unsigned long (*move_mapping)(struct vma_remap_struct *vrm,
+				struct pagetable_move_control *pmc);
 };
 
 enum vma_merge_state {
@@ -309,6 +313,38 @@ struct unmap_desc {
 	unsigned long tree_reset;     /* Where to reset the vma tree walk */
 	bool mm_wr_locked;            /* If the mmap write lock is held */
 };
+
+/*
+ * Maintains state across a page table move. The operation assumes both source
+ * and destination VMAs already exist and are specified by the user.
+ *
+ * Partial moves are permitted, but the old and new ranges must both reside
+ * within a VMA.
+ *
+ * mmap lock must be held in write and VMA write locks must be held on any VMA
+ * that is visible.
+ *
+ * Use the PAGETABLE_MOVE() macro to initialise this struct.
+ *
+ * The old_addr and new_addr fields are updated as the page table move is
+ * executed.
+ *
+ * NOTE: The page table move is affected by reading from [old_addr, old_end),
+ * and old_addr may be updated for better page table alignment, so len_in
+ * represents the length of the range being copied as specified by the user.
+ */
+struct pagetable_move_control {
+	struct vm_area_struct *old; /* Source VMA. */
+	struct vm_area_struct *new; /* Destination VMA. */
+	unsigned long old_addr; /* Address from which the move begins. */
+	unsigned long old_end; /* Exclusive address at which old range ends. */
+	unsigned long new_addr; /* Address to move page tables to. */
+	unsigned long len_in; /* Bytes to remap specified by user. */
+
+	bool need_rmap_locks; /* Do rmap locks need to be taken? */
+	bool for_stack; /* Is this an early temp stack being moved? */
+};
+
 
 /*
  * unmap_all_init() - Initialize unmap_desc to remove all vmas, point the
@@ -1066,6 +1102,9 @@ int vma_move_at(struct vma_remap_struct *vrm,
 		struct vm_area_struct *src,
 		struct vm_area_struct *dst);
 
+unsigned long vma_move_mapping(struct vma_remap_struct *vrm,
+			struct pagetable_move_control *pmc);
+
 void vma_move_replace_init(struct vma_move_replace_struct *vmrs,
 			   struct vma_remap_struct *remap,
 			   struct vm_area_struct *src,
@@ -1078,4 +1117,5 @@ int vma_move_replace_prepare(struct vma_move_replace_struct *vmrs);
 void vma_move_replace_commit(struct vma_move_replace_struct *vmrs);
 
 void vma_move_replace_abort(struct vma_move_replace_struct *vmrs);
+
 #endif	/* __MM_VMA_H */

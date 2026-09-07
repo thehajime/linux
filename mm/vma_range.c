@@ -233,6 +233,18 @@ out_destroy:
 	return ret;
 }
 
+unsigned long vma_move_mapping(struct vma_remap_struct *vrm,
+			struct pagetable_move_control *pmc)
+{
+	if (!vrm || !pmc)
+		return 0;
+
+	if (!vrm->backend || !vrm->backend->move_mapping)
+		return pmc->len_in;
+
+	return vrm->backend->move_mapping(vrm, pmc);
+}
+
 void vma_remove_detached(struct vma_munmap_struct *vms,
 			struct ma_state *mas_detach,
 			struct mm_struct *mm,

@@ -847,6 +847,18 @@ again:
 	return pmc_progress(pmc);
 }
 
+static unsigned long mmu_move_mapping(struct vma_remap_struct *vrm,
+				struct pagetable_move_control *pmc)
+{
+	(void)vrm;
+
+	return move_page_tables(pmc);
+}
+
+static const struct vma_mapping_ops mmu_vma_mapping_ops = {
+	.move_mapping = mmu_move_mapping,
+};
+
 /* Set vrm->delta to the difference in VMA size specified by user. */
 static void vrm_set_delta(struct vma_remap_struct *vrm)
 {
@@ -1256,7 +1268,7 @@ static int copy_vma_and_data(struct vma_remap_struct *vrm,
 	pmc.old = vma;
 	pmc.new = new_vma;
 
-	moved_len = move_page_tables(&pmc);
+	moved_len = vma_move_mapping(vrm, &pmc);
 	if (moved_len < vrm->old_len)
 		err = -ENOMEM;
 	else if (vma->vm_ops && vma->vm_ops->mremap)
@@ -2041,7 +2053,7 @@ SYSCALL_DEFINE5(mremap, unsigned long, addr, unsigned long, old_len,
 
 		.remap_type = MREMAP_INVALID, /* We set later. */
 		.mm = current->mm,
-		.backend = NULL,
+		.backend = &mmu_vma_mapping_ops,
 		.backend_state = NULL,
 	};
 
