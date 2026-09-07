@@ -33,6 +33,7 @@ enum swmmu_pagetable_tx_kind {
 	SWMMU_TX_SPLIT,
 	SWMMU_TX_FIXED_REPLACE,
 	SWMMU_TX_DROP_RANGE,
+	SWMMU_TX_MOVE,
 };
 
 enum swmmu_pagetable_replace_kind {
@@ -1782,6 +1783,156 @@ static void swmmu_replace_commit(struct vma_replace_struct *vrs)
 	vrs->backend_state = NULL;
 }
 
+static int swmmu_move_prepare(struct vma_remap_struct *vrm,
+			      struct vm_area_struct *src,
+			      struct vm_area_struct *dst,
+			      void **state)
+{
+	struct swmmu_pagetable_tx *tx;
+	struct swmmu_pagetable_range *src_range;
+	struct swmmu_pagetable_range *new_range;
+	struct swmmu_pagetable *new_pt;
+	struct nommu_swmmu_space *space;
+	unsigned long old_nr;
+	unsigned long new_nr;
+	unsigned long i;
+	int ret;
+
+	if (!vrm || !src || !dst || !state)
+		return -EINVAL;
+
+	src_range = src->vm_swmmu_pt_range;
+	if (!src_range || !src_range->pagetable)
+		return -EINVAL;
+
+	space = src->vm_mm->swmmu_space;
+	if (!space)
+		return -EINVAL;
+
+	old_nr = vrm->old_len / SWMMU_PAGE_SIZE;
+	new_nr = vrm->new_len / SWMMU_PAGE_SIZE;
+
+	if (!old_nr || !new_nr ||
+	    old_nr > src_range->nr_ptes)
+		return -EINVAL;
+
+	down_write(&space->lock);
+
+	tx = space->ops->zalloc(sizeof(*tx), GFP_KERNEL);
+	if (!tx) {
+		up_write(&space->lock);
+		return -ENOMEM;
+	}
+
+	tx->kind = SWMMU_TX_MOVE;
+	tx->source = src_range;
+	tx->new_vma = dst;
+
+	if (old_nr == new_nr) {
+		new_range = swmmu_pagetable_range_share(
+			space,
+			src_range,
+			src_range->first,
+			old_nr);
+		if (!new_range) {
+			space->ops->dealloc(tx);
+			up_write(&space->lock);
+			return -ENOMEM;
+		}
+
+		tx->new_range = new_range;
+		*state = tx;
+		return 0;
+	}
+
+	new_pt = swmmu_pagetable_alloc(space, new_nr * SWMMU_PAGE_SIZE);
+	if (!new_pt) {
+		space->ops->dealloc(tx);
+		up_write(&space->lock);
+		return -ENOMEM;
+	}
+
+	new_range = swmmu_pagetable_range_create(space, new_pt);
+	swmmu_pagetable_put(space, new_pt);
+	if (!new_range) {
+		space->ops->dealloc(tx);
+		up_write(&space->lock);
+		return -ENOMEM;
+	}
+
+	new_range->first = 0;
+	new_range->nr_ptes = new_nr;
+	new_range->access = src_range->access;
+
+	for (i = 0; i < min(old_nr, new_nr); i++) {
+		ret = space->ops->page_copy(
+			new_range->pagetable->ptes[i].page,
+			src_range->pagetable->ptes[
+				src_range->first + i].page);
+		if (ret) {
+			swmmu_pagetable_range_release_locked(
+				space, new_range);
+			space->ops->dealloc(tx);
+			up_write(&space->lock);
+			return ret;
+		}
+	}
+
+	tx->new_range = new_range;
+	*state = tx;
+	return 0;
+}
+
+static void swmmu_move_commit(struct vma_remap_struct *vrm,
+			      struct vm_area_struct *src,
+			      struct vm_area_struct *dst,
+			      void *state)
+{
+	struct swmmu_pagetable_tx *tx = state;
+	struct nommu_swmmu_space *space;
+
+	if (!tx || tx->kind != SWMMU_TX_MOVE)
+		return;
+
+	space = src->vm_mm->swmmu_space;
+
+	dst->vm_swmmu_pt_range = tx->new_range;
+	tx->new_range = NULL;
+
+	tx->source = NULL;
+	tx->new_vma = NULL;
+	tx->kind = 0;
+
+	space->ops->dealloc(tx);
+	up_write(&space->lock);
+}
+
+static void swmmu_move_abort(struct vma_remap_struct *vrm,
+			     struct vm_area_struct *src,
+			     struct vm_area_struct *dst,
+			     void *state)
+{
+	struct swmmu_pagetable_tx *tx = state;
+	struct nommu_swmmu_space *space;
+
+	if (!tx || tx->kind != SWMMU_TX_MOVE)
+		return;
+
+	space = src->vm_mm->swmmu_space;
+
+	if (tx->new_range) {
+		swmmu_pagetable_range_release_locked(space, tx->new_range);
+		tx->new_range = NULL;
+	}
+
+	tx->source = NULL;
+	tx->new_vma = NULL;
+	tx->kind = 0;
+
+	space->ops->dealloc(tx);
+	up_write(&space->lock);
+}
+
 static const struct vma_backend_ops nommu_swmmu_vma_backend_ops = {
 	.split_prepare = swmmu_split_prepare,
 	.split_commit = swmmu_split_commit,
@@ -1793,6 +1944,9 @@ static const struct vma_backend_ops nommu_swmmu_vma_backend_ops = {
 	.expand_prepare = swmmu_expand_prepare,
 	.expand_commit = swmmu_expand_commit,
 	.expand_abort = swmmu_expand_abort,
+	.move_prepare = swmmu_move_prepare,
+	.move_commit = swmmu_move_commit,
+	.move_abort = swmmu_move_abort,
 };
 
 

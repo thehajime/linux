@@ -1245,13 +1245,13 @@ static int copy_vma_and_data(struct vma_remap_struct *vrm,
 	if (vma != vrm->vma)
 		vrm->vmi_needs_invalidate = true;
 
+	vrm->vma = vma;
 	err = vma_move_prepare(vrm, vma, new_vma);
 	if (err) {
 		*new_vma_ptr = new_vma;
 		return err;
 	}
 
-	vrm->vma = vma;
 	pmc.old = vma;
 	pmc.new = new_vma;
 

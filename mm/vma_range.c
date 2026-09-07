@@ -88,15 +88,13 @@ int vma_move_prepare(struct vma_remap_struct *vrm, struct vm_area_struct *src,
 {
 	int ret;
 
-	vrm->move_backend_active =
-		vrm->backend && vrm->backend->move_prepare;
+	vrm->move_backend_active = vrm->backend && vrm->backend->move_prepare;
 	vrm->move_backend_prepared = false;
 
 	if (!vrm->move_backend_active)
 		return 0;
 
-	ret = vrm->backend->move_prepare(
-		vrm, src, dst, &vrm->backend_state);
+	ret = vrm->backend->move_prepare(vrm, src, dst, &vrm->backend_state);
 	if (ret)
 		return ret;
 
