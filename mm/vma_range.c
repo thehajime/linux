@@ -71,7 +71,7 @@ int vma_backend_dup(struct vm_area_struct *src,
 		    struct vm_area_struct *dst)
 {
 #ifdef CONFIG_NOMMU_SWMMU
-	dst->vm_swmmu_data = NULL;
+	dst->vm_swmmu_pt_range = NULL;
 #endif
 	return 0;
 }
@@ -416,11 +416,8 @@ int vma_expand(struct vma_merge_struct *vmg)
 {
 	struct vm_area_struct *vma;
 	struct vma_iterator *vmi;
-	struct nommu_swmmu_space *space;
-	struct nommu_swmmu_vma_tx tx = {};
 	bool swmmu_prepared = false;
 	int ret;
-	bool space_locked = false;
 
 	if (!vmg || !vmg->mm || !vmg->vmi)
 		return -EINVAL;
@@ -443,20 +440,12 @@ int vma_expand(struct vma_merge_struct *vmg)
 		vmg->end > vmg->next->vm_start)
 		return -ENOMEM;
 
-	space = vma->vm_mm->swmmu_space;
-
 	/* prep */
-	if (vma->vm_swmmu_data) {
-		if (!space)
-			return -EINVAL;
-
-		down_write(&space->lock);
-		space_locked = true;
-
-		ret = nommu_swmmu_expand_prepare(space, vma, vmg->end,
-					   &tx);
+	if (vma->vm_swmmu_pt_range) {
+		ret = vmg->backend->expand_prepare(vma, vmg->end,
+						&vmg->backend_state);
 		if (ret)
-			goto unlock_space;
+			return ret;
 
 		swmmu_prepared = true;
 	}
@@ -475,10 +464,7 @@ int vma_expand(struct vma_merge_struct *vmg)
 	vma_iter_store_overwrite(vmi, vma);
 
 	if (swmmu_prepared)
-		nommu_swmmu_vma_expand_commit(vmg->target, &tx);
-
-	if (space_locked)
-		up_write(&space->lock);
+		vmg->backend->expand_commit(vmg->target, vmg->backend_state);
 
 	validate_mm(vmg->mm);
 	nommu_swmmu_validate(vmg->mm);
@@ -486,10 +472,7 @@ int vma_expand(struct vma_merge_struct *vmg)
 	return 0;
 abort_swmmu:
 	if (swmmu_prepared)
-		nommu_swmmu_vma_expand_abort(space, &tx);
-unlock_space:
-	if (space_locked)
-		up_write(&space->lock);
+		vmg->backend->expand_abort(vmg->target, &vmg->backend_state);
 
 	return ret;
 }

@@ -81,7 +81,7 @@ static void vm_area_init_from(const struct vm_area_struct *src,
 	dest->pfnmap_track_ctx = NULL;
 #endif
 #ifdef CONFIG_NOMMU_SWMMU
-	dest->vm_swmmu_data = NULL;
+	dest->vm_swmmu_pt_range = NULL;
 #endif
 }
 

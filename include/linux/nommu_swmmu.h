@@ -17,6 +17,13 @@
 #define NOMMU_SWMMU_WRITE	(1U << 1)
 #define NOMMU_SWMMU_EXEC	(1U << 2)
 
+struct nommu_swmmu_space;
+struct swmmu_pte;
+struct swmmu_pagetable;
+struct swmmu_pagetable_range;
+struct page;
+struct vm_area_struct;
+
 enum nommu_swmmu_map_mode {
 	NOMMU_SWMMU_MAP_AUTO,
 	NOMMU_SWMMU_MAP_HINT,
@@ -24,97 +31,12 @@ enum nommu_swmmu_map_mode {
 	NOMMU_SWMMU_MAP_FIXED_NOREPLACE,
 };
 
-struct nommu_swmmu_backing {
-	refcount_t refs;
-	struct page **pages;
-	size_t page_count;
-};
-
-struct nommu_swmmu_vma {
-	struct nommu_swmmu_backing *backing;
-	unsigned long page_offset;
-	size_t page_count;
-	unsigned int access;
-};
-
-struct nommu_swmmu_space {
-	struct rw_semaphore lock;
-	struct mm_struct *mm;
-	refcount_t users;
-	const struct nommu_swmmu_mem_ops *ops;
-};
-
-
-enum nommu_swmmu_vma_tx_type {
-	NOMMU_SWMMU_VMA_TX_RESIZE,
-	NOMMU_SWMMU_VMA_TX_SPLIT,
-	NOMMU_SWMMU_VMA_TX_EXPAND,
-	NOMMU_SWMMU_VMA_TX_FIXED_REPLACE,
-};
-
-enum nommu_swmmu_replace_kind {
-	NOMMU_SWMMU_REPLACE_EXACT,
-	NOMMU_SWMMU_REPLACE_HEAD,
-	NOMMU_SWMMU_REPLACE_TAIL,
-	NOMMU_SWMMU_REPLACE_MIDDLE,
-};
-
-struct nommu_swmmu_vma_tx {
-	enum nommu_swmmu_vma_tx_type type;
-	enum nommu_swmmu_replace_kind kind;
-
-	struct nommu_swmmu_vma *vma_data;
-	struct nommu_swmmu_vma *new_vma_data;
-
-	struct nommu_swmmu_backing *old_backing;
-	struct nommu_swmmu_backing *new_backing;
-
-	size_t old_page_count;
-	size_t new_page_count;
-
-	unsigned long old_page_offset;
-	size_t split_page_count;
-
-	bool backing_ref_held;
-
-	/* Fixed-range replacement state. */
-	struct vm_area_struct *old_vma;
-	struct vm_area_struct *new_vma;
-	struct vm_area_struct *right_vma;
-
-	struct nommu_swmmu_vma *left_data;
-	struct nommu_swmmu_vma *right_data;
-	struct nommu_swmmu_vma *replacement_data;
-
-	unsigned long replace_start;
-	unsigned long replace_end;
-	unsigned int replacement_access;
-
-	bool retained_ref_held;
-};
-
-struct vm_area_struct;
-
-int nommu_swmmu_expand_prepare(struct nommu_swmmu_space *space,
-				struct vm_area_struct *vma,
-				unsigned long new_end,
-				struct nommu_swmmu_vma_tx *tx);
-
-void nommu_swmmu_vma_expand_commit(struct vm_area_struct *target,
-				   struct nommu_swmmu_vma_tx *tx);
-
-void nommu_swmmu_vma_expand_abort(struct nommu_swmmu_space *space,
-				struct nommu_swmmu_vma_tx *tx);
-
-
-struct page;
-
 struct nommu_swmmu_mem_ops {
 	void *(*zalloc)(size_t size, gfp_t gfp);
 	void (*dealloc)(void *ptr);
 
 	struct page *(*page_alloc)(gfp_t gfp);
-	void (*page_free)(struct page *page);
+	void (*page_free)(struct page *pte);
 
 	int (*page_copy)(struct page *dst,
 			const struct page *src);
@@ -133,23 +55,23 @@ struct nommu_swmmu_space *
 nommu_swmmu_space_create_with_ops(
 	const struct nommu_swmmu_mem_ops *mem_ops);
 
-int nommu_swmmu_kunit_backing_alloc(
+int nommu_swmmu_kunit_pagetable_alloc(
 	struct nommu_swmmu_space *space,
 	size_t size,
-	struct nommu_swmmu_backing **out);
+	struct swmmu_pagetable **out);
 
-void nommu_swmmu_kunit_backing_release(
+void nommu_swmmu_kunit_pagetable_release(
 	struct nommu_swmmu_space *space,
-	struct nommu_swmmu_backing *backing);
+	struct swmmu_pagetable *pt);
 
-int nommu_swmmu_kunit_vma_dup(
+int nommu_swmmu_kunit_pagetable_range_clone(
 	struct nommu_swmmu_space *space,
-	const struct nommu_swmmu_vma *src,
-	struct nommu_swmmu_vma **out);
+	const struct swmmu_pagetable_range *src,
+	struct swmmu_pagetable_range **out);
 
-void nommu_swmmu_kunit_vma_release(
+void nommu_swmmu_kunit_pagetable_range_release(
 	struct nommu_swmmu_space *space,
-	struct nommu_swmmu_vma *data);
+	struct swmmu_pagetable_range *data);
 
 unsigned long nommu_swmmu_kunit_mmap_mm(
 	struct mm_struct *mm,
@@ -178,6 +100,39 @@ int nommu_swmmu_kunit_store_mm(struct mm_struct *mm,
 			       uintptr_t address,
 			       size_t size,
 			       u64 value);
+
+const void *nommu_swmmu_kunit_range_pagetable(
+	const struct swmmu_pagetable_range *range);
+
+unsigned long nommu_swmmu_kunit_range_first(
+	const struct swmmu_pagetable_range *range);
+
+unsigned long nommu_swmmu_kunit_range_nr_ptes(
+	const struct swmmu_pagetable_range *range);
+
+unsigned int nommu_swmmu_kunit_range_access(
+	const struct swmmu_pagetable_range *range);
+
+unsigned long nommu_swmmu_kunit_pagetable_nr_ptes(
+	const struct swmmu_pagetable *pt);
+
+struct page *nommu_swmmu_kunit_pagetable_page(
+	const struct swmmu_pagetable *pagetable,
+	unsigned long index);
+
+int nommu_swmmu_kunit_range_create(
+	struct nommu_swmmu_space *space,
+	struct swmmu_pagetable *pagetable,
+	unsigned long first,
+	unsigned long nr_ptes,
+	unsigned int access,
+	struct swmmu_pagetable_range **out);
+
+int nommu_swmmu_kunit_drop_range(struct nommu_swmmu_space *space,
+				struct swmmu_pagetable_range *range,
+				unsigned long first,
+				unsigned long nr_ptes,
+				bool commit);
 #endif
 
 struct nommu_swmmu_space *nommu_swmmu_current(void);
@@ -196,7 +151,7 @@ int nommu_swmmu_store_u64_checked(void *address,
 				size_t size,
 				u64 value);
 
-/* Eagerly clone all mappings and backing pages. */
+/* Eagerly clone all mappings and pagetable pages. */
 int swmmu_clone_space(struct nommu_swmmu_space *parent,
                       struct nommu_swmmu_space **child_out);
 

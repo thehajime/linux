@@ -671,7 +671,7 @@ static int delete_vma_from_mm(struct vm_area_struct *vma)
 static void delete_vma(struct mm_struct *mm, struct vm_area_struct *vma)
 {
 #ifdef CONFIG_NOMMU_SWMMU
-	bool swmmu = vma->vm_swmmu_data != NULL;
+	bool swmmu = vma->vm_swmmu_pt_range != NULL;
 
 	if (swmmu)
 		nommu_swmmu_vma_close(mm, vma);

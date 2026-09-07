@@ -35,6 +35,7 @@
 struct address_space;
 struct futex_private_hash;
 struct mem_cgroup;
+struct swmmu_pagetable_range;
 
 typedef struct {
 	unsigned long f;
@@ -1076,7 +1077,7 @@ struct vm_area_struct {
 	struct pfnmap_track_ctx *pfnmap_track_ctx;
 #endif
 #ifdef CONFIG_NOMMU_SWMMU
-	struct nommu_swmmu_vma *vm_swmmu_data;
+	struct swmmu_pagetable_range *vm_swmmu_pt_range;
 #endif
 } __randomize_layout;
 

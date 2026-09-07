@@ -155,99 +155,101 @@ static void nommu_swmmu_test_exit(struct kunit *test)
 	test_alloc_reset();
 }
 
-static void nommu_swmmu_backing_alloc_test(struct kunit *test)
+static void nommu_swmmu_pagetable_alloc_test(struct kunit *test)
 {
 	struct nommu_swmmu_test_ctx *ctx = test->priv;
-	struct nommu_swmmu_backing *backing = NULL;
+	struct swmmu_pagetable *pt = NULL;
 	size_t i;
 	int ret;
 
-	ret = nommu_swmmu_kunit_backing_alloc(ctx->space,
+	ret = nommu_swmmu_kunit_pagetable_alloc(ctx->space,
 					      2 * SWMMU_PAGE_SIZE,
-					      &backing);
+					      &pt);
 	KUNIT_ASSERT_EQ(test, ret, 0);
-	KUNIT_ASSERT_NOT_NULL(test, backing);
-	KUNIT_EXPECT_EQ(test, backing->page_count, 2UL);
+	KUNIT_ASSERT_NOT_NULL(test, pt);
+	KUNIT_EXPECT_EQ(test,
+			nommu_swmmu_kunit_pagetable_nr_ptes(pt), 2UL);
 
-	for (i = 0; i < backing->page_count; i++) {
-		void *addr = page_address(backing->pages[i]);
+	for (i = 0; i < nommu_swmmu_kunit_pagetable_nr_ptes(pt); i++) {
+		void *addr = page_address(
+			nommu_swmmu_kunit_pagetable_page(pt, i));
 
 		KUNIT_ASSERT_NOT_NULL(test, addr);
 		KUNIT_EXPECT_EQ(test, ((u8 *)addr)[0], 0);
 		KUNIT_EXPECT_EQ(test, ((u8 *)addr)[SWMMU_PAGE_SIZE - 1], 0);
 	}
 
-	nommu_swmmu_kunit_backing_release(ctx->space, backing);
+	nommu_swmmu_kunit_pagetable_release(ctx->space, pt);
 }
 
-static void nommu_swmmu_backing_zalloc_failure_test(
+static void nommu_swmmu_pagetable_zalloc_failure_test(
 	struct kunit *test)
 {
 	struct nommu_swmmu_test_ctx *ctx = test->priv;
-	struct nommu_swmmu_backing *backing;
+	struct swmmu_pagetable *pt;
 	unsigned int fail_at;
 	int ret;
 
 	for (fail_at = 0; fail_at < 2; fail_at++) {
 		test_alloc_fail_at(TEST_FAIL_ZALLOC, fail_at);
-		backing = NULL;
+		pt = NULL;
 
-		ret = nommu_swmmu_kunit_backing_alloc(
+		ret = nommu_swmmu_kunit_pagetable_alloc(
 			ctx->space,
 			SWMMU_PAGE_SIZE,
-			&backing);
+			&pt);
 
 		KUNIT_EXPECT_LT(test, ret, 0);
-		KUNIT_EXPECT_PTR_EQ(test, backing, NULL);
+		KUNIT_EXPECT_PTR_EQ(test, pt, NULL);
 		expect_allocations_balanced(test);
 
 		test_alloc_reset();
 
-		ret = nommu_swmmu_kunit_backing_alloc(
+		ret = nommu_swmmu_kunit_pagetable_alloc(
 			ctx->space,
 			SWMMU_PAGE_SIZE,
-			&backing);
+			&pt);
 
 		KUNIT_ASSERT_EQ(test, ret, 0);
-		KUNIT_ASSERT_NOT_NULL(test, backing);
+		KUNIT_ASSERT_NOT_NULL(test, pt);
 
-		nommu_swmmu_kunit_backing_release(ctx->space, backing);
+		nommu_swmmu_kunit_pagetable_release(ctx->space, pt);
 		expect_allocations_balanced(test);
 	}
 }
 
-static void nommu_swmmu_backing_page_failure_test(
+static void nommu_swmmu_pagetable_page_failure_test(
 	struct kunit *test)
 {
 	struct nommu_swmmu_test_ctx *ctx = test->priv;
-	struct nommu_swmmu_backing *backing;
+	struct swmmu_pagetable *pt;
 	unsigned int fail_at;
 	int ret;
 
 	for (fail_at = 0; fail_at < 4; fail_at++) {
 		test_alloc_fail_at(TEST_FAIL_PAGE_ALLOC, fail_at);
-		backing = NULL;
+		pt = NULL;
 
-		ret = nommu_swmmu_kunit_backing_alloc(
+		ret = nommu_swmmu_kunit_pagetable_alloc(
 			ctx->space,
 			4 * SWMMU_PAGE_SIZE,
-			&backing);
+			&pt);
 
 		KUNIT_EXPECT_LT(test, ret, 0);
-		KUNIT_EXPECT_PTR_EQ(test, backing, NULL);
+		KUNIT_EXPECT_PTR_EQ(test, pt, NULL);
 		expect_allocations_balanced(test);
 
 		test_alloc_reset();
 
-		ret = nommu_swmmu_kunit_backing_alloc(
+		ret = nommu_swmmu_kunit_pagetable_alloc(
 			ctx->space,
 			4 * SWMMU_PAGE_SIZE,
-			&backing);
+			&pt);
 
 		KUNIT_ASSERT_EQ(test, ret, 0);
-		KUNIT_ASSERT_NOT_NULL(test, backing);
+		KUNIT_ASSERT_NOT_NULL(test, pt);
 
-		nommu_swmmu_kunit_backing_release(ctx->space, backing);
+		nommu_swmmu_kunit_pagetable_release(ctx->space, pt);
 		expect_allocations_balanced(test);
 	}
 }
@@ -255,57 +257,148 @@ static void nommu_swmmu_backing_page_failure_test(
 static void nommu_swmmu_vma_dup_offset_test(struct kunit *test)
 {
 	struct nommu_swmmu_test_ctx *ctx = test->priv;
-	struct nommu_swmmu_backing *backing = NULL;
-	struct nommu_swmmu_vma src = {};
-	struct nommu_swmmu_vma *dst = NULL;
+	struct swmmu_pagetable *pt = NULL;
+	struct swmmu_pagetable_range *src;
+	struct swmmu_pagetable_range *dst = NULL;
 	u32 *page;
 	int ret;
 
-	ret = nommu_swmmu_kunit_backing_alloc(
+	ret = nommu_swmmu_kunit_pagetable_alloc(
 		ctx->space,
 		3 * SWMMU_PAGE_SIZE,
-		&backing);
+		&pt);
 	KUNIT_ASSERT_EQ(test, ret, 0);
 
-	page = page_address(backing->pages[1]);
+	page = page_address(
+		nommu_swmmu_kunit_pagetable_page(pt, 1));
 	KUNIT_ASSERT_NOT_NULL(test, page);
 	*page = 0x11223344;
 
-	page = page_address(backing->pages[2]);
+	page = page_address(
+		nommu_swmmu_kunit_pagetable_page(pt, 2));
 	KUNIT_ASSERT_NOT_NULL(test, page);
 	*page = 0x55667788;
 
-	src.backing = backing;
-	src.page_offset = 1;
-	src.page_count = 2;
-	src.access = NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE;
+	ret = nommu_swmmu_kunit_range_create(ctx->space, pt, 1, 2,
+					NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
+					&src);
+	KUNIT_ASSERT_EQ(test, ret, 0);
 
-	ret = nommu_swmmu_kunit_vma_dup(ctx->space, &src, &dst);
+	ret = nommu_swmmu_kunit_pagetable_range_clone(ctx->space, src, &dst);
 	KUNIT_ASSERT_EQ(test, ret, 0);
 	KUNIT_ASSERT_NOT_NULL(test, dst);
 
-	KUNIT_EXPECT_EQ(test, dst->page_offset, 0UL);
-	KUNIT_EXPECT_EQ(test, dst->page_count, 2UL);
-	KUNIT_EXPECT_EQ(test, dst->access, src.access);
-	KUNIT_EXPECT_PTR_NE(test, dst->backing, src.backing);
+	KUNIT_EXPECT_EQ(test, nommu_swmmu_kunit_range_first(dst), 0UL);
+	KUNIT_EXPECT_EQ(test,
+			nommu_swmmu_kunit_range_nr_ptes(dst), 2UL);
+	KUNIT_EXPECT_EQ(test,
+		nommu_swmmu_kunit_range_access(dst),
+		nommu_swmmu_kunit_range_access(src));
+	KUNIT_EXPECT_PTR_NE(
+		test,
+		nommu_swmmu_kunit_range_pagetable(dst),
+		nommu_swmmu_kunit_range_pagetable(src));
 
-	page = page_address(dst->backing->pages[0]);
+	page = page_address(
+		nommu_swmmu_kunit_pagetable_page(
+			nommu_swmmu_kunit_range_pagetable(dst),
+			0));
 	KUNIT_ASSERT_NOT_NULL(test, page);
 	KUNIT_EXPECT_EQ(test, *page, 0x11223344);
 
-	page = page_address(dst->backing->pages[1]);
+	page = page_address(
+		nommu_swmmu_kunit_pagetable_page(
+			nommu_swmmu_kunit_range_pagetable(dst),
+			1));
 	KUNIT_ASSERT_NOT_NULL(test, page);
 	KUNIT_EXPECT_EQ(test, *page, 0x55667788);
 
-	nommu_swmmu_kunit_vma_release(ctx->space, dst);
-	nommu_swmmu_kunit_backing_release(ctx->space, backing);
+	nommu_swmmu_kunit_pagetable_range_release(ctx->space, dst);
+	nommu_swmmu_kunit_pagetable_release(ctx->space, pt);
+}
+
+static void nommu_swmmu_pagetable_drop_range_test(struct kunit *test)
+{
+	struct nommu_swmmu_test_ctx *ctx = test->priv;
+	struct swmmu_pagetable *pt;
+	struct swmmu_pagetable_range *left;
+	struct swmmu_pagetable_range *middle;
+	struct swmmu_pagetable_range *right;
+	struct page *page;
+	int ret;
+
+	test_alloc_reset();
+	ret = nommu_swmmu_kunit_pagetable_alloc(
+		ctx->space,
+		3 * SWMMU_PAGE_SIZE,
+		&pt);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+	KUNIT_ASSERT_NOT_NULL(test, pt);
+
+	ret = nommu_swmmu_kunit_range_create(
+		ctx->space, pt, 0, 1,
+		NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
+		&left);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	ret = nommu_swmmu_kunit_range_create(
+		ctx->space, pt, 1, 1,
+		NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
+		&middle);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	ret = nommu_swmmu_kunit_range_create(
+		ctx->space, pt, 2, 1,
+		NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
+		&right);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	/*
+	 * The ranges now own their pagetable references.
+	 */
+	nommu_swmmu_kunit_pagetable_release(ctx->space, pt);
+
+	/* test abort */
+	ret = nommu_swmmu_kunit_drop_range(ctx->space, middle, 1, 1, false);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	page = nommu_swmmu_kunit_pagetable_page(
+		nommu_swmmu_kunit_range_pagetable(middle),
+		1);
+	KUNIT_EXPECT_NOT_NULL(test, page);
+
+	ret = nommu_swmmu_kunit_drop_range(
+		ctx->space, middle, 1, 1, true);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	page = nommu_swmmu_kunit_pagetable_page(
+		nommu_swmmu_kunit_range_pagetable(left), 0);
+	KUNIT_EXPECT_NOT_NULL(test, page);
+
+	page = nommu_swmmu_kunit_pagetable_page(
+		nommu_swmmu_kunit_range_pagetable(middle), 1);
+	KUNIT_EXPECT_PTR_EQ(test, page, NULL);
+
+	page = nommu_swmmu_kunit_pagetable_page(
+		nommu_swmmu_kunit_range_pagetable(right), 2);
+	KUNIT_EXPECT_NOT_NULL(test, page);
+
+	nommu_swmmu_kunit_pagetable_range_release(
+		ctx->space, middle);
+	nommu_swmmu_kunit_pagetable_range_release(
+		ctx->space, left);
+	nommu_swmmu_kunit_pagetable_range_release(
+		ctx->space, right);
+
+	expect_allocations_balanced(test);
 }
 
 static struct kunit_case nommu_swmmu_test_cases[] = {
-	KUNIT_CASE(nommu_swmmu_backing_alloc_test),
-	KUNIT_CASE(nommu_swmmu_backing_zalloc_failure_test),
-	KUNIT_CASE(nommu_swmmu_backing_page_failure_test),
+	KUNIT_CASE(nommu_swmmu_pagetable_alloc_test),
+	KUNIT_CASE(nommu_swmmu_pagetable_zalloc_failure_test),
+	KUNIT_CASE(nommu_swmmu_pagetable_page_failure_test),
 	KUNIT_CASE(nommu_swmmu_vma_dup_offset_test),
+	KUNIT_CASE(nommu_swmmu_pagetable_drop_range_test),
 	{}
 };
 
@@ -481,7 +574,7 @@ static void nommu_swmmu_mm_mremap_expand_rollback_test(struct kunit *test)
 			0);
 
 	/*
-	 * Fail while preparing the new expanded backing.
+	 * Fail while preparing the new expanded pagetable.
 	 */
 	test_alloc_fail_at(TEST_FAIL_ZALLOC, 0);
 
@@ -498,7 +591,7 @@ static void nommu_swmmu_mm_mremap_expand_rollback_test(struct kunit *test)
 	test_alloc_reset();
 
 	/*
-	 * Original VMA/backing remains intact.
+	 * Original VMA/pagetable remains intact.
 	 */
 	KUNIT_ASSERT_EQ(test,
 			nommu_swmmu_kunit_load_mm(ctx->mm,
@@ -992,7 +1085,7 @@ static void nommu_swmmu_mm_map_fixed_replace_test(struct kunit *test)
 	KUNIT_ASSERT_EQ(test, replacement, address);
 
 	/*
-	 * Replacement has independent, freshly zeroed backing.
+	 * Replacement has independent, freshly zeroed pagetable.
 	 */
 	KUNIT_ASSERT_EQ(test,
 			nommu_swmmu_kunit_load_mm(ctx->mm,
@@ -1063,7 +1156,7 @@ static void nommu_swmmu_mm_map_fixed_head_replace_test(struct kunit *test)
 		MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED);
 	KUNIT_ASSERT_EQ(test, replacement, old_addr);
 
-	/* Replacement backing is new and zero-filled. */
+	/* Replacement pagetable is new and zero-filled. */
 	KUNIT_ASSERT_EQ(test,
 			nommu_swmmu_kunit_load_mm(ctx->mm,
 						  old_addr,
@@ -1275,7 +1368,7 @@ static void nommu_swmmu_mm_map_fixed_tail_replace_test(struct kunit *test)
 			0);
 	KUNIT_EXPECT_EQ(test, value, 41ULL);
 
-	/* Replacement suffix receives fresh zeroed backing. */
+	/* Replacement suffix receives fresh zeroed pagetable. */
 	KUNIT_ASSERT_EQ(test,
 			nommu_swmmu_kunit_load_mm(
 				ctx->mm,
@@ -1588,7 +1681,7 @@ static void nommu_swmmu_mm_map_fixed_multi_vma_replace_test(struct kunit *test)
 			0);
 	KUNIT_EXPECT_EQ(test, value, 41ULL);
 
-	/* Replacement pages have fresh zero-filled backing. */
+	/* Replacement pages have fresh zero-filled pagetable. */
 	KUNIT_ASSERT_EQ(test,
 			nommu_swmmu_kunit_load_mm(
 				ctx->mm,

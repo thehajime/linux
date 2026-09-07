@@ -14,6 +14,8 @@
 #ifndef __MM_VMA_H
 #define __MM_VMA_H
 
+struct vma_backend_ops;
+
 /*
  * VMA lock generalization
  */
@@ -66,6 +68,41 @@ struct vma_replace_struct {
 	struct vm_area_struct *insert;
 	const struct vma_backend_ops *backend;
 	void *backend_state;
+};
+
+struct vma_backend_ops {
+	int (*split_prepare)(struct vm_area_struct *vma,
+			     struct vm_area_struct *new,
+			     unsigned long addr,
+			     bool new_below,
+			     void **state);
+
+	void (*split_commit)(struct vm_area_struct *vma,
+			     struct vm_area_struct *new,
+			     unsigned long addr,
+			     bool new_below,
+			     void *state);
+
+	void (*split_abort)(struct vm_area_struct *vma,
+			    struct vm_area_struct *new,
+			    void *state);
+
+	void (*remove_detached)(struct mm_struct *mm,
+		       struct vm_area_struct *vma);
+
+	int (*replace_prepare)(struct vma_replace_struct *vrs);
+	void (*replace_commit)(struct vma_replace_struct *vrs);
+	void (*replace_abort)(struct vma_replace_struct *vrs);
+
+	int (*expand_prepare)(struct vm_area_struct *vma,
+			      unsigned long new_end,
+			      void **state);
+
+	void (*expand_commit)(struct vm_area_struct *vma,
+			      void *state);
+
+	void (*expand_abort)(struct vm_area_struct *vma,
+			    void *state);
 };
 
 enum vma_merge_state {
@@ -173,6 +210,8 @@ struct vma_merge_struct {
 	 */
 	bool __remove_next :1;
 
+	const struct vma_backend_ops *backend;
+	void *backend_state;
 };
 
 struct unmap_desc {
@@ -879,31 +918,6 @@ int vma_backend_dup(struct vm_area_struct *src,
 
 void vma_backend_split_adjust(struct vm_area_struct *vma,
 			      unsigned long addr);
-
-struct vma_backend_ops {
-	int (*split_prepare)(struct vm_area_struct *vma,
-			     struct vm_area_struct *new,
-			     unsigned long addr,
-			     bool new_below,
-			     void **state);
-
-	void (*split_commit)(struct vm_area_struct *vma,
-			     struct vm_area_struct *new,
-			     unsigned long addr,
-			     bool new_below,
-			     void *state);
-
-	void (*split_abort)(struct vm_area_struct *vma,
-			    struct vm_area_struct *new,
-			    void *state);
-
-	void (*remove_detached)(struct mm_struct *mm,
-		       struct vm_area_struct *vma);
-
-	int (*replace_prepare)(struct vma_replace_struct *vrs);
-	void (*replace_commit)(struct vma_replace_struct *vrs);
-	void (*replace_abort)(struct vma_replace_struct *vrs);
-};
 
 int vma_split_backend(struct vma_iterator *vmi,
 		      struct vm_area_struct *vma,
