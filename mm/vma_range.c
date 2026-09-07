@@ -83,18 +83,21 @@ void vma_backend_split_adjust(struct vm_area_struct *vma,
 
 #endif /* !CONFIG_MMU */
 
-int vma_move_prepare(struct vma_remap_struct *vrm, struct vm_area_struct *src,
-		struct vm_area_struct *dst)
+int vma_move_prepare(struct vma_remap_struct *vrm,
+		     struct vm_area_struct *src,
+		     struct vm_area_struct *dst)
 {
 	int ret;
 
-	vrm->move_backend_active = vrm->backend && vrm->backend->move_prepare;
+	vrm->move_backend_active =
+		vrm->backend && vrm->backend->move_prepare;
 	vrm->move_backend_prepared = false;
 
 	if (!vrm->move_backend_active)
 		return 0;
 
-	ret = vrm->backend->move_prepare(vrm, src, dst, &vrm->backend_state);
+	ret = vrm->backend->move_prepare(
+		vrm, src, dst, &vrm->backend_state);
 	if (ret)
 		return ret;
 
@@ -102,25 +105,25 @@ int vma_move_prepare(struct vma_remap_struct *vrm, struct vm_area_struct *src,
 	return 0;
 }
 
-void vma_move_commit(struct vma_remap_struct *vrm, struct vm_area_struct *src,
-		struct vm_area_struct *dst)
+void vma_move_commit(struct vma_remap_struct *vrm)
 {
-	if (!vrm->move_backend_prepared)
+	if (!vrm || !vrm->move_backend_prepared)
 		return;
 
-	vrm->backend->move_commit(vrm, src, dst, vrm->backend_state);
+	vrm->backend->move_commit(vrm, vrm->vma,
+		vrm->new_vma, vrm->backend_state);
 
 	vrm->backend_state = NULL;
 	vrm->move_backend_prepared = false;
 }
 
-void vma_move_abort(struct vma_remap_struct *vrm, struct vm_area_struct *src,
-		struct vm_area_struct *dst)
+void vma_move_abort(struct vma_remap_struct *vrm)
 {
-	if (!vrm->move_backend_prepared)
+	if (!vrm || !vrm->move_backend_prepared)
 		return;
 
-	vrm->backend->move_abort(vrm, src, dst, vrm->backend_state);
+	vrm->backend->move_abort(vrm, vrm->vma,
+		vrm->new_vma, vrm->backend_state);
 
 	vrm->backend_state = NULL;
 	vrm->move_backend_prepared = false;

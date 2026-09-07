@@ -1273,13 +1273,13 @@ static int copy_vma_and_data(struct vma_remap_struct *vrm,
 		pmc_revert.need_rmap_locks = true;
 		move_page_tables(&pmc_revert);
 
-		vma_move_abort(vrm, vma, new_vma);
+		vma_move_abort(vrm);
 
 		vrm->vma = new_vma;
 		vrm->old_len = vrm->new_len;
 		vrm->addr = vrm->new_addr;
 	} else {
-		vma_move_commit(vrm, vma, new_vma);
+		vma_move_commit(vrm);
 		mremap_userfaultfd_prep(new_vma, vrm->uf);
 	}
 
