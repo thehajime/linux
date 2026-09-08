@@ -285,9 +285,8 @@ void vma_replace_init(struct vma_replace_struct *vrs,
 	vrs->backend = backend;
 }
 
-static void
-debug_dump_vma_range(const char *where,
-		     struct vm_area_struct *vma)
+static void __attribute__((unused)) debug_dump_vma_range(const char *where,
+				struct vm_area_struct *vma)
 {
 	struct mm_struct *mm = vma->vm_mm;
 	VMA_ITERATOR(vmi, mm, vma->vm_start);

@@ -151,10 +151,6 @@ int nommu_swmmu_store_u64_checked(void *address,
 				size_t size,
 				u64 value);
 
-/* Eagerly clone all mappings and pagetable pages. */
-int swmmu_clone_space(struct nommu_swmmu_space *parent,
-                      struct nommu_swmmu_space **child_out);
-
 /* Compiler-generated access ABI. */
 uint64_t nommu_swmmu_load_u64(const void *address, size_t size);
 
