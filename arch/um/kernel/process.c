@@ -149,6 +149,7 @@ static void fork_handler(void)
 	userspace(&current->thread.regs.regs);
 }
 
+#ifdef CONFIG_NOMMU_SWMMU
 struct uml_nommu_user_stack {
 	void *base;
 	unsigned long requested_size;
@@ -312,6 +313,7 @@ uml_nommu_relocate_stack_image(void *new_base,
 			*value = new_low + (*value - old_low);
 	}
 }
+#endif /* CONFIG_NOMMU_SWMMU */
 
 #if IS_ENABLED(CONFIG_NOMMU_SWMMU_DEBUG)
 static void
@@ -357,6 +359,7 @@ static void log_all_register(unsigned long stack_low, unsigned long stack_high)
 }
 #endif
 
+#ifdef CONFIG_NOMMU_SWMMU
 static int
 uml_nommu_copy_user_stack(struct task_struct *child)
 {
@@ -420,6 +423,7 @@ void release_thread(struct task_struct *dead_task)
 
 	uml_nommu_user_stack_free(stack);
 }
+#endif /* CONFIG_NOMMU_SWMMU */
 
 int copy_thread(struct task_struct * p, const struct kernel_clone_args *args)
 {
