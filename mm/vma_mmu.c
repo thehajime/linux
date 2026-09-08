@@ -800,7 +800,22 @@ unsigned long vma_mmu_move_mapping(struct vma_remap_struct *vrm,
 	return move_page_tables(pmc);
 }
 
+static void vma_mmu_move_rollback(struct vma_remap_struct *vrm,
+				unsigned long moved_len)
+{
+	if (!vrm || !vrm->vma || !vrm->new_vma || !moved_len)
+		return;
+
+	PAGETABLE_MOVE(pmc, vrm->new_vma, vrm->vma,
+		       vrm->new_addr, vrm->addr,
+		       moved_len);
+
+	pmc.need_rmap_locks = true;
+	move_page_tables(&pmc);
+}
+
 const struct vma_mapping_ops vma_mmu_mapping_ops = {
 	.move_mapping = vma_mmu_move_mapping,
+	.move_rollback = vma_mmu_move_rollback,
 };
 

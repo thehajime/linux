@@ -477,17 +477,7 @@ static int copy_vma_and_data(struct vma_remap_struct *vrm,
 		err = vma->vm_ops->mremap(new_vma);
 
 	if (unlikely(err)) {
-		PAGETABLE_MOVE(pmc_revert, new_vma, vma, vrm->new_addr,
-			       vrm->addr, moved_len);
-
-		/*
-		 * On error, move entries back from new area to old,
-		 * which will succeed since page tables still there,
-		 * and then proceed to unmap new area instead of old.
-		 */
-		pmc_revert.need_rmap_locks = true;
-		move_page_tables(&pmc_revert);
-
+		vma_move_rollback(vrm, moved_len);
 		vma_move_abort(vrm);
 
 		vrm->vma = new_vma;

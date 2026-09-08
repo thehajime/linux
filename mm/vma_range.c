@@ -245,6 +245,15 @@ unsigned long vma_move_mapping(struct vma_remap_struct *vrm,
 	return vrm->backend->move_mapping(vrm, pmc);
 }
 
+void vma_move_rollback(struct vma_remap_struct *vrm,
+		unsigned long moved_len)
+{
+	if (!vrm || !vrm->backend || !vrm->backend->move_rollback)
+		return;
+
+	vrm->backend->move_rollback(vrm, moved_len);
+}
+
 void vma_remove_detached(struct vma_munmap_struct *vms,
 			struct ma_state *mas_detach,
 			struct mm_struct *mm,

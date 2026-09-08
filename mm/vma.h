@@ -191,6 +191,8 @@ struct vma_mapping_ops {
 
 	unsigned long (*move_mapping)(struct vma_remap_struct *vrm,
 				struct pagetable_move_control *pmc);
+	void (*move_rollback)(struct vma_remap_struct *vrm,
+			unsigned long moved_len);
 };
 
 enum vma_merge_state {
@@ -1106,6 +1108,7 @@ unsigned long vma_move_mapping(struct vma_remap_struct *vrm,
 			struct pagetable_move_control *pmc);
 unsigned long vma_mmu_move_mapping(struct vma_remap_struct *vrm,
 				struct pagetable_move_control *pmc);
+void vma_move_rollback(struct vma_remap_struct *vrm, unsigned long moved_len);
 #ifdef CONFIG_MMU
 extern const struct vma_mapping_ops vma_mmu_mapping_ops;
 #endif
