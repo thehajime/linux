@@ -814,7 +814,33 @@ static void vma_mmu_move_rollback(struct vma_remap_struct *vrm,
 	move_page_tables(&pmc);
 }
 
+static int vma_mmu_move_prepare(struct vma_remap_struct *vrm,
+			 struct vm_area_struct *src,
+			 struct vm_area_struct **dst,
+			 bool *dst_linked,
+			 void **state)
+{
+	const pgoff_t pgoff = linear_page_index(src, vrm->addr);
+	const pgoff_t anon_pgoff = __linear_anon_page_index(src, vrm->addr);
+	bool need_rmap_locks;
+	struct vm_area_struct *vma = src;
+	struct vm_area_struct *new_vma;
+
+	new_vma = copy_vma(&vma, vrm->new_addr, vrm->new_len,
+			   pgoff, anon_pgoff, &need_rmap_locks);
+	if (!new_vma)
+		return -ENOMEM;
+
+	vrm->vma = vma;
+	*dst = new_vma;
+	*dst_linked = true;
+	*state = NULL;
+
+	return 0;
+}
+
 const struct vma_mapping_ops vma_mmu_mapping_ops = {
+	.move_prepare = vma_mmu_move_prepare,
 	.move_mapping = vma_mmu_move_mapping,
 	.move_rollback = vma_mmu_move_rollback,
 };

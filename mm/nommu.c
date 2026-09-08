@@ -1799,7 +1799,7 @@ SYSCALL_DEFINE5(mremap, unsigned long, addr, unsigned long, old_len,
 	unsigned long ret;
 
 	mmap_write_lock(current->mm);
-	ret = do_mremap(addr, old_len, new_len, flags, new_addr);
+	ret = do_mremap_nommu(addr, old_len, new_len, flags, new_addr);
 	mmap_write_unlock(current->mm);
 	return ret;
 }

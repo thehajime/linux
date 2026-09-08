@@ -140,8 +140,7 @@ static unsigned long vrm_set_new_addr(struct vma_remap_struct *vrm)
 	if (vma_test(vma, VMA_MAYSHARE_BIT))
 		map_flags |= MAP_SHARED;
 
-	res = get_unmapped_area(vma->vm_file, new_addr, vrm->new_len, pgoff,
-				map_flags);
+	res = vma_get_unmapped_area(vrm);
 	if (IS_ERR_VALUE(res))
 		return res;
 
@@ -173,7 +172,7 @@ static bool vrm_calc_charge(struct vma_remap_struct *vrm)
 
 
 	/* This accounts 'charged' pages of memory. */
-	if (security_vm_enough_memory_mm(current->mm, charged))
+	if (security_vm_enough_memory_mm(vrm->mm, charged))
 		return false;
 
 	vrm->charged = charged;
@@ -202,7 +201,7 @@ static void vrm_stat_account(struct vma_remap_struct *vrm,
 			     unsigned long bytes)
 {
 	unsigned long pages = bytes >> PAGE_SHIFT;
-	struct mm_struct *mm = current->mm;
+	struct mm_struct *mm = vrm->mm;
 	struct vm_area_struct *vma = vrm->vma;
 
 	vm_stat_account(mm, vma->vm_flags, pages);
@@ -266,16 +265,16 @@ static bool __check_map_count_against_split(struct mm_struct *mm,
 }
 
 /* Do we violate the map count limit if we split VMAs when moving the VMA? */
-static bool check_map_count_against_split(void)
+static bool check_map_count_against_split(struct vma_remap_struct *vrm)
 {
-	return __check_map_count_against_split(current->mm,
+	return __check_map_count_against_split(vrm->mm,
 					       /*before_unmaps=*/false);
 }
 
 /* Do we violate the map count limit if we split VMAs prior to early unmaps? */
-static bool check_map_count_against_split_early(void)
+static bool check_map_count_against_split_early(struct vma_remap_struct *vrm)
 {
-	return __check_map_count_against_split(current->mm,
+	return __check_map_count_against_split(vrm->mm,
 					       /*before_unmaps=*/true);
 }
 
@@ -296,7 +295,7 @@ static unsigned long prep_move_vma(struct vma_remap_struct *vrm)
 	 * which may not merge, then (if MREMAP_DONTUNMAP is not set) unmap the
 	 * source, which may split, causing a net increase of 2 mappings.
 	 */
-	if (!check_map_count_against_split())
+	if (!check_map_count_against_split(vrm))
 		return -ENOMEM;
 
 	if (vma->vm_ops && vma->vm_ops->may_split) {
@@ -449,20 +448,22 @@ static int copy_vma_and_data(struct vma_remap_struct *vrm,
 	int err = 0;
 	PAGETABLE_MOVE(pmc, NULL, NULL, vrm->addr, vrm->new_addr, vrm->old_len);
 
-	new_vma = copy_vma(&vma, vrm->new_addr, vrm->new_len, new_pgoff,
-			   new_anon_pgoff, &pmc.need_rmap_locks);
-	if (!new_vma) {
-		vrm_uncharge(vrm);
-		*new_vma_ptr = NULL;
-		return -ENOMEM;
-	}
+	vrm->vma = vma;
+	vrm->new_vma = NULL;
+
 	/* By merging, we may have invalidated any iterator in use. */
 	if (vma != vrm->vma)
 		vrm->vmi_needs_invalidate = true;
 
-	vrm->vma = vma;
-	vrm->new_vma = new_vma;
-	err = vma_move_prepare(vrm, vma, new_vma);
+	err = vma_move_prepare(vrm, vma);
+	if (err) {
+		*new_vma_ptr = vrm->new_vma;
+		return err;
+	}
+
+	new_vma = vrm->new_vma;
+
+	err = vma_move_link_destination(vrm);
 	if (err) {
 		*new_vma_ptr = new_vma;
 		return err;
@@ -576,7 +577,9 @@ static unsigned long move_vma(struct vma_remap_struct *vrm)
 	 */
 	hiwater_vm = mm->hiwater_vm;
 
+#ifdef CONFIG_MMU
 	vrm_stat_account(vrm, vrm->new_len);
+#endif
 	if (unlikely(!err && (vrm->flags & MREMAP_DONTUNMAP)))
 		dontunmap_complete(vrm, new_vma);
 	else
@@ -597,7 +600,7 @@ static unsigned long move_vma(struct vma_remap_struct *vrm)
 static unsigned long shrink_vma(struct vma_remap_struct *vrm,
 				bool drop_lock)
 {
-	struct mm_struct *mm = current->mm;
+	struct mm_struct *mm = vrm->mm;
 	unsigned long unmap_start = vrm->addr + vrm->new_len;
 	unsigned long unmap_bytes = vrm->delta;
 	unsigned long res;
@@ -637,25 +640,30 @@ static unsigned long mremap_to(struct vma_remap_struct *vrm)
 	unsigned long err;
 
 	if (vrm->flags & MREMAP_FIXED) {
-		/*
-		 * In mremap_to().
-		 * VMA is moved to dst address, and munmap dst first.
-		 * do_munmap will check if dst is sealed.
-		 */
-		err = do_munmap(mm, vrm->new_addr, vrm->new_len,
-				vrm->uf_unmap_early);
-		vrm->vma = NULL; /* Invalidated. */
-		vrm->vmi_needs_invalidate = true;
-		if (err)
-			return err;
+		unsigned long target_end;
 
-		/*
-		 * If we remap a portion of a VMA elsewhere in the same VMA,
-		 * this can invalidate the old VMA. Reset.
-		 */
-		vrm->vma = vma_lookup(mm, vrm->addr);
-		if (!vrm->vma)
-			return -EFAULT;
+		target_end = vrm->new_addr + vrm->new_len;
+		if (find_vma_intersection(mm, vrm->new_addr, target_end)) {
+			/*
+			 * In mremap_to().
+			 * VMA is moved to dst address, and munmap dst first.
+			 * do_munmap will check if dst is sealed.
+			 */
+			err = do_munmap(mm, vrm->new_addr, vrm->new_len,
+					vrm->uf_unmap_early);
+			vrm->vma = NULL; /* Invalidated. */
+			vrm->vmi_needs_invalidate = true;
+			if (err)
+				return err;
+
+			/*
+			 * If we remap a portion of a VMA elsewhere in the same VMA,
+			 * this can invalidate the old VMA. Reset.
+			 */
+			vrm->vma = vma_lookup(mm, vrm->addr);
+			if (!vrm->vma)
+				return -EFAULT;
+		}
 	}
 
 	if (vrm->remap_type == MREMAP_SHRINK) {
@@ -671,9 +679,10 @@ static unsigned long mremap_to(struct vma_remap_struct *vrm)
 	if (vrm->flags & MREMAP_DONTUNMAP) {
 		vma_flags_t vma_flags = vrm->vma->flags;
 		unsigned long pages = vrm->old_len >> PAGE_SHIFT;
-
+#ifdef CONFIG_MMU
 		if (!may_expand_vm(mm, &vma_flags, pages))
 			return -ENOMEM;
+#endif
 	}
 
 	err = vrm_set_new_addr(vrm);
@@ -683,17 +692,21 @@ static unsigned long mremap_to(struct vma_remap_struct *vrm)
 	return move_vma(vrm);
 }
 
-static int vma_expandable(struct vm_area_struct *vma, unsigned long delta)
+static int vma_expandable(struct vma_remap_struct *vrm, unsigned long delta)
 {
-	unsigned long end = vma->vm_end + delta;
+	unsigned long end = vrm->vma->vm_end + delta;
 
-	if (end < vma->vm_end) /* overflow */
+	if (end < vrm->vma->vm_end) /* overflow */
 		return 0;
-	if (find_vma_intersection(vma->vm_mm, vma->vm_end, end))
+	if (find_vma_intersection(vrm->vma->vm_mm, vrm->vma->vm_end, end))
 		return 0;
-	if (get_unmapped_area(NULL, vma->vm_start, end - vma->vm_start,
+#ifdef CONFIG_MMU
+	if (get_unmapped_area(NULL,
+			      vrm->vma->vm_start,
+			      end - vrm->vma->vm_start,
 			      0, MAP_FIXED) & ~PAGE_MASK)
 		return 0;
+#endif
 	return 1;
 }
 
@@ -708,7 +721,7 @@ static bool vrm_can_expand_in_place(struct vma_remap_struct *vrm)
 		return false;
 
 	/* Check whether this is feasible. */
-	if (!vma_expandable(vrm->vma, vrm->delta))
+	if (!vma_expandable(vrm, vrm->delta))
 		return false;
 
 	return true;
@@ -722,7 +735,7 @@ static bool vrm_can_expand_in_place(struct vma_remap_struct *vrm)
  */
 static unsigned long expand_vma_in_place(struct vma_remap_struct *vrm)
 {
-	struct mm_struct *mm = current->mm;
+	struct mm_struct *mm = vrm->mm;
 	struct vm_area_struct *vma = vrm->vma;
 	VMA_ITERATOR(vmi, mm, vma->vm_end);
 
@@ -738,15 +751,16 @@ static unsigned long expand_vma_in_place(struct vma_remap_struct *vrm)
 	 * adjacent to the expanded vma and otherwise
 	 * compatible.
 	 */
-	vma = vma_merge_extend(&vmi, vma, vrm->delta);
+	vma = vma_merge_extend(&vmi, vma, vrm->delta, vrm->backend);
 	if (!vma) {
 		vrm_uncharge(vrm);
 		return -ENOMEM;
 	}
 	vrm->vma = vma;
 
+#ifdef CONFIG_MMU
 	vrm_stat_account(vrm, vrm->delta);
-
+#endif
 	return 0;
 }
 
@@ -879,7 +893,7 @@ static bool vrm_move_only(struct vma_remap_struct *vrm)
 
 static void notify_uffd(struct vma_remap_struct *vrm, bool failed)
 {
-	struct mm_struct *mm = current->mm;
+	struct mm_struct *mm = vrm->mm;
 
 	/* Regardless of success/failure, we always notify of any unmaps. */
 	userfaultfd_unmap_complete(mm, vrm->uf_unmap_early);
@@ -939,6 +953,14 @@ static int check_prep_vma(struct vma_remap_struct *vrm)
 
 	vrm_set_delta(vrm);
 	vrm->remap_type = vrm_remap_type(vrm);
+
+	if (vrm->backend && vrm->backend->check_remap) {
+		int err;
+
+		err = vrm->backend->check_remap(vrm);
+		if (err)
+			return err;
+	}
 	/* For convenience, we set new_addr even if VMA won't move. */
 	if (!vrm_implies_new_addr(vrm))
 		vrm->new_addr = addr;
@@ -1009,10 +1031,10 @@ static int check_prep_vma(struct vma_remap_struct *vrm)
 #ifdef CONFIG_MMU
 	if (!mlock_future_ok(mm, vma_test(vma, VMA_LOCKED_BIT), vrm->delta))
 		return -EAGAIN;
-#endif
+
 	if (!may_expand_vm(mm, &vma->flags, vrm->delta >> PAGE_SHIFT))
 		return -ENOMEM;
-
+#endif
 	return 0;
 }
 
@@ -1084,7 +1106,7 @@ static unsigned long remap_move(struct vma_remap_struct *vrm)
 	unsigned long last_end;
 	bool seen_vma = false;
 
-	VMA_ITERATOR(vmi, current->mm, start);
+	VMA_ITERATOR(vmi, vrm->mm, start);
 
 	/*
 	 * When moving VMAs we allow for batched moves across multiple VMAs,
@@ -1162,10 +1184,9 @@ static unsigned long remap_move(struct vma_remap_struct *vrm)
 	return res;
 }
 
-#ifdef CONFIG_MMU
-static unsigned long do_mremap(struct vma_remap_struct *vrm)
+unsigned long do_mremap(struct vma_remap_struct *vrm)
 {
-	struct mm_struct *mm = current->mm;
+	struct mm_struct *mm = vrm->mm;
 	unsigned long res;
 	bool failed;
 
@@ -1180,7 +1201,7 @@ static unsigned long do_mremap(struct vma_remap_struct *vrm)
 		return -EINTR;
 	vrm->mmap_locked = true;
 
-	if (!check_map_count_against_split_early()) {
+	if (!check_map_count_against_split_early(vrm)) {
 		mmap_write_unlock(mm);
 		return -ENOMEM;
 	}
@@ -1188,7 +1209,7 @@ static unsigned long do_mremap(struct vma_remap_struct *vrm)
 	if (vrm_move_only(vrm)) {
 		res = remap_move(vrm);
 	} else {
-		vrm->vma = vma_lookup(current->mm, vrm->addr);
+		vrm->vma = vma_lookup(vrm->mm, vrm->addr);
 		res = check_prep_vma(vrm);
 		if (res)
 			goto out;
@@ -1210,7 +1231,6 @@ out:
 	notify_uffd(vrm, failed);
 	return res;
 }
-#endif
 
 /*
  * Expand (or shrink) an existing mapping, potentially moving it at the

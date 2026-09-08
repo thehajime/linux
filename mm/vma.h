@@ -120,6 +120,7 @@ struct vma_remap_struct {
 
 	bool move_backend_active;
 	bool move_backend_prepared;
+	bool new_vma_linked;
 };
 
 struct vma_move_replace_struct {
@@ -176,7 +177,8 @@ struct vma_mapping_ops {
 
 	int (*move_prepare)(struct vma_remap_struct *vrm,
 			struct vm_area_struct *src,
-			struct vm_area_struct *dst,
+			struct vm_area_struct **dst,
+			bool *dst_linked,
 			void **state);
 
 	void (*move_commit)(struct vma_remap_struct *vrm,
@@ -193,6 +195,9 @@ struct vma_mapping_ops {
 				struct pagetable_move_control *pmc);
 	void (*move_rollback)(struct vma_remap_struct *vrm,
 			unsigned long moved_len);
+
+	unsigned long (*get_unmapped_area)(struct vma_remap_struct *vrm);
+	int (*check_remap)(struct vma_remap_struct *vrm);
 };
 
 enum vma_merge_state {
@@ -693,7 +698,9 @@ __must_check struct vm_area_struct *vma_modify_flags_uffd(struct vma_iterator *v
 __must_check struct vm_area_struct *vma_merge_new_range(struct vma_merge_struct *vmg);
 
 __must_check struct vm_area_struct *vma_merge_extend(struct vma_iterator *vmi,
-		  struct vm_area_struct *vma, unsigned long delta);
+						struct vm_area_struct *vma,
+						unsigned long delta,
+						const struct vma_mapping_ops *backend);
 
 void __vma_set_range(struct vm_area_struct *vma, unsigned long start,
 		unsigned long end);
@@ -1093,8 +1100,7 @@ void vma_replace_abort(struct vma_replace_struct *vrs,
 		       struct ma_state *mas_detach);
 
 int vma_move_prepare(struct vma_remap_struct *vrm,
-		     struct vm_area_struct *src,
-		     struct vm_area_struct *dst);
+		     struct vm_area_struct *src);
 
 void vma_move_commit(struct vma_remap_struct *vrm);
 
@@ -1123,5 +1129,8 @@ int vma_move_replace_prepare(struct vma_move_replace_struct *vmrs);
 void vma_move_replace_commit(struct vma_move_replace_struct *vmrs);
 
 void vma_move_replace_abort(struct vma_move_replace_struct *vmrs);
+
+int vma_move_link_destination(struct vma_remap_struct *vrm);
+unsigned long vma_get_unmapped_area(struct vma_remap_struct *vrm);
 
 #endif	/* __MM_VMA_H */

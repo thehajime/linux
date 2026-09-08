@@ -1784,22 +1784,52 @@ static void swmmu_replace_commit(struct vma_replace_struct *vrs)
 	vrs->backend_state = NULL;
 }
 
+static struct vm_area_struct *swmmu_fixed_alloc_vma(struct mm_struct *mm,
+						struct vm_area_struct *template,
+						unsigned long start,
+						unsigned long end,
+						vma_flags_t vma_flags,
+						unsigned long pgoff)
+{
+	struct vm_area_struct *vma;
+
+	if (template)
+		vma = vm_area_dup(template);
+	else
+		vma = vm_area_alloc(mm);
+
+	if (!vma)
+		return NULL;
+
+	vma->vm_mm = mm;
+	vma->vm_start = start;
+	vma->vm_end = end;
+	vma->vm_swmmu_pt_range = NULL;
+
+	vm_flags_init(vma, vma_flags_to_legacy(vma_flags));
+	vma_set_pgoff(vma, pgoff);
+
+	return vma;
+}
+
 static int swmmu_move_prepare(struct vma_remap_struct *vrm,
-			      struct vm_area_struct *src,
-			      struct vm_area_struct *dst,
-			      void **state)
+			struct vm_area_struct *src,
+			struct vm_area_struct **dst,
+			bool *dst_linked,
+			void **state)
 {
 	struct swmmu_pagetable_tx *tx;
 	struct swmmu_pagetable_range *src_range;
 	struct swmmu_pagetable_range *new_range;
 	struct swmmu_pagetable *new_pt;
 	struct nommu_swmmu_space *space;
+	struct vm_area_struct *new_vma;
 	unsigned long old_nr;
 	unsigned long new_nr;
 	unsigned long i;
 	int ret;
 
-	if (!vrm || !src || !dst || !state)
+	if (!vrm || !src || !dst || !dst_linked || !state)
 		return -EINVAL;
 
 	src_range = src->vm_swmmu_pt_range;
@@ -1817,17 +1847,24 @@ static int swmmu_move_prepare(struct vma_remap_struct *vrm,
 	    old_nr > src_range->nr_ptes)
 		return -EINVAL;
 
+	new_vma = swmmu_fixed_alloc_vma(src->vm_mm, src, vrm->new_addr,
+		vrm->new_addr + vrm->new_len, src->flags, src->vm_pgoff);
+	if (!new_vma)
+		return -ENOMEM;
+
+	new_vma->vm_swmmu_pt_range = NULL;
+
 	down_write(&space->lock);
 
 	tx = space->ops->zalloc(sizeof(*tx), GFP_KERNEL);
 	if (!tx) {
-		up_write(&space->lock);
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto out_unlock_free_vma;
 	}
 
 	tx->kind = SWMMU_TX_MOVE;
 	tx->source = src_range;
-	tx->new_vma = dst;
+	tx->new_vma = new_vma;
 
 	if (old_nr == new_nr) {
 		new_range = swmmu_pagetable_range_share(
@@ -1836,30 +1873,30 @@ static int swmmu_move_prepare(struct vma_remap_struct *vrm,
 			src_range->first,
 			old_nr);
 		if (!new_range) {
-			space->ops->dealloc(tx);
-			up_write(&space->lock);
-			return -ENOMEM;
+			ret = -ENOMEM;
+			goto out_unlock_free_tx;
 		}
 
 		tx->new_range = new_range;
 		tx->move_reuses_pagetable = true;
+		*dst = new_vma;
+		*dst_linked = false;
 		*state = tx;
 		return 0;
 	}
 
-	new_pt = swmmu_pagetable_alloc(space, new_nr * SWMMU_PAGE_SIZE);
+	new_pt = swmmu_pagetable_alloc(
+		space, new_nr * SWMMU_PAGE_SIZE);
 	if (!new_pt) {
-		space->ops->dealloc(tx);
-		up_write(&space->lock);
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto out_unlock_free_tx;
 	}
 
 	new_range = swmmu_pagetable_range_create(space, new_pt);
 	swmmu_pagetable_put(space, new_pt);
 	if (!new_range) {
-		space->ops->dealloc(tx);
-		up_write(&space->lock);
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto out_unlock_free_tx;
 	}
 
 	new_range->first = 0;
@@ -1874,15 +1911,22 @@ static int swmmu_move_prepare(struct vma_remap_struct *vrm,
 		if (ret) {
 			swmmu_pagetable_range_release_locked(
 				space, new_range);
-			space->ops->dealloc(tx);
-			up_write(&space->lock);
-			return ret;
+			goto out_unlock_free_tx;
 		}
 	}
 
 	tx->new_range = new_range;
+	*dst = new_vma;
+	*dst_linked = false;
 	*state = tx;
 	return 0;
+
+out_unlock_free_tx:
+	space->ops->dealloc(tx);
+out_unlock_free_vma:
+	up_write(&space->lock);
+	vm_area_free(new_vma);
+	return ret;
 }
 
 static void swmmu_move_commit(struct vma_remap_struct *vrm,
@@ -1957,6 +2001,52 @@ static unsigned long swmmu_move_mapping(struct vma_remap_struct *vrm,
 	return vrm->old_len;
 }
 
+static unsigned long swmmu_get_unmapped_area(struct vma_remap_struct *vrm)
+{
+	unsigned long addr;
+	int ret;
+
+	if (vrm->flags & MREMAP_FIXED)
+		return vrm->new_addr;
+
+	ret = swmmu_find_free_range(
+		vrm->mm,
+		SWMMU_VA_BASE,
+		vrm->new_len,
+		&addr);
+	if (ret)
+		return ret;
+
+	return addr;
+}
+
+static int swmmu_check_remap(struct vma_remap_struct *vrm)
+{
+	struct vm_area_struct *vma;
+
+	if (!vrm || !vrm->vma)
+		return -EINVAL;
+
+	vma = vrm->vma;
+
+	if (!vma->vm_swmmu_pt_range)
+		return -EINVAL;
+
+	/*
+	 * Current SWMMU remap supports complete VMA ranges only.
+	 */
+	if (vma->vm_start != vrm->addr ||
+	    vma->vm_end != vrm->addr + vrm->old_len)
+		return -EINVAL;
+
+	if ((vrm->flags & MREMAP_DONTUNMAP) ||
+	    ((vrm->flags & MREMAP_FIXED) &&
+	     vrm->new_len < vrm->old_len))
+		return -EOPNOTSUPP;
+
+	return 0;
+}
+
 static const struct vma_mapping_ops swmmu_vma_mapping_ops = {
 	.split_prepare = swmmu_split_prepare,
 	.split_commit = swmmu_split_commit,
@@ -1972,6 +2062,8 @@ static const struct vma_mapping_ops swmmu_vma_mapping_ops = {
 	.move_commit = swmmu_move_commit,
 	.move_abort = swmmu_move_abort,
 	.move_mapping = swmmu_move_mapping,
+	.get_unmapped_area = swmmu_get_unmapped_area,
+	.check_remap = swmmu_check_remap,
 };
 
 const struct vma_mapping_ops *vma_mapping_ops_for_mm(struct mm_struct *mm)
@@ -1980,33 +2072,6 @@ const struct vma_mapping_ops *vma_mapping_ops_for_mm(struct mm_struct *mm)
 }
 
 
-static struct vm_area_struct *swmmu_fixed_alloc_vma(struct mm_struct *mm,
-						struct vm_area_struct *template,
-						unsigned long start,
-						unsigned long end,
-						vma_flags_t vma_flags,
-						unsigned long pgoff)
-{
-	struct vm_area_struct *vma;
-
-	if (template)
-		vma = vm_area_dup(template);
-	else
-		vma = vm_area_alloc(mm);
-
-	if (!vma)
-		return NULL;
-
-	vma->vm_mm = mm;
-	vma->vm_start = start;
-	vma->vm_end = end;
-	vma->vm_swmmu_pt_range = NULL;
-
-	vm_flags_init(vma, vma_flags_to_legacy(vma_flags));
-	vma_set_pgoff(vma, pgoff);
-
-	return vma;
-}
 
 static int swmmu_fixed_replace_prepare(struct nommu_swmmu_space *space,
 				struct vm_area_struct *old_vma,
@@ -2845,149 +2910,6 @@ static unsigned long swmmu_mremap_move(struct mm_struct *mm,
 	return dest_addr;
 }
 
-static unsigned long __do_mremap(struct vma_remap_struct *vrm)
-{
-	VMA_ITERATOR(vmi, vrm->mm, vrm->addr);
-	struct vm_area_struct *vma;
-	struct swmmu_pagetable_tx vma_tx;
-	struct vm_area_struct *next;
-	unsigned long ret;
-	unsigned long end;
-	unsigned long result;
-
-	mmap_assert_write_locked(vrm->mm);
-
-	vrm->old_len = PAGE_ALIGN(vrm->old_len);
-	if (vrm->old_len == 0)
-		return -EINVAL;
-
-	if (vrm->old_len > ULONG_MAX - vrm->addr)
-		return -EINVAL;
-
-	end = vrm->addr + vrm->old_len;
-	vma = vma_find(&vmi, end);
-
-	if (!vma || !vma->vm_swmmu_pt_range) {
-		if (vrm->mm != current->mm)
-			return -EINVAL;
-		return do_mremap_nommu(vrm->addr, vrm->old_len, vrm->new_len,
-				vrm->flags, vrm->new_addr);
-	}
-
-	/*
-	 * The current SWMMU implementation only supports remapping
-	 * a complete VMA in place.
-	 */
-	if (vma->vm_start != vrm->addr ||
-		end != vma->vm_end)
-		return -EINVAL;
-
-	if (vrm->flags & MREMAP_FIXED) {
-		if (!(vrm->flags & MREMAP_MAYMOVE) ||
-			!vrm->new_addr ||
-			!PAGE_ALIGNED(vrm->new_addr))
-			return -EINVAL;
-
-		if (vrm->new_len > ULONG_MAX - vrm->new_addr)
-			return -EINVAL;
-
-		if (vrm->new_len < vrm->old_len)
-			return -EOPNOTSUPP;
-
-		result = swmmu_mremap_move(vrm->mm, vma, vrm->old_len, vrm->new_len,
-					vrm->flags, vrm->new_addr);
-		if (IS_ERR_VALUE(result))
-			return result;
-
-		goto remap_success;
-
-	} else if (vrm->new_addr) {
-		return -EINVAL;
-	}
-
-	if (vrm->flags & MREMAP_DONTUNMAP)
-		return -EINVAL;
-
-	next = vma_next(&vmi);
-
-	if (vrm->new_len > ULONG_MAX - (PAGE_SIZE - 1))
-		return -EINVAL;
-
-	vrm->new_len = PAGE_ALIGN(vrm->new_len);
-	if (!vrm->new_len)
-		return -EINVAL;
-
-	if (vrm->new_len == vrm->old_len && !(vrm->flags & MREMAP_FIXED))
-		return vma->vm_start;
-
-	if (vrm->new_len < vrm->old_len) {
-		/* shrink */
-		ret = swmmu_pagetable_resize_prepare(vrm->mm->swmmu_space,
-						vma->vm_swmmu_pt_range,
-						vrm->new_len, &vma_tx);
-
-		if (ret)
-			return ret;
-
-		ret = vma_shrink(&vmi, vma, vma->vm_start + vrm->new_len);
-		if (ret) {
-			swmmu_resize_abort(vrm->mm->swmmu_space, &vma_tx);
-			return ret;
-		}
-
-		down_write(&vrm->mm->swmmu_space->lock);
-		swmmu_resize_commit(vrm->mm->swmmu_space, &vma_tx);
-		up_write(&vrm->mm->swmmu_space->lock);
-
-		result = vma->vm_start;
-	} else {
-		/* growth */
-		struct vma_merge_struct vmg = {
-			.mm = vrm->mm,
-			.vmi = &vmi,
-			.start = vma->vm_start,
-			.end = vma->vm_start + vrm->new_len,
-			.target = vma,
-			.next = next,
-			.just_expand = true,
-			.backend = &swmmu_vma_mapping_ops,
-		};
-
-		ret = vma_expand(&vmg);
-		if (!ret) {
-			result = vma->vm_start;
-		} else if (ret == -ENOMEM &&
-			(vrm->flags & MREMAP_MAYMOVE)) {
-			result = swmmu_mremap_move(vrm->mm, vma, vrm->old_len,
-						vrm->new_len,
-						vrm->flags, vrm->new_addr);
-			if (IS_ERR_VALUE(result))
-				return result;
-		} else {
-			return ret;
-		}
-	}
-
-remap_success:
-	validate_mm(vrm->mm);
-	nommu_swmmu_validate(vrm->mm);
-	return result;
-}
-
-unsigned long do_mremap(struct vma_remap_struct *vrm)
-{
-	unsigned long ret;
-
-	if (!vrm->mm)
-		return -EINVAL;
-
-	mmap_write_lock(current->mm);
-	ret = __do_mremap(vrm);
-	mmap_write_unlock(current->mm);
-
-	return ret;
-}
-
 #if IS_ENABLED(CONFIG_NOMMU_SWMMU_KUNIT_TEST)
 unsigned long nommu_swmmu_kunit_mremap_mm(struct mm_struct *mm,
 					unsigned long addr,
@@ -3014,11 +2936,7 @@ unsigned long nommu_swmmu_kunit_mremap_mm(struct mm_struct *mm,
 	if (!mm)
 		return -EINVAL;
 
-	mmap_write_lock(mm);
-
-	ret = __do_mremap(&vrm);
-
-	mmap_write_unlock(mm);
+	ret = do_mremap(&vrm);
 
 	return ret;
 }

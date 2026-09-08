@@ -84,22 +84,25 @@ void vma_backend_split_adjust(struct vm_area_struct *vma,
 #endif /* !CONFIG_MMU */
 
 int vma_move_prepare(struct vma_remap_struct *vrm,
-		     struct vm_area_struct *src,
-		     struct vm_area_struct *dst)
+		     struct vm_area_struct *src)
 {
 	int ret;
 
-	vrm->move_backend_active =
-		vrm->backend && vrm->backend->move_prepare;
+	if (!vrm || !src || !vrm->backend || !vrm->backend->move_prepare)
+		return -EINVAL;
+
+	vrm->move_backend_active = true;
 	vrm->move_backend_prepared = false;
+	vrm->new_vma = NULL;
+	vrm->new_vma_linked = false;
 
-	if (!vrm->move_backend_active)
-		return 0;
-
-	ret = vrm->backend->move_prepare(
-		vrm, src, dst, &vrm->backend_state);
+	ret = vrm->backend->move_prepare(vrm, src, &vrm->new_vma,
+		&vrm->new_vma_linked, &vrm->backend_state);
 	if (ret)
 		return ret;
+
+	if (!vrm->new_vma)
+		return -EINVAL;
 
 	vrm->move_backend_prepared = true;
 	return 0;
@@ -170,7 +173,7 @@ int vma_move_at(struct vma_remap_struct *vrm, struct vm_area_struct *src,
 	/*
 	 * Prepare the backend while the source is still fully valid.
 	 */
-	ret = vma_move_prepare(vrm, src, dst);
+	ret = vma_move_prepare(vrm, src);
 	if (ret)
 		goto out_destroy;
 
@@ -611,8 +614,13 @@ int vma_expand(struct vma_merge_struct *vmg)
 		vmg->end > vmg->next->vm_start)
 		return -ENOMEM;
 
+
 	/* prep */
 	if (vma->vm_swmmu_pt_range) {
+		if (!vmg->backend ||
+			!vmg->backend->expand_prepare)
+			return -EOPNOTSUPP;
+
 		ret = vmg->backend->expand_prepare(vma, vmg->end,
 						&vmg->backend_state);
 		if (ret)
@@ -859,4 +867,433 @@ void vma_move_replace_init(struct vma_move_replace_struct *vmrs,
 	vmrs->target_vms = target_vms;
 	vmrs->target_detach = target_detach;
 	vmrs->backend = backend;
+}
+
+int vma_move_link_destination(struct vma_remap_struct *vrm)
+{
+	struct vm_area_struct *vma;
+	int ret;
+
+	if (!vrm || !vrm->mm || !vrm->new_vma)
+		return -EINVAL;
+
+	if (vrm->new_vma_linked)
+		return 0;
+
+	vma = vrm->new_vma;
+	VMA_ITERATOR(vmi, vrm->mm, vma->vm_start);
+
+	if (vma_iter_load(&vmi))
+		return -EEXIST;
+
+	vma_iter_config(&vmi, vma->vm_start, vma->vm_end);
+
+	ret = vma_iter_prealloc(&vmi, vma);
+	if (ret)
+		return ret;
+
+	vma_start_write(vma);
+	vma_iter_store_new(&vmi, vma);
+	vrm->mm->map_count++;
+	vrm->new_vma_linked = true;
+
+	return 0;
+}
+
+/* Was this VMA ever forked from a parent, i.e. maybe contains CoW mappings? */
+static bool vma_is_fork_child(struct vm_area_struct *vma)
+{
+	/*
+	 * The list_is_singular() test is to avoid merging VMA cloned from
+	 * parents. This can improve scalability caused by the anon_vma root
+	 * lock.
+	 */
+	return vma && vma->anon_vma && !list_is_singular(&vma->anon_vma_chain);
+}
+
+static inline bool is_mergeable_vma(struct vma_merge_struct *vmg, bool merge_next)
+{
+	struct vm_area_struct *vma = merge_next ? vmg->next : vmg->prev;
+	vma_flags_t diff;
+
+#ifdef CONFIG_MMU
+	if (!mpol_equal(vmg->policy, vma_policy(vma)))
+		return false;
+#endif
+	diff = vma_flags_diff_pair(&vma->flags, &vmg->vma_flags);
+	vma_flags_clear_mask(&diff, VMA_IGNORE_MERGE_FLAGS);
+
+	if (!vma_flags_empty(&diff))
+		return false;
+	if (vma->vm_file != vmg->file)
+		return false;
+	if (!is_mergeable_vm_userfaultfd_ctx(vma, vmg->uffd_ctx))
+		return false;
+	if (!anon_vma_name_eq(anon_vma_name(vma), vmg->anon_name))
+		return false;
+	return true;
+}
+
+
+static bool is_mergeable_anon_vma(struct vma_merge_struct *vmg, bool merge_next)
+{
+	struct vm_area_struct *tgt = merge_next ? vmg->next : vmg->prev;
+	struct vm_area_struct *src = vmg->middle; /* existing merge case. */
+	struct anon_vma *tgt_anon = tgt->anon_vma;
+	struct anon_vma *src_anon = vmg->anon_vma;
+
+	/*
+	 * We _can_ have !src, vmg->anon_vma via copy_vma(). In this instance we
+	 * will remove the existing VMA's anon_vma's so there's no scalability
+	 * concerns.
+	 */
+	VM_WARN_ON(src && src_anon != src->anon_vma);
+
+	/* Case 1 - we will dup_anon_vma() from src into tgt. */
+	if (!tgt_anon && src_anon) {
+		struct vm_area_struct *copied_from = vmg->copied_from;
+
+		if (vma_is_fork_child(src))
+			return false;
+		if (vma_is_fork_child(copied_from))
+			return false;
+
+		return true;
+	}
+	/* Case 2 - we will simply use tgt's anon_vma. */
+	if (tgt_anon && !src_anon)
+		return !vma_is_fork_child(tgt);
+	/* Case 3 - the anon_vma's are already shared. */
+	return src_anon == tgt_anon;
+}
+
+/*
+ * Does this merge require that adjacent VMAs must have adjacent anonymous page
+ * offsets in addition to having adjacent vma->vm_pgoff?
+ *
+ * This is only required for MAP_PRIVATE-file backed mappings as the page offset
+ * for pure anonymous VMAs is equal to the anonymous page offset.
+ *
+ * Read-only shared mappings (with VMA_SHARED_BIT cleared) are always unfaulted
+ * so automatically have correct anonymous page offset (as it is always updated
+ * on remap).
+ *
+ * 'Special' mappings in the sense of VDSO, VVAR etc. have !file but would in
+ * any case not be candidates for merge nor be mergeable.
+ */
+static bool needs_adjacent_anon_pgoff(const struct vma_merge_struct *vmg)
+{
+	return vmg->file && vma_flags_is_cow_mapping(&vmg->vma_flags);
+}
+
+/* We can only remove VMAs when merging if they do not have a close hook. */
+static bool can_merge_remove_vma(struct vm_area_struct *vma)
+{
+	return !vma->vm_ops || !vma->vm_ops->close;
+}
+
+/*
+ * Return true if we can merge this (vma_flags,anon_vma,file,vm_pgoff)
+ * in front of (at a lower virtual address and file offset than) the vma.
+ *
+ * We cannot merge two vmas if they have differently assigned (non-NULL)
+ * anon_vmas, nor if same anon_vma is assigned but offsets incompatible.
+ *
+ * We don't check here for the merged mmap wrapping around the end of pagecache
+ * indices (16TB on ia32) because do_mmap() does not permit mmap's which
+ * wrap, nor mmaps which cover the final page at index -1UL.
+ *
+ * We assume the vma may be removed as part of the merge.
+ */
+static bool can_vma_merge_before(struct vma_merge_struct *vmg)
+{
+	if (!is_mergeable_vma(vmg, /* merge_next = */ true))
+		return false;
+	if (!is_mergeable_anon_vma(vmg, /* merge_next = */ true))
+		return false;
+	if (vmg_end_pgoff(vmg) != vma_start_pgoff(vmg->next))
+		return false;
+	if (needs_adjacent_anon_pgoff(vmg) &&
+	    vmg_end_anon_pgoff(vmg) != vma_start_anon_pgoff(vmg->next))
+		return false;
+	return true;
+}
+
+/*
+ * Return true if we can merge this (vma_flags,anon_vma,file,vm_pgoff)
+ * beyond (at a higher virtual address and file offset than) the vma.
+ *
+ * We cannot merge two vmas if they have differently assigned (non-NULL)
+ * anon_vmas, nor if same anon_vma is assigned but offsets incompatible.
+ *
+ * We assume that vma is not removed as part of the merge.
+ */
+static bool can_vma_merge_after(struct vma_merge_struct *vmg)
+{
+	if (!is_mergeable_vma(vmg, /* merge_next = */ false))
+		return false;
+	if (!is_mergeable_anon_vma(vmg, /* merge_next = */ false))
+		return false;
+	if (vma_end_pgoff(vmg->prev) != vmg_start_pgoff(vmg))
+		return false;
+	if (needs_adjacent_anon_pgoff(vmg) &&
+	    vma_end_anon_pgoff(vmg->prev) != vmg_start_anon_pgoff(vmg))
+		return false;
+	return true;
+}
+
+/*
+ * Can the proposed VMA be merged with the left (previous) VMA taking into
+ * account the start position of the proposed range.
+ */
+static bool can_vma_merge_left(struct vma_merge_struct *vmg)
+
+{
+	return vmg->prev && vmg->prev->vm_end == vmg->start &&
+		can_vma_merge_after(vmg);
+}
+
+/*
+ * Can the proposed VMA be merged with the right (next) VMA taking into
+ * account the end position of the proposed range.
+ *
+ * In addition, if we can merge with the left VMA, ensure that left and right
+ * anon_vma's are also compatible.
+ */
+static bool can_vma_merge_right(struct vma_merge_struct *vmg,
+				bool can_merge_left)
+{
+	struct vm_area_struct *next = vmg->next;
+	struct vm_area_struct *prev;
+
+	if (!next || vmg->end != next->vm_start || !can_vma_merge_before(vmg))
+		return false;
+
+	if (!can_merge_left)
+		return true;
+
+	/*
+	 * If we can merge with prev (left) and next (right), indicating that
+	 * each VMA's anon_vma is compatible with the proposed anon_vma, this
+	 * does not mean prev and next are compatible with EACH OTHER.
+	 *
+	 * We therefore check this in addition to mergeability to either side.
+	 */
+	prev = vmg->prev;
+	return !prev->anon_vma || !next->anon_vma ||
+		prev->anon_vma == next->anon_vma;
+}
+
+/*
+ * vma_merge_new_range - Attempt to merge a new VMA into address space
+ *
+ * @vmg: Describes the VMA we are adding, in the range @vmg->start to @vmg->end
+ *       (exclusive), which we try to merge with any adjacent VMAs if possible.
+ *
+ * We are about to add a VMA to the address space starting at @vmg->start and
+ * ending at @vmg->end. There are three different possible scenarios:
+ *
+ * 1. There is a VMA with identical properties immediately adjacent to the
+ *    proposed new VMA [@vmg->start, @vmg->end) either before or after it -
+ *    EXPAND that VMA:
+ *
+ * Proposed:       |-----|  or  |-----|
+ * Existing:  |----|                  |----|
+ *
+ * 2. There are VMAs with identical properties immediately adjacent to the
+ *    proposed new VMA [@vmg->start, @vmg->end) both before AND after it -
+ *    EXPAND the former and REMOVE the latter:
+ *
+ * Proposed:       |-----|
+ * Existing:  |----|     |----|
+ *
+ * 3. There are no VMAs immediately adjacent to the proposed new VMA or those
+ *    VMAs do not have identical attributes - NO MERGE POSSIBLE.
+ *
+ * In instances where we can merge, this function returns the expanded VMA which
+ * will have its range adjusted accordingly and the underlying maple tree also
+ * adjusted.
+ *
+ * Returns: In instances where no merge was possible, NULL. Otherwise, a pointer
+ *          to the VMA we expanded.
+ *
+ * This function adjusts @vmg to provide @vmg->next if not already specified,
+ * and adjusts [@vmg->start, @vmg->end) to span the expanded range.
+ *
+ * ASSUMPTIONS:
+ * - The caller must hold a WRITE lock on the mm_struct->mmap_lock.
+ * - The caller must have determined that [@vmg->start, @vmg->end) is empty,
+     other than VMAs that will be unmapped should the operation succeed.
+ * - The caller must have specified the previous vma in @vmg->prev.
+ * - The caller must have specified the next vma in @vmg->next.
+ * - The caller must have positioned the vmi at or before the gap.
+ */
+struct vm_area_struct *vma_merge_new_range(struct vma_merge_struct *vmg)
+{
+	struct vm_area_struct *prev = vmg->prev;
+	struct vm_area_struct *next = vmg->next;
+	unsigned long end = vmg->end;
+	bool can_merge_left, can_merge_right;
+
+	mmap_assert_write_locked(vmg->mm);
+	VM_WARN_ON_VMG(vmg->middle, vmg);
+	VM_WARN_ON_VMG(vmg->target, vmg);
+	/* vmi must point at or before the gap. */
+	VM_WARN_ON_VMG(vma_iter_addr(vmg->vmi) > end, vmg);
+
+	vmg->state = VMA_MERGE_NOMERGE;
+
+	/* Special VMAs are unmergeable, also if no prev/next. */
+	if (vma_flags_test_any_mask(&vmg->vma_flags, VMA_SPECIAL_FLAGS) ||
+	    (!prev && !next))
+		return NULL;
+
+	can_merge_left = can_vma_merge_left(vmg);
+	can_merge_right = !vmg->just_expand && can_vma_merge_right(vmg, can_merge_left);
+
+	/* If we can merge with the next VMA, adjust vmg accordingly. */
+	if (can_merge_right) {
+		vmg->end = next->vm_end;
+		vmg->target = next;
+	}
+
+	/* If we can merge with the previous VMA, adjust vmg accordingly. */
+	if (can_merge_left) {
+		vmg->start = prev->vm_start;
+		vmg->target = prev;
+		vmg->pgoff = vma_start_pgoff(prev);
+		vmg->anon_pgoff = vma_start_anon_pgoff(prev);
+
+		/*
+		 * If this merge would result in removal of the next VMA but we
+		 * are not permitted to do so, reduce the operation to merging
+		 * prev and vma.
+		 */
+		if (can_merge_right && !can_merge_remove_vma(next))
+			vmg->end = end;
+
+		/* In expand-only case we are already positioned at prev. */
+		if (!vmg->just_expand) {
+			/* Equivalent to going to the previous range. */
+			vma_prev(vmg->vmi);
+		}
+	}
+
+	/*
+	 * Now try to expand adjacent VMA(s). This takes care of removing the
+	 * following VMA if we have VMAs on both sides.
+	 */
+	if (vmg->target && !vma_expand(vmg)) {
+		khugepaged_enter_vma(vmg->target, vmg->vm_flags);
+		vmg->state = VMA_MERGE_SUCCESS;
+		return vmg->target;
+	}
+
+	return NULL;
+}
+
+/*
+ * Expand vma by delta bytes, potentially merging with an immediately adjacent
+ * VMA with identical properties.
+ */
+struct vm_area_struct *vma_merge_extend(struct vma_iterator *vmi,
+					struct vm_area_struct *vma,
+					unsigned long delta,
+					const struct vma_mapping_ops *backend)
+{
+	VMG_VMA_STATE(vmg, vmi, vma, vma, vma->vm_end, vma->vm_end + delta);
+
+	vmg.backend = backend;
+	vmg.next = vma_iter_next_rewind(vmi, NULL);
+	vmg.middle = NULL; /* We use the VMA to populate VMG fields only. */
+
+	return vma_merge_new_range(&vmg);
+}
+
+#ifndef CONFIG_MMU
+
+int do_vmi_munmap(struct vma_iterator *vmi, struct mm_struct *mm,
+		  unsigned long start, size_t len,
+		  struct list_head *uf, bool unlock)
+{
+	struct maple_tree mt_detach;
+	MA_STATE(mas_detach, &mt_detach, 0, 0);
+	struct vma_munmap_struct vms;
+	struct vm_area_struct *vma;
+	const struct vma_mapping_ops *backend;
+	int ret;
+
+	if (!vmi || !mm || !len)
+		return -EINVAL;
+
+	if (start > ULONG_MAX - len)
+		return -EINVAL;
+
+	len = PAGE_ALIGN(len);
+	if (!len || start > ULONG_MAX - len)
+		return -EINVAL;
+
+	vma = vma_find(vmi, start + len);
+	if (!vma)
+		return 0;
+
+	backend = vma_mapping_ops_for_mm(mm);
+	if (!backend || !backend->remove_detached)
+		return -EOPNOTSUPP;
+
+	mt_init_flags(&mt_detach,
+		      vmi->mas.tree->ma_flags &
+		      MT_FLAGS_LOCK_MASK);
+	mt_on_stack(mt_detach);
+
+	vma_init_munmap(&vms, vmi, vma,
+			start, start + len,
+			uf, unlock, backend);
+
+	ret = vma_gather_range(&vms, &mas_detach);
+	if (ret)
+		goto out_destroy;
+
+	ret = vma_iter_clear_gfp(vmi, start, start + len,
+				 GFP_KERNEL);
+	if (ret) {
+		vma_reattach_vmas(&mas_detach);
+		goto out_destroy;
+	}
+
+	/*
+	 * The original mm->mm_mt range is now clear. The detached
+	 * VMAs remain in mas_detach until backend cleanup completes.
+	 */
+	mm->map_count -= vms.vma_count;
+
+	vma_remove_detached(&vms, &mas_detach, mm,
+			    backend->remove_detached);
+
+
+out_destroy:
+	__mt_destroy(&mt_detach);
+
+	validate_mm(mm);
+
+#ifdef CONFIG_NOMMU_SWMMU
+	nommu_swmmu_validate(mm);
+#endif
+
+	if (unlock) {
+		mmap_write_downgrade(mm);
+		mmap_read_unlock(mm);
+	}
+	return ret;
+}
+
+#endif /* !CONFIG_MMU */
+
+unsigned long vma_get_unmapped_area(struct vma_remap_struct *vrm)
+{
+	if (!vrm || !vrm->backend ||
+	    !vrm->backend->get_unmapped_area)
+		return -EINVAL;
+
+	return vrm->backend->get_unmapped_area(vrm);
 }
