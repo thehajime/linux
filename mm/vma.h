@@ -1109,9 +1109,7 @@ unsigned long vma_move_mapping(struct vma_remap_struct *vrm,
 unsigned long vma_mmu_move_mapping(struct vma_remap_struct *vrm,
 				struct pagetable_move_control *pmc);
 void vma_move_rollback(struct vma_remap_struct *vrm, unsigned long moved_len);
-#ifdef CONFIG_MMU
-extern const struct vma_mapping_ops vma_mmu_mapping_ops;
-#endif
+const struct vma_mapping_ops *vma_mapping_ops_for_mm(struct mm_struct *mm);
 
 void vma_move_replace_init(struct vma_move_replace_struct *vmrs,
 			   struct vma_remap_struct *remap,

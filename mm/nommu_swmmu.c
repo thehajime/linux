@@ -1974,6 +1974,11 @@ static const struct vma_mapping_ops swmmu_vma_mapping_ops = {
 	.move_mapping = swmmu_move_mapping,
 };
 
+const struct vma_mapping_ops *vma_mapping_ops_for_mm(struct mm_struct *mm)
+{
+	return &swmmu_vma_mapping_ops;
+}
+
 
 static struct vm_area_struct *swmmu_fixed_alloc_vma(struct mm_struct *mm,
 						struct vm_area_struct *template,
@@ -2840,15 +2845,9 @@ static unsigned long swmmu_mremap_move(struct mm_struct *mm,
 	return dest_addr;
 }
 
-static unsigned long
-__do_mremap(struct mm_struct *mm,
-	    unsigned long addr,
-	    unsigned long old_len,
-	    unsigned long new_len,
-	    unsigned long flags,
-	    unsigned long new_addr)
+static unsigned long __do_mremap(struct vma_remap_struct *vrm)
 {
-	VMA_ITERATOR(vmi, mm, addr);
+	VMA_ITERATOR(vmi, vrm->mm, vrm->addr);
 	struct vm_area_struct *vma;
 	struct swmmu_pagetable_tx vma_tx;
 	struct vm_area_struct *next;
@@ -2856,98 +2855,98 @@ __do_mremap(struct mm_struct *mm,
 	unsigned long end;
 	unsigned long result;
 
-	mmap_assert_write_locked(mm);
+	mmap_assert_write_locked(vrm->mm);
 
-	old_len = PAGE_ALIGN(old_len);
-	if (old_len == 0)
+	vrm->old_len = PAGE_ALIGN(vrm->old_len);
+	if (vrm->old_len == 0)
 		return -EINVAL;
 
-	if (old_len > ULONG_MAX - addr)
+	if (vrm->old_len > ULONG_MAX - vrm->addr)
 		return -EINVAL;
 
-	end = addr + old_len;
+	end = vrm->addr + vrm->old_len;
 	vma = vma_find(&vmi, end);
 
 	if (!vma || !vma->vm_swmmu_pt_range) {
-		if (mm != current->mm)
+		if (vrm->mm != current->mm)
 			return -EINVAL;
-		return do_mremap_nommu(addr, old_len, new_len,
-				flags, new_addr);
+		return do_mremap_nommu(vrm->addr, vrm->old_len, vrm->new_len,
+				vrm->flags, vrm->new_addr);
 	}
 
 	/*
 	 * The current SWMMU implementation only supports remapping
 	 * a complete VMA in place.
 	 */
-	if (vma->vm_start != addr ||
+	if (vma->vm_start != vrm->addr ||
 		end != vma->vm_end)
 		return -EINVAL;
 
-	if (flags & MREMAP_FIXED) {
-		if (!(flags & MREMAP_MAYMOVE) ||
-			!new_addr ||
-			!PAGE_ALIGNED(new_addr))
+	if (vrm->flags & MREMAP_FIXED) {
+		if (!(vrm->flags & MREMAP_MAYMOVE) ||
+			!vrm->new_addr ||
+			!PAGE_ALIGNED(vrm->new_addr))
 			return -EINVAL;
 
-		if (new_len > ULONG_MAX - new_addr)
+		if (vrm->new_len > ULONG_MAX - vrm->new_addr)
 			return -EINVAL;
 
-		if (new_len < old_len)
+		if (vrm->new_len < vrm->old_len)
 			return -EOPNOTSUPP;
 
-		result = swmmu_mremap_move(mm, vma, old_len, new_len,
-					flags, new_addr);
+		result = swmmu_mremap_move(vrm->mm, vma, vrm->old_len, vrm->new_len,
+					vrm->flags, vrm->new_addr);
 		if (IS_ERR_VALUE(result))
 			return result;
 
 		goto remap_success;
 
-	} else if (new_addr) {
+	} else if (vrm->new_addr) {
 		return -EINVAL;
 	}
 
-	if (flags & MREMAP_DONTUNMAP)
+	if (vrm->flags & MREMAP_DONTUNMAP)
 		return -EINVAL;
 
 	next = vma_next(&vmi);
 
-	if (new_len > ULONG_MAX - (PAGE_SIZE - 1))
+	if (vrm->new_len > ULONG_MAX - (PAGE_SIZE - 1))
 		return -EINVAL;
 
-	new_len = PAGE_ALIGN(new_len);
-	if (!new_len)
+	vrm->new_len = PAGE_ALIGN(vrm->new_len);
+	if (!vrm->new_len)
 		return -EINVAL;
 
-	if (new_len == old_len && !(flags & MREMAP_FIXED))
+	if (vrm->new_len == vrm->old_len && !(vrm->flags & MREMAP_FIXED))
 		return vma->vm_start;
 
-	if (new_len < old_len) {
+	if (vrm->new_len < vrm->old_len) {
 		/* shrink */
-		ret = swmmu_pagetable_resize_prepare(mm->swmmu_space,
+		ret = swmmu_pagetable_resize_prepare(vrm->mm->swmmu_space,
 						vma->vm_swmmu_pt_range,
-						new_len, &vma_tx);
+						vrm->new_len, &vma_tx);
 
 		if (ret)
 			return ret;
 
-		ret = vma_shrink(&vmi, vma, vma->vm_start + new_len);
+		ret = vma_shrink(&vmi, vma, vma->vm_start + vrm->new_len);
 		if (ret) {
-			swmmu_resize_abort(mm->swmmu_space, &vma_tx);
+			swmmu_resize_abort(vrm->mm->swmmu_space, &vma_tx);
 			return ret;
 		}
 
-		down_write(&mm->swmmu_space->lock);
-		swmmu_resize_commit(mm->swmmu_space, &vma_tx);
-		up_write(&mm->swmmu_space->lock);
+		down_write(&vrm->mm->swmmu_space->lock);
+		swmmu_resize_commit(vrm->mm->swmmu_space, &vma_tx);
+		up_write(&vrm->mm->swmmu_space->lock);
 
 		result = vma->vm_start;
 	} else {
 		/* growth */
 		struct vma_merge_struct vmg = {
-			.mm = mm,
+			.mm = vrm->mm,
 			.vmi = &vmi,
 			.start = vma->vm_start,
-			.end = vma->vm_start + new_len,
+			.end = vma->vm_start + vrm->new_len,
 			.target = vma,
 			.next = next,
 			.just_expand = true,
@@ -2958,9 +2957,10 @@ __do_mremap(struct mm_struct *mm,
 		if (!ret) {
 			result = vma->vm_start;
 		} else if (ret == -ENOMEM &&
-			(flags & MREMAP_MAYMOVE)) {
-			result = swmmu_mremap_move(mm, vma, old_len, new_len,
-						flags, new_addr);
+			(vrm->flags & MREMAP_MAYMOVE)) {
+			result = swmmu_mremap_move(vrm->mm, vma, vrm->old_len,
+						vrm->new_len,
+						vrm->flags, vrm->new_addr);
 			if (IS_ERR_VALUE(result))
 				return result;
 		} else {
@@ -2969,20 +2969,23 @@ __do_mremap(struct mm_struct *mm,
 	}
 
 remap_success:
-	validate_mm(mm);
-	nommu_swmmu_validate(mm);
+	validate_mm(vrm->mm);
+	nommu_swmmu_validate(vrm->mm);
 	return result;
 }
 
-unsigned long do_mremap(unsigned long addr,
-			unsigned long old_len, unsigned long new_len,
-			unsigned long flags, unsigned long new_addr)
+unsigned long do_mremap(struct vma_remap_struct *vrm)
 {
-	if (!current->mm)
+	unsigned long ret;
+
+	if (!vrm->mm)
 		return -EINVAL;
 
-	return __do_mremap(current->mm, addr, old_len, new_len,
-			   flags, new_addr);
+	mmap_write_lock(current->mm);
+	ret = __do_mremap(vrm);
+	mmap_write_unlock(current->mm);
+
+	return ret;
 }
 
 #if IS_ENABLED(CONFIG_NOMMU_SWMMU_KUNIT_TEST)
@@ -2994,14 +2997,26 @@ unsigned long nommu_swmmu_kunit_mremap_mm(struct mm_struct *mm,
 					unsigned long new_addr)
 {
 	unsigned long ret;
+	struct vma_remap_struct vrm = {
+		.addr = untagged_addr(addr),
+		.old_len = old_len,
+		.new_len = new_len,
+		.flags = flags,
+		.new_addr = new_addr,
+
+		.remap_type = MREMAP_INVALID, /* We set later. */
+		.mm = mm,
+		.backend = vma_mapping_ops_for_mm(mm),
+		.backend_state = NULL,
+	};
+
 
 	if (!mm)
 		return -EINVAL;
 
 	mmap_write_lock(mm);
 
-	ret = __do_mremap(mm, addr, old_len, new_len,
-			  flags, new_addr);
+	ret = __do_mremap(&vrm);
 
 	mmap_write_unlock(mm);
 

@@ -819,3 +819,8 @@ const struct vma_mapping_ops vma_mmu_mapping_ops = {
 	.move_rollback = vma_mmu_move_rollback,
 };
 
+
+const struct vma_mapping_ops *vma_mapping_ops_for_mm(struct mm_struct *mm)
+{
+	return &vma_mmu_mapping_ops;
+}

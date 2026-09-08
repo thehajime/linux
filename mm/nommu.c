@@ -1791,6 +1791,7 @@ unsigned long do_mremap_nommu(unsigned long addr,
 	return vma->vm_start;
 }
 
+#ifndef CONFIG_NOMMU_SWMMU
 SYSCALL_DEFINE5(mremap, unsigned long, addr, unsigned long, old_len,
 		unsigned long, new_len, unsigned long, flags,
 		unsigned long, new_addr)
@@ -1802,6 +1803,7 @@ SYSCALL_DEFINE5(mremap, unsigned long, addr, unsigned long, old_len,
 	mmap_write_unlock(current->mm);
 	return ret;
 }
+#endif
 
 int remap_pfn_range(struct vm_area_struct *vma, unsigned long addr,
 		unsigned long pfn, unsigned long size, pgprot_t prot)

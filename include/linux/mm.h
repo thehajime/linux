@@ -45,6 +45,7 @@ struct anon_vma_chain;
 struct user_struct;
 struct pt_regs;
 struct folio_batch;
+struct vma_remap_struct;
 
 void arch_mm_preinit(void);
 void mm_core_init_early(void);
@@ -4288,9 +4289,7 @@ extern int do_madvise(struct mm_struct *mm, unsigned long start, size_t len_in, 
 extern unsigned long do_mremap_nommu(unsigned long addr,
 			unsigned long old_len, unsigned long new_len,
 				unsigned long flags, unsigned long new_addr);
-extern unsigned long do_mremap(unsigned long addr,
-			unsigned long old_len, unsigned long new_len,
-				unsigned long flags, unsigned long new_addr);
+extern unsigned long do_mremap(struct vma_remap_struct *vrm);
 #endif
 
 #ifdef CONFIG_MMU
