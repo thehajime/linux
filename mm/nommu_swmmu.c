@@ -50,7 +50,6 @@ struct swmmu_pagetable_tx {
 
 	struct vm_area_struct *old_vma;
 	struct vm_area_struct *new_vma;
-	struct vm_area_struct *right_vma;
 
 	struct swmmu_pagetable_range *source;
 	struct swmmu_pagetable_range *new_range;
