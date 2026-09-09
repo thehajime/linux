@@ -2213,8 +2213,6 @@ __do_mmap_swmmu(struct mm_struct *mm,
 	 *     exact address, reject overlap
 	 */
 	if (flags & MAP_FIXED || flags & MAP_FIXED_NOREPLACE) {
-		enum swmmu_pagetable_replace_kind kind = SWMMU_REPLACE_EXACT;
-
 		if (!addr || !PAGE_ALIGNED(addr)) {
 			return -EINVAL;
 		}
@@ -2238,27 +2236,27 @@ __do_mmap_swmmu(struct mm_struct *mm,
 				return -EOPNOTSUPP;
 
 			if (replace_vma->vm_start == addr &&
-				replace_vma->vm_end == end)
-				kind = SWMMU_REPLACE_EXACT;
+			    replace_vma->vm_end == end)
+				return swmmu_mmap_fixed_range_replace(mm, replace_vma,
+								replace_vma, addr, end,
+								prot, vma_flags, pgoff);
 			else if (replace_vma->vm_start == addr &&
-				end < replace_vma->vm_end)
-				kind = SWMMU_REPLACE_HEAD;
+				 end < replace_vma->vm_end)
+				return swmmu_mmap_fixed_replace(mm, SWMMU_REPLACE_HEAD,
+								space, replace_vma, addr,
+								end, prot, vma_flags, pgoff);
 			else if (addr > replace_vma->vm_start &&
-				replace_vma->vm_end == end)
-				kind = SWMMU_REPLACE_TAIL;
+				 replace_vma->vm_end == end)
+				return swmmu_mmap_fixed_replace(mm, SWMMU_REPLACE_TAIL,
+								space, replace_vma, addr,
+								end, prot, vma_flags, pgoff);
 			else if (addr > replace_vma->vm_start &&
-				end < replace_vma->vm_end)
-				return swmmu_mmap_fixed_range_replace(mm,
-								replace_vma,
+				 end < replace_vma->vm_end)
+				return swmmu_mmap_fixed_range_replace(mm, replace_vma,
 								replace_vma, addr, end,
 								prot, vma_flags, pgoff);
 			else
 				return -EINVAL;
-
-			if (kind != SWMMU_REPLACE_EXACT)
-				return swmmu_mmap_fixed_replace(mm, kind,
-								space, replace_vma, addr, end,
-								prot, vma_flags, pgoff);
 		} else if (overlap_count > 1) {
 			return swmmu_mmap_fixed_range_replace(mm, replace_vma,
 							NULL, addr, end,
