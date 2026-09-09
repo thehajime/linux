@@ -2339,70 +2339,9 @@ abort:
 	return ret;
 }
 
-static unsigned long swmmu_mmap_fixed_middle_replace(struct mm_struct *mm,
-						struct nommu_swmmu_space *space,
-						struct vm_area_struct *old_vma,
-						unsigned long start,
-						unsigned long end,
-						unsigned long prot,
-						vma_flags_t vma_flags,
-						unsigned long pgoff)
-{
-	struct vm_area_struct *new_vma;
-	struct vma_munmap_struct vms;
-	struct vma_replace_struct vrs;
-	struct maple_tree mt_detach;
-	MA_STATE(mas_detach, &mt_detach, 0, 0);
-	VMA_ITERATOR(vmi, mm, start);
-	struct swmmu_pagetable_tx tx = {};
-	int ret;
-
-	if (!old_vma->vm_swmmu_pt_range ||
-	    old_vma->vm_file ||
-	    old_vma->vm_region)
-		return -EOPNOTSUPP;
-
-	new_vma = swmmu_fixed_alloc_vma(mm, old_vma, start, end,
-					vma_flags, pgoff);
-	if (!new_vma)
-		return -ENOMEM;
-
-	tx.replacement_access = swmmu_access_from_prot(prot);
-
-	mt_init_flags(&mt_detach,
-		      vmi.mas.tree->ma_flags &
-		      MT_FLAGS_LOCK_MASK);
-	mt_on_stack(mt_detach);
-
-	vma_init_munmap(&vms, &vmi, old_vma,
-			start, end, NULL, false,
-			&swmmu_vma_mapping_ops);
-
-	vma_replace_init(&vrs, &vms, new_vma,
-			 &swmmu_vma_mapping_ops);
-	vrs.backend_state = &tx;
-
-	ret = vma_replace_prepare(&vrs, &mas_detach);
-	if (ret)
-		goto abort;
-
-	vma_replace_commit(&vrs, &mas_detach, mm, swmmu_remove_detached_vma);
-
-	__mt_destroy(&mt_detach);
-
-	validate_mm(mm);
-	nommu_swmmu_validate(mm);
-
-	return start;
-
-abort:
-	vma_replace_abort(&vrs, &mas_detach);
-	__mt_destroy(&mt_detach);
-	return ret;
-}
-
 static unsigned long swmmu_mmap_fixed_range_replace(struct mm_struct *mm,
-						struct nommu_swmmu_space *space,
+						struct vm_area_struct *first_vma,
+						struct vm_area_struct *template,
 						unsigned long start,
 						unsigned long end,
 						unsigned long prot,
@@ -2418,13 +2357,15 @@ static unsigned long swmmu_mmap_fixed_range_replace(struct mm_struct *mm,
 	struct swmmu_pagetable_tx tx = {};
 	int ret;
 
-	insert = swmmu_fixed_alloc_vma(mm, NULL, start, end,
+	if (!mm || !first_vma || start >= end)
+		return -EINVAL;
+
+	insert = swmmu_fixed_alloc_vma(mm, template, start, end,
 				vma_flags, pgoff);
 	if (!insert)
 		return -ENOMEM;
 
 	insert->vm_swmmu_pt_range = NULL;
-
 	tx.replacement_access = swmmu_access_from_prot(prot);
 
 	mt_init_flags(&mt_detach,
@@ -2432,8 +2373,7 @@ static unsigned long swmmu_mmap_fixed_range_replace(struct mm_struct *mm,
 		      MT_FLAGS_LOCK_MASK);
 	mt_on_stack(mt_detach);
 
-	vma_init_munmap(&vms, &vmi, vma_find(&vmi, end),
-			start, end, NULL, false,
+	vma_init_munmap(&vms, &vmi, first_vma, start, end, NULL, false,
 			&swmmu_vma_mapping_ops);
 
 	vma_replace_init(&vrs, &vms, insert,
@@ -2531,10 +2471,6 @@ __do_mmap_swmmu(struct mm_struct *mm,
 		if (flags & MAP_FIXED_NOREPLACE) {
 			if (overlap_count)
 				return -EEXIST;
-		} else if (overlap_count > 1) {
-			return swmmu_mmap_fixed_range_replace(
-				mm, space, addr, end,
-				prot, vma_flags, pgoff);
 		}
 
 		if (overlap_count == 1) {
@@ -2552,19 +2488,21 @@ __do_mmap_swmmu(struct mm_struct *mm,
 				kind = SWMMU_REPLACE_TAIL;
 			else if (addr > replace_vma->vm_start &&
 				end < replace_vma->vm_end)
-				kind = SWMMU_REPLACE_MIDDLE;
+				return swmmu_mmap_fixed_range_replace(mm,
+								replace_vma,
+								replace_vma, addr, end,
+								prot, vma_flags, pgoff);
 			else
 				return -EINVAL;
 
-			if (kind == SWMMU_REPLACE_MIDDLE)
-				return swmmu_mmap_fixed_middle_replace(
-					mm, space, replace_vma,
-					addr, end, prot,
-					vma_flags, pgoff);
-			else if (kind != SWMMU_REPLACE_EXACT)
+			if (kind != SWMMU_REPLACE_EXACT)
 				return swmmu_mmap_fixed_replace(mm, kind,
 								space, replace_vma, addr, end,
 								prot, vma_flags, pgoff);
+		} else if (overlap_count > 1) {
+			return swmmu_mmap_fixed_range_replace(mm, replace_vma,
+							NULL, addr, end,
+							prot, vma_flags, pgoff);
 		}
 		start = addr;
 	}
