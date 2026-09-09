@@ -657,13 +657,6 @@ abort_swmmu:
 }
 #endif /* !CONFIG_MMU */
 
-/*
- * vma_split_backend() - Split a VMA without checking map_count.
- *
- * Callers that may exceed sysctl_max_map_count must perform the
- * appropriate check before calling this function. This mirrors
- * the historical __split_vma() contract.
- */
 int vma_split_backend(struct vma_iterator *vmi,
 		      struct vm_area_struct *vma,
 		      unsigned long addr,
@@ -857,24 +850,6 @@ void vma_replace_abort(struct vma_replace_struct *vrs,
 	vrs->backend_state = NULL;
 }
 
-void vma_move_replace_init(struct vma_move_replace_struct *vmrs,
-			   struct vma_remap_struct *remap,
-			   struct vm_area_struct *src,
-			   struct vm_area_struct *dst,
-			   struct vma_munmap_struct *target_vms,
-			   struct ma_state *target_detach,
-			   const struct vma_mapping_ops *backend)
-{
-	memset(vmrs, 0, sizeof(*vmrs));
-
-	vmrs->mm = remap->mm;
-	vmrs->remap = remap;
-	vmrs->src = src;
-	vmrs->dst = dst;
-	vmrs->target_vms = target_vms;
-	vmrs->target_detach = target_detach;
-	vmrs->backend = backend;
-}
 
 int vma_move_link_destination(struct vma_remap_struct *vrm)
 {

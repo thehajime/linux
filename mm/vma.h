@@ -123,24 +123,6 @@ struct vma_remap_struct {
 	bool new_vma_linked;
 };
 
-struct vma_move_replace_struct {
-	struct mm_struct *mm;
-	struct vma_remap_struct *remap;
-	struct vm_area_struct *src;
-	struct vm_area_struct *dst;
-
-	struct vma_munmap_struct *target_vms;
-	struct ma_state *target_detach;
-
-	const struct vma_mapping_ops *backend;
-	void *backend_state;
-
-	bool backend_prepared;
-	bool target_gathered;
-	bool target_cleared;
-	bool dst_published;
-};
-
 struct vma_mapping_ops {
 	int (*split_prepare)(struct vm_area_struct *vma,
 			     struct vm_area_struct *new,
@@ -1116,19 +1098,6 @@ unsigned long vma_mmu_move_mapping(struct vma_remap_struct *vrm,
 				struct pagetable_move_control *pmc);
 void vma_move_rollback(struct vma_remap_struct *vrm, unsigned long moved_len);
 const struct vma_mapping_ops *vma_mapping_ops_for_mm(struct mm_struct *mm);
-
-void vma_move_replace_init(struct vma_move_replace_struct *vmrs,
-			   struct vma_remap_struct *remap,
-			   struct vm_area_struct *src,
-			   struct vm_area_struct *dst,
-			   struct vma_munmap_struct *target_vms,
-			   struct ma_state *target_detach,
-			   const struct vma_mapping_ops *backend);
-int vma_move_replace_prepare(struct vma_move_replace_struct *vmrs);
-
-void vma_move_replace_commit(struct vma_move_replace_struct *vmrs);
-
-void vma_move_replace_abort(struct vma_move_replace_struct *vmrs);
 
 int vma_move_link_destination(struct vma_remap_struct *vrm);
 unsigned long vma_get_unmapped_area(struct vma_remap_struct *vrm);
