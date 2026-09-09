@@ -2267,6 +2267,14 @@ abort:
 }
 
 
+static unsigned long swmmu_mmap_fixed_range_replace(struct mm_struct *mm,
+						struct vm_area_struct *first_vma,
+						struct vm_area_struct *template,
+						unsigned long start,
+						unsigned long end,
+						unsigned long prot,
+						vma_flags_t vma_flags,
+						unsigned long pgoff);
 static unsigned long swmmu_mmap_fixed_replace(struct mm_struct *mm,
 					enum swmmu_pagetable_replace_kind kind,
 					struct nommu_swmmu_space *space,
@@ -2277,66 +2285,35 @@ static unsigned long swmmu_mmap_fixed_replace(struct mm_struct *mm,
 					vma_flags_t vma_flags,
 					unsigned long pgoff)
 {
-	struct swmmu_pagetable_tx tx = {};
-	struct vm_area_struct *new_vma;
-	VMA_ITERATOR(vmi, mm, start);
-	unsigned long split_pages;
-	int ret;
+	if (!mm || !space || !old_vma || start >= end)
+		return -EINVAL;
+
+	if (kind != SWMMU_REPLACE_HEAD &&
+	    kind != SWMMU_REPLACE_TAIL)
+		return -EOPNOTSUPP;
 
 	if (!old_vma->vm_swmmu_pt_range ||
 	    old_vma->vm_file ||
 	    old_vma->vm_region)
 		return -EOPNOTSUPP;
 
-	ret = swmmu_fixed_replace_prepare(mm, space, old_vma, start, end,
-					prot, vma_flags, pgoff, kind, &tx);
-	if (ret)
-		return ret;
-	new_vma = tx.new_vma;
+	if (start < old_vma->vm_start ||
+	    end > old_vma->vm_end)
+		return -EINVAL;
 
-	/*
-	 * The store range is the replacement prefix. Maple Tree keeps
-	 * the remainder of old_vma's original range as the suffix.
-	 */
-	vma_iter_config(&vmi, start, end);
-	ret = vma_iter_prealloc(&vmi, new_vma);
-	if (ret)
-		goto abort;
-
-	new_vma->vm_swmmu_pt_range = tx.replacement_range;
-	tx.replacement_range = NULL;
-
-	vma_start_write(old_vma);
-	vma_start_write(new_vma);
-
-	split_pages = (end - old_vma->vm_start) / SWMMU_PAGE_SIZE;
-
-	/*
-	 * This is the point of no return: preallocation succeeded and
-	 * the following store must not fail.
-	 */
 	if (kind == SWMMU_REPLACE_HEAD) {
-		old_vma->vm_start = end;
-		vma_add_pgoff(old_vma, split_pages);
-	} else if  (kind == SWMMU_REPLACE_TAIL) {
-		old_vma->vm_end = start;
-		vma_add_pgoff(new_vma,
-			(start - old_vma->vm_start) >> PAGE_SHIFT);
+		if (start != old_vma->vm_start ||
+		    end >= old_vma->vm_end)
+			return -EINVAL;
+	} else {
+		if (start <= old_vma->vm_start ||
+		    end != old_vma->vm_end)
+			return -EINVAL;
 	}
 
-	vma_iter_store_new(&vmi, new_vma);
-
-	mm->map_count++;
-	swmmu_fixed_replace_commit(space, &tx);
-
-	validate_mm(mm);
-	nommu_swmmu_validate(mm);
-
-	return start;
-
-abort:
-	swmmu_fixed_replace_abort(space, &tx);
-	return ret;
+	return swmmu_mmap_fixed_range_replace(mm, old_vma, old_vma,
+					      start, end, prot,
+					      vma_flags, pgoff);
 }
 
 static unsigned long swmmu_mmap_fixed_range_replace(struct mm_struct *mm,
