@@ -100,19 +100,3 @@ int nommu_swmmu_free(void *address)
 	return 0;
 }
 
-void *nommu_swmmu_remap(void *address,
-			size_t old_size,
-			size_t new_size)
-{
-	long ret;
-
-	ret = syscall(SYS_nommu_swmmu_remap,
-		      (uintptr_t)address,
-		      old_size,
-		      new_size);
-
-	if (ret == -1)
-		return MAP_FAILED;
-
-	return (void *)(uintptr_t)ret;
-}

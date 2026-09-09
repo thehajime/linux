@@ -1333,7 +1333,4 @@ asmlinkage long sys_nommu_swmmu_alloc(size_t size);
 asmlinkage long sys_nommu_swmmu_free(void __user *address);
 asmlinkage long sys_nommu_swmmu_load(void __user *address, size_t size, u64 *result);
 asmlinkage long sys_nommu_swmmu_store(void __user *address, size_t size, uint64_t value);
-asmlinkage long sys_nommu_swmmu_remap(void __user *address,
-				      size_t old_size,
-				      size_t new_size);
 #endif

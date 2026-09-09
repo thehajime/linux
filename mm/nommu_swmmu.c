@@ -1121,21 +1121,6 @@ int nommu_swmmu_kunit_range_create(
 }
 #endif
 
-int nommu_swmmu_unmap(struct nommu_swmmu_space *space,
-		      unsigned long address,
-		      size_t size)
-{
-	return -EOPNOTSUPP;
-
-}
-long nommu_swmmu_remap(struct nommu_swmmu_space *space,
-			unsigned long address,
-			size_t old_size,
-			size_t new_size)
-{
-	return -EOPNOTSUPP;
-}
-
 int nommu_swmmu_dup_mmap(struct mm_struct *dst,
 			 struct mm_struct *src)
 {
@@ -2660,21 +2645,4 @@ SYSCALL_DEFINE3(nommu_swmmu_load,
 SYSCALL_DEFINE3(nommu_swmmu_store, void __user *, address, size_t, size, uint64_t, value)
 {
 	return nommu_swmmu_store_u64_checked(address, size, value);
-}
-
-SYSCALL_DEFINE3(nommu_swmmu_remap,
-		void __user *, address,
-		size_t, old_size,
-		size_t, new_size)
-{
-	struct nommu_swmmu_space *space;
-
-	space = nommu_swmmu_current();
-	if (!space)
-		return -EINVAL;
-
-	return nommu_swmmu_remap(space,
-				(unsigned long)address,
-				old_size,
-				new_size);
 }

@@ -288,89 +288,111 @@ static int test_repeated_fork(void)
 	return KSFT_PASS;
 }
 
-static int test_remap(void)
+static int test_mremap(void)
 {
 	void *base;
 	void *new_base;
+	void *mapping;
 	uintptr_t second_page;
 	uint64_t value;
 	size_t ps;
+	size_t mapping_len;
+	int result = KSFT_FAIL;
+	int ret;
 
 	ps = sysconf(_SC_PAGESIZE);
-
-	base = nommu_swmmu_alloc(ps);
-	if (!base) {
-		ksft_test_result_skip(
-			"SWMMU allocation is unavailable\n");
-		return KSFT_SKIP;
-	}
-
-	nommu_swmmu_store_u64(base, sizeof(uint64_t), 771);
-
-	new_base = nommu_swmmu_remap(base,
-				     ps,
-				     ps * 2);
-	if (new_base == MAP_FAILED) {
-		SWMMU_TEST_FAIL(
-			"SWMMU growth failed: %s\n",
-			strerror(errno));
-		nommu_swmmu_free(base);
+	if (!ps) {
+		SWMMU_TEST_FAIL("unable to determine page size\n");
 		return KSFT_FAIL;
 	}
+
+	base = mmap(NULL, ps, PROT_READ | PROT_WRITE,
+		    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (base == MAP_FAILED) {
+		SWMMU_TEST_FAIL("SWMMU mmap failed: %s\n", strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	mapping = base;
+	mapping_len = ps;
+
+	ret = nommu_swmmu_store_u64_checked(base, sizeof(value), 771);
+	if (ret) {
+		SWMMU_TEST_FAIL("initial store failed: %s\n", strerror(-ret));
+		goto out_unmap;
+	}
+
+	new_base = mremap(base, ps, ps * 2, 0);
+	if (new_base == MAP_FAILED) {
+		SWMMU_TEST_FAIL("SWMMU mremap growth failed: %s\n", strerror(errno));
+		goto out_unmap;
+	}
+
+	mapping = new_base;
+	mapping_len = ps * 2;
 
 	if (new_base != base) {
 		SWMMU_TEST_FAIL(
-			"SWMMU remap moved address from %p to %p\n",
-			base, new_base);
-		nommu_swmmu_free(new_base);
-		return KSFT_FAIL;
+			"mremap growth moved address from %p to %p\n", base, new_base);
+		goto out_unmap;
 	}
 
-	value = nommu_swmmu_load_u64(base, sizeof(uint64_t));
+	ret = nommu_swmmu_load_u64_checked(base, sizeof(value), &value);
+	if (ret) {
+		SWMMU_TEST_FAIL("load after growth failed: %s\n", strerror(-ret));
+		goto out_unmap;
+	}
+
 	if (value != 771) {
 		SWMMU_TEST_FAIL(
-			"remap did not preserve value: %llu\n",
-			(unsigned long long)value);
-		nommu_swmmu_free(base);
-		return KSFT_FAIL;
+			"mremap growth did not preserve value: %llu\n", (unsigned long long)value);
+		goto out_unmap;
 	}
 
 	second_page = (uintptr_t)base + ps;
 
-	value = nommu_swmmu_load_u64((void *)second_page,
-				     sizeof(uint64_t));
-	if (value != 0) {
-		SWMMU_TEST_FAIL(
-			"grown page was not zero-filled: %llu\n",
-			(unsigned long long)value);
-		nommu_swmmu_free(base);
-		return KSFT_FAIL;
+	ret = nommu_swmmu_load_u64_checked((void *)second_page, sizeof(value), &value);
+	if (ret) {
+		SWMMU_TEST_FAIL("load from grown page failed: %s\n",
+				strerror(-ret));
+		goto out_unmap;
 	}
 
-	new_base = nommu_swmmu_remap(base,
-				     ps * 2,
-				     ps);
-	if (new_base == MAP_FAILED) {
-		SWMMU_TEST_FAIL(
-			"SWMMU shrink failed: %s\n",
-			strerror(errno));
-		nommu_swmmu_free(base);
-		return KSFT_FAIL;
+	if (value != 0) {
+		SWMMU_TEST_FAIL("grown page was not zero-filled: %llu\n",
+			(unsigned long long)value);
+		goto out_unmap;
 	}
+
+	new_base = mremap(base, ps * 2, ps, 0);
+	if (new_base == MAP_FAILED) {
+		SWMMU_TEST_FAIL("SWMMU mremap shrink failed: %s\n",
+				strerror(errno));
+		goto out_unmap;
+	}
+
+	mapping = new_base;
+	mapping_len = ps;
 
 	if (new_base != base) {
-		SWMMU_TEST_FAIL(
-			"SWMMU shrink changed address\n");
-		nommu_swmmu_free(new_base);
+		SWMMU_TEST_FAIL("mremap shrink moved address from %p to %p\n",
+			base, new_base);
+		goto out_unmap;
+	}
+
+	result = KSFT_PASS;
+
+out_unmap:
+	if (munmap(mapping, mapping_len) < 0) {
+		SWMMU_TEST_FAIL("munmap failed: %s\n",
+				strerror(errno));
 		return KSFT_FAIL;
 	}
 
-	nommu_swmmu_free(base);
+	if (result == KSFT_PASS)
+		SWMMU_TEST_PASS("SWMMU mremap growth and shrink work\n");
 
-	SWMMU_TEST_PASS(
-		"SWMMU remap growth and shrink work\n");
-
-	return KSFT_PASS;
+	return result;
 }
 
 static int test_standard_mmap(void)
@@ -2473,7 +2495,7 @@ int main(void)
 	if (test_repeated_fork() == KSFT_FAIL)
 		result = KSFT_FAIL;
 
-	if (test_remap() == KSFT_FAIL)
+	if (test_mremap() == KSFT_FAIL)
 		result = KSFT_FAIL;
 
 	if (test_standard_mmap() == KSFT_FAIL)

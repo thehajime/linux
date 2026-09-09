@@ -400,7 +400,6 @@
 473	common	nommu_swmmu_free	sys_nommu_swmmu_free
 474	common	nommu_swmmu_load	sys_nommu_swmmu_load
 475	common	nommu_swmmu_store	sys_nommu_swmmu_store
-476	common	nommu_swmmu_remap	sys_nommu_swmmu_remap
 
 #
 # Due to a historical design error, certain syscalls are numbered differently

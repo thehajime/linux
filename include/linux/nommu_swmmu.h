@@ -159,15 +159,6 @@ long nommu_swmmu_store_u64(void *address,
 			uint64_t value);
 
 /* mapping API */
-int nommu_swmmu_unmap(struct nommu_swmmu_space *space,
-		      unsigned long address,
-		      size_t size);
-
-long nommu_swmmu_remap(struct nommu_swmmu_space *space,
-		       unsigned long address,
-		       size_t old_size,
-		       size_t new_size);
-
 int nommu_swmmu_dup_mmap(struct mm_struct *dst,
 			struct mm_struct *src);
 
