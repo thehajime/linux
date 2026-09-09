@@ -2445,50 +2445,6 @@ out_unlock:
 }
 #endif
 
-static int nommu_swmmu_unmap_shared_range(struct mm_struct *mm,
-					  struct vma_iterator *vmi,
-					  struct vm_area_struct *vma,
-					  unsigned long start,
-					  unsigned long end,
-					  struct list_head *uf)
-{
-	struct maple_tree mt_detach;
-	MA_STATE(mas_detach, &mt_detach, 0, 0);
-	struct vma_munmap_struct vms;
-	int ret;
-
-	mt_init_flags(&mt_detach,
-		      vmi->mas.tree->ma_flags &
-		      MT_FLAGS_LOCK_MASK);
-	mt_on_stack(mt_detach);
-
-	vma_init_munmap(&vms, vmi, vma, start, end,
-			uf, false,
-			&swmmu_vma_mapping_ops);
-
-	ret = vma_gather_range(&vms, &mas_detach);
-	if (ret)
-		goto out_destroy;
-
-	ret = vma_iter_clear_gfp(vmi, start, end, GFP_KERNEL);
-	if (ret) {
-		vma_reattach_vmas(&mas_detach);
-		goto out_destroy;
-	}
-
-	mm->map_count -= vms.vma_count;
-
-	vma_remove_detached(&vms, &mas_detach, mm, swmmu_remove_detached_vma);
-
-out_destroy:
-	__mt_destroy(&mt_detach);
-
-	validate_mm(mm);
-	nommu_swmmu_validate(mm);
-
-	return ret;
-}
-
 static int
 nommu_swmmu_validate_mmap_request(struct file *file,
 				  unsigned long addr,
@@ -2566,8 +2522,7 @@ int do_munmap(struct mm_struct *mm,
 
 	vma = vma_find(&vmi, end);
 	if (vma && vma->vm_swmmu_pt_range) {
-		return nommu_swmmu_unmap_shared_range(
-			mm, &vmi, vma, start, end, uf);
+		return do_vmi_munmap(&vmi, mm, start, len, uf, false);
 	}
 
 	return do_munmap_nommu(mm, start, len, uf);
