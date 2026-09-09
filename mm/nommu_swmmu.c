@@ -1714,7 +1714,6 @@ static int swmmu_replace_prepare(struct vma_replace_struct *vrs)
 	struct swmmu_pagetable *pt;
 	struct swmmu_pagetable_range *data;
 	unsigned long length;
-	unsigned int access = 0;
 
 	if (!vrs || !vrs->vms || !vrs->insert)
 		return -EINVAL;
@@ -1731,13 +1730,6 @@ static int swmmu_replace_prepare(struct vma_replace_struct *vrs)
 	if (!space || !length)
 		return -EINVAL;
 
-	if (insert->vm_flags & VM_READ)
-		access |= NOMMU_SWMMU_READ;
-	if (insert->vm_flags & VM_WRITE)
-		access |= NOMMU_SWMMU_WRITE;
-	if (insert->vm_flags & VM_EXEC)
-		access |= NOMMU_SWMMU_EXEC;
-
 	pt = swmmu_pagetable_alloc(space, length);
 	if (!pt)
 		return -ENOMEM;
@@ -1748,6 +1740,7 @@ static int swmmu_replace_prepare(struct vma_replace_struct *vrs)
 		return -ENOMEM;
 	}
 
+	swmmu_pagetable_put(space, pt);
 	data->access = tx->replacement_access;
 	insert->vm_swmmu_pt_range = data;
 	vrs->backend_state = data;
