@@ -642,16 +642,20 @@ int vma_expand(struct vma_merge_struct *vmg)
 	vma->vm_end = vmg->end;
 	vma_iter_store_overwrite(vmi, vma);
 
-	if (swmmu_prepared)
+	if (swmmu_prepared) {
 		vmg->backend->expand_commit(vmg->target, vmg->backend_state);
+		vmg->backend_state = NULL;
+	}
 
 	validate_mm(vmg->mm);
 	nommu_swmmu_validate(vmg->mm);
 
 	return 0;
 abort_swmmu:
-	if (swmmu_prepared)
+	if (swmmu_prepared) {
 		vmg->backend->expand_abort(vmg->target, &vmg->backend_state);
+		vmg->backend_state = NULL;
+	}
 
 	return ret;
 }
