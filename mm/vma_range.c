@@ -1214,6 +1214,8 @@ int do_vmi_munmap(struct vma_iterator *vmi, struct mm_struct *mm,
 	if (!len || start > ULONG_MAX - len)
 		return -EINVAL;
 
+	/* reset the iterator */
+	vma_iter_set(vmi, start);
 	vma = vma_find(vmi, start + len);
 	if (!vma)
 		return 0;
