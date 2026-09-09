@@ -2071,90 +2071,6 @@ const struct vma_mapping_ops *vma_mapping_ops_for_mm(struct mm_struct *mm)
 	return &swmmu_vma_mapping_ops;
 }
 
-
-
-static int swmmu_fixed_replace_prepare(struct nommu_swmmu_space *space,
-				struct vm_area_struct *old_vma,
-				unsigned long start,
-				unsigned long end,
-				enum swmmu_pagetable_replace_kind kind,
-				struct swmmu_pagetable_tx *tx)
-{
-	struct swmmu_pagetable_range *old_data;
-	struct swmmu_pagetable_range *retained;
-	unsigned long split_pages;
-	unsigned long retained_offset;
-	size_t retained_pages;
-
-	if (!space || !old_vma || !tx)
-		return -EINVAL;
-
-	old_data = old_vma->vm_swmmu_pt_range;
-	if (!old_data || !old_data->pagetable)
-		return -EINVAL;
-
-	if (start < old_vma->vm_start ||
-	    end > old_vma->vm_end ||
-	    start >= end)
-		return -EINVAL;
-
-	if (kind == SWMMU_REPLACE_HEAD) {
-		if (start != old_vma->vm_start ||
-		    end >= old_vma->vm_end)
-			return -EINVAL;
-
-		split_pages = (end - old_vma->vm_start) /
-			      SWMMU_PAGE_SIZE;
-		retained_offset = old_data->first + split_pages;
-		retained_pages = old_data->nr_ptes - split_pages;
-	} else if (kind == SWMMU_REPLACE_TAIL) {
-		if (start <= old_vma->vm_start ||
-		    end != old_vma->vm_end)
-			return -EINVAL;
-
-		split_pages = (start - old_vma->vm_start) /
-			      SWMMU_PAGE_SIZE;
-		retained_offset = old_data->first;
-		retained_pages = split_pages;
-	} else {
-		return -EOPNOTSUPP;
-	}
-
-	if (!split_pages ||
-	    !retained_pages ||
-	    old_data->first > old_data->pagetable->nr_ptes ||
-	    old_data->nr_ptes >
-	    old_data->pagetable->nr_ptes - old_data->first)
-		return -EINVAL;
-
-	memset(tx, 0, sizeof(*tx));
-
-	retained = space->ops->zalloc(sizeof(*retained), GFP_KERNEL);
-	if (!retained)
-		return -ENOMEM;
-
-	swmmu_pagetable_get(old_data->pagetable);
-
-	retained->pagetable = old_data->pagetable;
-	retained->first = retained_offset;
-	retained->nr_ptes = retained_pages;
-	retained->access = old_data->access;
-
-	tx->kind = SWMMU_TX_FIXED_REPLACE;
-	tx->replace_kind = kind;
-	tx->old_vma = old_vma;
-	tx->source = old_data;
-	tx->replace_start = start;
-	tx->replace_end = end;
-
-	if (kind == SWMMU_REPLACE_HEAD)
-		tx->right_range = retained;
-	else
-		tx->left_range = retained;
-
-	return 0;
-}
-
 static void swmmu_fixed_replace_commit(struct nommu_swmmu_space *space,
 				struct swmmu_pagetable_tx *tx)
 {
@@ -2224,6 +2140,133 @@ static void swmmu_fixed_replace_abort(struct nommu_swmmu_space *space,
 	tx->kind = 0;
 }
 
+static int swmmu_fixed_replace_prepare(struct mm_struct *mm,
+				struct nommu_swmmu_space *space,
+				struct vm_area_struct *old_vma,
+				unsigned long start,
+				unsigned long end,
+				unsigned long prot,
+				vma_flags_t vma_flags,
+				unsigned long pgoff,
+				enum swmmu_pagetable_replace_kind kind,
+				struct swmmu_pagetable_tx *tx)
+{
+	struct swmmu_pagetable_range *old_range;
+	struct swmmu_pagetable_range *retained;
+	struct swmmu_pagetable_range *replacement;
+	struct swmmu_pagetable *pt;
+	struct vm_area_struct *new_vma;
+	unsigned long split_pages;
+	unsigned long retained_first;
+	size_t retained_nr;
+	int ret;
+
+	if (!mm || !space || !old_vma || !tx ||
+	    start >= end)
+		return -EINVAL;
+
+	old_range = old_vma->vm_swmmu_pt_range;
+	if (!old_range || !old_range->pagetable)
+		return -EINVAL;
+
+	if (old_vma->vm_file || old_vma->vm_region)
+		return -EOPNOTSUPP;
+
+	if (kind != SWMMU_REPLACE_HEAD &&
+	    kind != SWMMU_REPLACE_TAIL)
+		return -EOPNOTSUPP;
+
+	if (start < old_vma->vm_start ||
+	    end > old_vma->vm_end)
+		return -EINVAL;
+
+	if (kind == SWMMU_REPLACE_HEAD) {
+		if (start != old_vma->vm_start ||
+		    end >= old_vma->vm_end)
+			return -EINVAL;
+
+		split_pages = (end - old_vma->vm_start) /
+			      SWMMU_PAGE_SIZE;
+		retained_first = old_range->first + split_pages;
+		retained_nr = old_range->nr_ptes - split_pages;
+	} else {
+		if (start <= old_vma->vm_start ||
+		    end != old_vma->vm_end)
+			return -EINVAL;
+
+		split_pages = (start - old_vma->vm_start) /
+			      SWMMU_PAGE_SIZE;
+		retained_first = old_range->first;
+		retained_nr = split_pages;
+	}
+
+	if (!split_pages || !retained_nr ||
+	    !IS_ALIGNED(split_pages * SWMMU_PAGE_SIZE,
+			SWMMU_PAGE_SIZE))
+		return -EINVAL;
+
+	if (old_range->first > old_range->pagetable->nr_ptes ||
+	    old_range->nr_ptes >
+	    old_range->pagetable->nr_ptes - old_range->first)
+		return -EINVAL;
+
+	memset(tx, 0, sizeof(*tx));
+
+	tx->kind = SWMMU_TX_FIXED_REPLACE;
+	tx->replace_kind = kind;
+	tx->source = old_range;
+	tx->old_vma = old_vma;
+	tx->replace_start = start;
+	tx->replace_end = end;
+
+	retained = space->ops->zalloc(sizeof(*retained), GFP_KERNEL);
+	if (!retained)
+		return -ENOMEM;
+
+	swmmu_pagetable_get(old_range->pagetable);
+
+	retained->pagetable = old_range->pagetable;
+	retained->first = retained_first;
+	retained->nr_ptes = retained_nr;
+	retained->access = old_range->access;
+
+	if (kind == SWMMU_REPLACE_HEAD)
+		tx->right_range = retained;
+	else
+		tx->left_range = retained;
+
+	pt = swmmu_pagetable_alloc(space, end - start);
+	if (!pt) {
+		ret = -ENOMEM;
+		goto abort;
+	}
+
+	replacement = swmmu_pagetable_range_create(space, pt);
+	swmmu_pagetable_put(space, pt);
+	if (!replacement) {
+		ret = -ENOMEM;
+		goto abort;
+	}
+
+	replacement->access = swmmu_access_from_prot(prot);
+	tx->replacement_range = replacement;
+
+	new_vma = swmmu_fixed_alloc_vma(mm, old_vma,
+					start, end,
+					vma_flags, pgoff);
+	if (!new_vma) {
+		ret = -ENOMEM;
+		goto abort;
+	}
+
+	tx->new_vma = new_vma;
+	return 0;
+
+abort:
+	swmmu_fixed_replace_abort(space, tx);
+	return ret;
+}
+
 
 static unsigned long swmmu_mmap_fixed_replace(struct mm_struct *mm,
 					enum swmmu_pagetable_replace_kind kind,
@@ -2236,11 +2279,8 @@ static unsigned long swmmu_mmap_fixed_replace(struct mm_struct *mm,
 					unsigned long pgoff)
 {
 	struct swmmu_pagetable_tx tx = {};
-	struct swmmu_pagetable *pt;
 	struct vm_area_struct *new_vma;
 	VMA_ITERATOR(vmi, mm, start);
-	unsigned long length = end - start;
-	unsigned int access = 0;
 	unsigned long split_pages;
 	int ret;
 
@@ -2249,34 +2289,11 @@ static unsigned long swmmu_mmap_fixed_replace(struct mm_struct *mm,
 	    old_vma->vm_region)
 		return -EOPNOTSUPP;
 
-	ret = swmmu_fixed_replace_prepare(space, old_vma, start, end, kind, &tx);
+	ret = swmmu_fixed_replace_prepare(mm, space, old_vma, start, end,
+					prot, vma_flags, pgoff, kind, &tx);
 	if (ret)
 		return ret;
-
-	pt = swmmu_pagetable_alloc(space, length);
-	if (!pt) {
-		ret = -ENOMEM;
-		goto abort;
-	}
-
-	tx.replacement_range =
-		swmmu_pagetable_range_create(space, pt);
-	if (!tx.replacement_range) {
-		swmmu_pagetable_put(space, pt);
-		ret = -ENOMEM;
-		goto abort;
-	}
-
-	new_vma = swmmu_fixed_alloc_vma(mm, old_vma, start, end, vma_flags,
-					pgoff);
-	if (!new_vma) {
-		ret = -ENOMEM;
-		goto abort;
-	}
-
-	tx.new_vma = new_vma;
-	access = swmmu_access_from_prot(prot);
-	tx.replacement_range->access = access;
+	new_vma = tx.new_vma;
 
 	/*
 	 * The store range is the replacement prefix. Maple Tree keeps
