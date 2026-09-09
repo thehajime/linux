@@ -1981,18 +1981,6 @@ static void swmmu_move_abort(struct vma_remap_struct *vrm,
 	up_write(&space->lock);
 }
 
-static unsigned long swmmu_move_mapping(struct vma_remap_struct *vrm,
-					struct pagetable_move_control *pmc)
-{
-	(void)pmc;
-
-	/*
-	 * SWMMU entry preparation is already performed by
-	 * swmmu_move_prepare().
-	 */
-	return vrm->old_len;
-}
-
 static unsigned long swmmu_get_unmapped_area(struct vma_remap_struct *vrm)
 {
 	unsigned long addr;
@@ -2053,7 +2041,6 @@ static const struct vma_mapping_ops swmmu_vma_mapping_ops = {
 	.move_prepare = swmmu_move_prepare,
 	.move_commit = swmmu_move_commit,
 	.move_abort = swmmu_move_abort,
-	.move_mapping = swmmu_move_mapping,
 	.get_unmapped_area = swmmu_get_unmapped_area,
 	.check_remap = swmmu_check_remap,
 };
