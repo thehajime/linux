@@ -130,9 +130,6 @@ static unsigned long vrm_set_new_addr(struct vma_remap_struct *vrm)
 {
 	struct vm_area_struct *vma = vrm->vma;
 	unsigned long map_flags = 0;
-	/* Page Offset _into_ the VMA. */
-	const pgoff_t pgoff = linear_page_index(vma, vrm->addr);
-	unsigned long new_addr = vrm_implies_new_addr(vrm) ? vrm->new_addr : 0;
 	unsigned long res;
 
 	if (vrm->flags & MREMAP_FIXED)
@@ -197,6 +194,7 @@ static void vrm_uncharge(struct vma_remap_struct *vrm)
  * account for 'bytes' memory used, and if locked, indicate this in the VRM so
  * we can handle this correctly later.
  */
+#ifdef CONFIG_MMU
 static void vrm_stat_account(struct vma_remap_struct *vrm,
 			     unsigned long bytes)
 {
@@ -208,6 +206,7 @@ static void vrm_stat_account(struct vma_remap_struct *vrm,
 	if (vma_test(vma, VMA_LOCKED_BIT))
 		mm->locked_vm += pages;
 }
+#endif
 
 static bool __check_map_count_against_split(struct mm_struct *mm,
 					    bool before_unmaps)
@@ -288,7 +287,9 @@ static unsigned long prep_move_vma(struct vma_remap_struct *vrm)
 	struct vm_area_struct *vma = vrm->vma;
 	unsigned long old_addr = vrm->addr;
 	unsigned long old_len = vrm->old_len;
+#ifdef CONFIG_MMU
 	vm_flags_t dummy = vma->vm_flags;
+#endif
 
 	/*
 	 * We'd prefer to avoid failure later on in do_munmap: we copy a VMA,
@@ -439,9 +440,6 @@ static void unmap_source_vma(struct vma_remap_struct *vrm)
 static int copy_vma_and_data(struct vma_remap_struct *vrm,
 			     struct vm_area_struct **new_vma_ptr)
 {
-	const pgoff_t new_pgoff = linear_page_index(vrm->vma, vrm->addr);
-	const pgoff_t new_anon_pgoff =
-		__linear_anon_page_index(vrm->vma, vrm->addr);
 	struct vm_area_struct *vma = vrm->vma;
 	struct vm_area_struct *new_vma;
 	unsigned long moved_len;
@@ -505,10 +503,12 @@ static int copy_vma_and_data(struct vma_remap_struct *vrm,
 static void dontunmap_complete(struct vma_remap_struct *vrm,
 			       struct vm_area_struct *new_vma)
 {
+#ifdef CONFIG_MMU
 	unsigned long start = vrm->addr;
 	unsigned long end = vrm->addr + vrm->old_len;
 	unsigned long old_start = vrm->vma->vm_start;
 	unsigned long old_end = vrm->vma->vm_end;
+#endif
 
 	/* We always clear VMA_LOCKED[ONFAULT]_BIT on the old VMA. */
 	vma_clear_flags_mask(vrm->vma, VMA_LOCKED_MASK);
@@ -677,9 +677,9 @@ static unsigned long mremap_to(struct vma_remap_struct *vrm)
 
 	/* MREMAP_DONTUNMAP expands by old_len since old_len == new_len */
 	if (vrm->flags & MREMAP_DONTUNMAP) {
+#ifdef CONFIG_MMU
 		vma_flags_t vma_flags = vrm->vma->flags;
 		unsigned long pages = vrm->old_len >> PAGE_SHIFT;
-#ifdef CONFIG_MMU
 		if (!may_expand_vm(mm, &vma_flags, pages))
 			return -ENOMEM;
 #endif
@@ -936,7 +936,6 @@ static bool vma_multi_allowed(struct vm_area_struct *vma)
 static int check_prep_vma(struct vma_remap_struct *vrm)
 {
 	struct vm_area_struct *vma = vrm->vma;
-	struct mm_struct *mm = vrm->mm;
 	unsigned long addr = vrm->addr;
 	unsigned long old_len, new_len, pgoff;
 
@@ -1029,10 +1028,10 @@ static int check_prep_vma(struct vma_remap_struct *vrm)
 		return -EFAULT;
 
 #ifdef CONFIG_MMU
-	if (!mlock_future_ok(mm, vma_test(vma, VMA_LOCKED_BIT), vrm->delta))
+	if (!mlock_future_ok(vrm->mm, vma_test(vma, VMA_LOCKED_BIT), vrm->delta))
 		return -EAGAIN;
 
-	if (!may_expand_vm(mm, &vma->flags, vrm->delta >> PAGE_SHIFT))
+	if (!may_expand_vm(vrm->mm, &vma->flags, vrm->delta >> PAGE_SHIFT))
 		return -ENOMEM;
 #endif
 	return 0;

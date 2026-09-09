@@ -4285,12 +4285,11 @@ extern int do_munmap(struct mm_struct *, unsigned long, size_t,
 extern int do_munmap_nommu(struct mm_struct *, unsigned long, size_t,
 			struct list_head *uf);
 extern int do_madvise(struct mm_struct *mm, unsigned long start, size_t len_in, int behavior);
-#ifdef CONFIG_NOMMU_SWMMU
+
 extern unsigned long do_mremap_nommu(unsigned long addr,
 			unsigned long old_len, unsigned long new_len,
 				unsigned long flags, unsigned long new_addr);
 extern unsigned long do_mremap(struct vma_remap_struct *vrm);
-#endif
 
 #ifdef CONFIG_MMU
 extern int __mm_populate(unsigned long addr, unsigned long len,

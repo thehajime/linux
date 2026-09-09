@@ -1133,4 +1133,8 @@ void vma_move_replace_abort(struct vma_move_replace_struct *vmrs);
 int vma_move_link_destination(struct vma_remap_struct *vrm);
 unsigned long vma_get_unmapped_area(struct vma_remap_struct *vrm);
 
+bool can_vma_merge_right(struct vma_merge_struct *vmg, bool can_merge_left);
+bool can_vma_merge_left(struct vma_merge_struct *vmg);
+bool can_merge_remove_vma(struct vm_area_struct *vma);
+
 #endif	/* __MM_VMA_H */

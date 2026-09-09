@@ -11,6 +11,7 @@
 #include <linux/security.h>
 #include <linux/pagemap.h>
 #include <linux/nommu_swmmu.h>
+#include <linux/mempolicy.h>
 
 #include "vma.h"
 #include "internal.h"
@@ -656,6 +657,13 @@ abort_swmmu:
 }
 #endif /* !CONFIG_MMU */
 
+/*
+ * vma_split_backend() - Split a VMA without checking map_count.
+ *
+ * Callers that may exceed sysctl_max_map_count must perform the
+ * appropriate check before calling this function. This mirrors
+ * the historical __split_vma() contract.
+ */
 int vma_split_backend(struct vma_iterator *vmi,
 		      struct vm_area_struct *vma,
 		      unsigned long addr,
@@ -986,7 +994,7 @@ static bool needs_adjacent_anon_pgoff(const struct vma_merge_struct *vmg)
 }
 
 /* We can only remove VMAs when merging if they do not have a close hook. */
-static bool can_merge_remove_vma(struct vm_area_struct *vma)
+bool can_merge_remove_vma(struct vm_area_struct *vma)
 {
 	return !vma->vm_ops || !vma->vm_ops->close;
 }
@@ -1045,8 +1053,7 @@ static bool can_vma_merge_after(struct vma_merge_struct *vmg)
  * Can the proposed VMA be merged with the left (previous) VMA taking into
  * account the start position of the proposed range.
  */
-static bool can_vma_merge_left(struct vma_merge_struct *vmg)
-
+bool can_vma_merge_left(struct vma_merge_struct *vmg)
 {
 	return vmg->prev && vmg->prev->vm_end == vmg->start &&
 		can_vma_merge_after(vmg);
@@ -1059,7 +1066,7 @@ static bool can_vma_merge_left(struct vma_merge_struct *vmg)
  * In addition, if we can merge with the left VMA, ensure that left and right
  * anon_vma's are also compatible.
  */
-static bool can_vma_merge_right(struct vma_merge_struct *vmg,
+bool can_vma_merge_right(struct vma_merge_struct *vmg,
 				bool can_merge_left)
 {
 	struct vm_area_struct *next = vmg->next;

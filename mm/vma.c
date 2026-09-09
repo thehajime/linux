@@ -357,101 +357,6 @@ void unmap_region(struct unmap_desc *unmap)
 	tlb_finish_mmu(&tlb);
 }
 
-/*
- * __split_vma() bypasses sysctl_max_map_count checking.  We use this where it
- * has already been checked or doesn't make sense to fail.
- * VMA Iterator will point to the original VMA.
- */
-static __must_check int
-__split_vma(struct vma_iterator *vmi, struct vm_area_struct *vma,
-	    unsigned long addr, int new_below)
-{
-	struct vma_prepare vp;
-	struct vm_area_struct *new;
-	int err;
-
-	WARN_ON(vma->vm_start >= addr);
-	WARN_ON(vma->vm_end <= addr);
-
-	if (vma->vm_ops && vma->vm_ops->may_split) {
-		err = vma->vm_ops->may_split(vma, addr);
-		if (err)
-			return err;
-	}
-
-	new = vm_area_dup(vma);
-	if (!new)
-		return -ENOMEM;
-
-	if (new_below) {
-		new->vm_end = addr;
-	} else {
-		new->vm_start = addr;
-		vma_add_pgoff(new, linear_page_delta(vma, addr));
-	}
-
-	err = -ENOMEM;
-	vma_iter_config(vmi, new->vm_start, new->vm_end);
-	if (vma_iter_prealloc(vmi, new))
-		goto out_free_vma;
-
-	err = vma_dup_policy(vma, new);
-	if (err)
-		goto out_free_vmi;
-
-	err = anon_vma_clone(new, vma, VMA_OP_SPLIT);
-	if (err)
-		goto out_free_mpol;
-
-	if (new->vm_file)
-		get_file(new->vm_file);
-
-	if (new->vm_ops && new->vm_ops->open)
-		new->vm_ops->open(new);
-
-	vma_start_write(vma);
-	vma_start_write(new);
-
-	init_vma_prep(&vp, vma);
-	vp.insert = new;
-	vma_prepare(&vp);
-
-	/*
-	 * Get rid of huge pages and shared page tables straddling the split
-	 * boundary.
-	 */
-	vma_adjust_trans_huge(vma, vma->vm_start, addr, NULL);
-	if (is_vm_hugetlb_page(vma))
-		hugetlb_split(vma, addr);
-
-	if (new_below) {
-		vma->vm_start = addr;
-		vma_add_pgoff(vma, linear_page_delta(new, addr));
-	} else {
-		vma->vm_end = addr;
-	}
-
-	/* vma_complete stores the new vma */
-	vma_complete(&vp, vmi, vma->vm_mm);
-	validate_mm(vma->vm_mm);
-
-	/* Success. */
-	if (new_below)
-		vma_next(vmi);
-	else
-		vma_prev(vmi);
-
-	return 0;
-
-out_free_mpol:
-	mpol_put(vma_policy(new));
-out_free_vmi:
-	vma_iter_free(vmi);
-out_free_vma:
-	vm_area_free(new);
-	return err;
-}
-
 void vma_backend_prepare(struct vma_prepare *vp,
 			 struct vm_area_struct *vma,
 			 struct vm_area_struct *insert)
@@ -1081,8 +986,6 @@ static void vms_complete_munmap_vmas(struct vma_munmap_struct *vms,
 		struct ma_state *mas_detach,
 		struct mm_struct *mm)
 {
-	struct vm_area_struct *vma;
-
 	mm->map_count -= vms->vma_count;
 	mm->locked_vm -= vms->locked_vm;
 	if (vms->unlock)

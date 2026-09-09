@@ -394,3 +394,11 @@ COND_SYSCALL(rseq_slice_yield);
 
 COND_SYSCALL(uretprobe);
 COND_SYSCALL(uprobe);
+
+#if !IS_ENABLED(CONFIG_NOMMU_SWMMU)
+COND_SYSCALL(nommu_swmmu_alloc);
+COND_SYSCALL(nommu_swmmu_free);
+COND_SYSCALL(nommu_swmmu_load);
+COND_SYSCALL(nommu_swmmu_store);
+COND_SYSCALL(nommu_swmmu_remap);
+#endif

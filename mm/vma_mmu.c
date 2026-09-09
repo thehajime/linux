@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include <linux/mm.h>
+#include <linux/mman.h>
 #include <linux/hugetlb.h>
 
 #include "internal.h"
@@ -839,10 +840,36 @@ static int vma_mmu_move_prepare(struct vma_remap_struct *vrm,
 	return 0;
 }
 
+static unsigned long vma_mmu_get_unmapped_area(struct vma_remap_struct *vrm)
+{
+	struct vm_area_struct *vma;
+	pgoff_t pgoff;
+	unsigned long addr = 0;
+	unsigned long map_flags = 0;
+
+	if (!vrm || !vrm->vma)
+		return -EINVAL;
+
+	vma = vrm->vma;
+	pgoff = linear_page_index(vma, vrm->addr);
+
+	if (vma_test(vma, VMA_MAYSHARE_BIT))
+		map_flags |= MAP_SHARED;
+
+	if (vrm->flags & MREMAP_FIXED) {
+		addr = vrm->new_addr;
+		map_flags |= MAP_FIXED;
+	}
+
+	return get_unmapped_area(vma->vm_file, addr, vrm->new_len,
+				 pgoff, map_flags);
+}
+
 const struct vma_mapping_ops vma_mmu_mapping_ops = {
 	.move_prepare = vma_mmu_move_prepare,
 	.move_mapping = vma_mmu_move_mapping,
 	.move_rollback = vma_mmu_move_rollback,
+	.get_unmapped_area = vma_mmu_get_unmapped_area,
 };
 
 
