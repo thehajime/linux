@@ -280,7 +280,7 @@ static void nommu_swmmu_vma_dup_offset_test(struct kunit *test)
 	*page = 0x55667788;
 
 	ret = nommu_swmmu_kunit_range_create(ctx->space, pt, 1, 2,
-					NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
+					PROT_READ | PROT_WRITE,
 					&src);
 	KUNIT_ASSERT_EQ(test, ret, 0);
 
@@ -337,19 +337,19 @@ static void nommu_swmmu_pagetable_drop_range_test(struct kunit *test)
 
 	ret = nommu_swmmu_kunit_range_create(
 		ctx->space, pt, 0, 1,
-		NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
+		PROT_READ | PROT_WRITE,
 		&left);
 	KUNIT_ASSERT_EQ(test, ret, 0);
 
 	ret = nommu_swmmu_kunit_range_create(
 		ctx->space, pt, 1, 1,
-		NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
+		PROT_READ | PROT_WRITE,
 		&middle);
 	KUNIT_ASSERT_EQ(test, ret, 0);
 
 	ret = nommu_swmmu_kunit_range_create(
 		ctx->space, pt, 2, 1,
-		NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE,
+		PROT_READ | PROT_WRITE,
 		&right);
 	KUNIT_ASSERT_EQ(test, ret, 0);
 
@@ -411,17 +411,17 @@ static void nommu_swmmu_pagetable_range_release_test(struct kunit *test)
 
 	ret = nommu_swmmu_kunit_range_create(
 		ctx->space, pt, 0, 1,
-		NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE, &left);
+		PROT_READ | PROT_WRITE, &left);
 	KUNIT_ASSERT_EQ(test, ret, 0);
 
 	ret = nommu_swmmu_kunit_range_create(
 		ctx->space, pt, 1, 1,
-		NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE, &middle);
+		PROT_READ | PROT_WRITE, &middle);
 	KUNIT_ASSERT_EQ(test, ret, 0);
 
 	ret = nommu_swmmu_kunit_range_create(
 		ctx->space, pt, 2, 1,
-		NOMMU_SWMMU_READ | NOMMU_SWMMU_WRITE, &right);
+		PROT_READ | PROT_WRITE, &right);
 	KUNIT_ASSERT_EQ(test, ret, 0);
 
 	nommu_swmmu_kunit_pagetable_release(ctx->space, pt);

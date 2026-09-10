@@ -12,11 +12,6 @@
 
 #define SWMMU_PAGE_SIZE 4096UL
 
-#define NOMMU_SWMMU_NONE	(0)
-#define NOMMU_SWMMU_READ	(1U << 0)
-#define NOMMU_SWMMU_WRITE	(1U << 1)
-#define NOMMU_SWMMU_EXEC	(1U << 2)
-
 struct nommu_swmmu_space;
 struct swmmu_pte;
 struct swmmu_pagetable;

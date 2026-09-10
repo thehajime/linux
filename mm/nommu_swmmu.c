@@ -25,7 +25,7 @@ struct swmmu_pagetable_range {
 	struct swmmu_pagetable *pagetable;
 	unsigned long first;
 	unsigned long nr_ptes;
-	unsigned int access;
+	unsigned int prot;
 };
 
 enum swmmu_pagetable_tx_kind {
@@ -59,7 +59,7 @@ struct swmmu_pagetable_tx {
 
 	unsigned long replace_start;
 	unsigned long replace_end;
-	unsigned int replacement_access;
+	unsigned int replacement_prot;
 	unsigned long split_nr_ptes;
 	struct swmmu_pagetable_range *drop_range;
 	unsigned long drop_first;
@@ -237,7 +237,7 @@ static struct swmmu_pagetable_range *swmmu_pagetable_range_create(
 	pt_range->pagetable = pt;
 	pt_range->first = 0;
 	pt_range->nr_ptes = pt->nr_ptes;
-	pt_range->access = NOMMU_SWMMU_NONE;
+	pt_range->prot = PROT_NONE;
 
 	return pt_range;
 }
@@ -350,7 +350,7 @@ static struct swmmu_pagetable_range *swmmu_pagetable_range_clone(
 
 	dst->first = 0;
 	dst->nr_ptes = src->nr_ptes;
-	dst->access = src->access;
+	dst->prot = src->prot;
 
 	for (i = 0; i < src->nr_ptes; i++) {
 		ret = dst_space->ops->page_copy(
@@ -418,7 +418,7 @@ static struct swmmu_pagetable_range *swmmu_pagetable_range_share(
 	range->pagetable = source->pagetable;
 	range->first = first;
 	range->nr_ptes = nr_ptes;
-	range->access = source->access;
+	range->prot = source->prot;
 
 	return range;
 }
@@ -805,11 +805,11 @@ static void *__swmmu_translate_mm(struct mm_struct *mm,
 	pt = swmmu_vma->pagetable;
 
 	if (write) {
-		if (!(swmmu_vma->access & NOMMU_SWMMU_WRITE)) {
+		if (!(swmmu_vma->prot & PROT_WRITE)) {
 			*status = -EACCES;
 			return NULL;
 		}
-	} else if (!(swmmu_vma->access & NOMMU_SWMMU_READ)) {
+	} else if (!(swmmu_vma->prot & PROT_READ)) {
 		*status = -EACCES;
 		return NULL;
 	}
@@ -1080,7 +1080,7 @@ unsigned long nommu_swmmu_kunit_range_nr_ptes(
 unsigned int nommu_swmmu_kunit_range_access(
 	const struct swmmu_pagetable_range *range)
 {
-	return range ? range->access : NOMMU_SWMMU_NONE;
+	return range ? range->prot : PROT_NONE;
 }
 
 unsigned long nommu_swmmu_kunit_pagetable_nr_ptes(
@@ -1104,7 +1104,7 @@ int nommu_swmmu_kunit_range_create(
 	struct swmmu_pagetable *pagetable,
 	unsigned long first,
 	unsigned long nr_ptes,
-	unsigned int access,
+	unsigned int prot,
 	struct swmmu_pagetable_range **out)
 {
 	struct swmmu_pagetable_range *pt_range;
@@ -1114,7 +1114,7 @@ int nommu_swmmu_kunit_range_create(
 		return -1;
 	pt_range->first = first;
 	pt_range->nr_ptes = nr_ptes;
-	pt_range->access = access;
+	pt_range->prot = prot;
 
 	*out = pt_range;
 	return 0;
@@ -1249,20 +1249,6 @@ rollback:
 	return ret;
 }
 
-static unsigned int swmmu_access_from_prot(unsigned long prot)
-{
-	unsigned int access = NOMMU_SWMMU_NONE;
-
-	if (prot & PROT_READ)
-		access |= NOMMU_SWMMU_READ;
-	if (prot & PROT_WRITE)
-		access |= NOMMU_SWMMU_WRITE;
-	if (prot & PROT_EXEC)
-		access |= NOMMU_SWMMU_EXEC;
-
-	return access;
-}
-
 static void swmmu_resize_abort(struct nommu_swmmu_space *space,
 			struct swmmu_pagetable_tx *tx)
 {
@@ -1299,7 +1285,7 @@ static void swmmu_resize_commit(struct nommu_swmmu_space *space,
 	source->pagetable = new_pt;
 	source->first = new_range->first;
 	source->nr_ptes = new_range->nr_ptes;
-	source->access = new_range->access;
+	source->prot = new_range->prot;
 
 	new_range->pagetable = NULL;
 	swmmu_pagetable_range_free(space, new_range);
@@ -1453,7 +1439,7 @@ static int swmmu_pagetable_resize_prepare(struct nommu_swmmu_space *space,
 
 	new_range->first = 0;
 	new_range->nr_ptes = new_nr_ptes;
-	new_range->access = source->access;
+	new_range->prot = source->prot;
 
 	copy_count = min(old_nr_ptes, new_nr_ptes);
 
@@ -1620,7 +1606,7 @@ static int swmmu_split_prepare(struct vm_area_struct *vma,
 	swmmu_pagetable_get(tx->source->pagetable);
 
 	new_pt_range->pagetable = tx->source->pagetable;
-	new_pt_range->access = old_pt_range->access;
+	new_pt_range->prot = old_pt_range->prot;
 
 	if (new_below) {
 		new_pt_range->first = old_pt_range->first;
@@ -1726,7 +1712,7 @@ static int swmmu_replace_prepare(struct vma_replace_struct *vrs)
 	}
 
 	swmmu_pagetable_put(space, pt);
-	data->access = tx->replacement_access;
+	data->prot = tx->replacement_prot;
 	insert->vm_swmmu_pt_range = data;
 	vrs->backend_state = data;
 
@@ -1878,7 +1864,7 @@ static int swmmu_move_prepare(struct vma_remap_struct *vrm,
 
 	new_range->first = 0;
 	new_range->nr_ptes = new_nr;
-	new_range->access = src_range->access;
+	new_range->prot = src_range->prot;
 
 	for (i = 0; i < min(old_nr, new_nr); i++) {
 		ret = space->ops->page_copy(
@@ -2111,7 +2097,7 @@ static unsigned long swmmu_mmap_fixed_range_replace(struct mm_struct *mm,
 		return -ENOMEM;
 
 	insert->vm_swmmu_pt_range = NULL;
-	tx.replacement_access = swmmu_access_from_prot(prot);
+	tx.replacement_prot = prot;
 
 	mt_init_flags(&mt_detach,
 		      vmi.mas.tree->ma_flags &
@@ -2166,7 +2152,6 @@ __do_mmap_swmmu(struct mm_struct *mm,
 	unsigned long start;
 	unsigned long end;
 	int ret;
-	unsigned int access;
 	int overlap_count;
 
 	if (!mm)
@@ -2281,8 +2266,7 @@ __do_mmap_swmmu(struct mm_struct *mm,
 		return -ENOMEM;
 	}
 
-	access = swmmu_access_from_prot(prot);
-	swmmu_vma->access = access;
+	swmmu_vma->prot = prot;
 	vma->vm_swmmu_pt_range = swmmu_vma;
 
 	vma_iter_config(&vmi, start, end);
