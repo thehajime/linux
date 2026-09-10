@@ -67,7 +67,7 @@ init_runtime_decls(void)
 
 	if (swmmu_store_decl)
 		protect_runtime_decl(swmmu_store_decl);
- 
+
 	if (!swmmu_load_decl || !swmmu_store_decl) {
 		error_at(UNKNOWN_LOCATION,
 			"swmmu runtime declarations are missing; "
@@ -95,6 +95,23 @@ handle_swmmu_attribute(tree *node,
 	return NULL_TREE;
 }
 
+static tree
+handle_swmmu_ptr_attribute(tree *node,
+			   tree name ATTRIBUTE_UNUSED,
+			   tree args ATTRIBUTE_UNUSED,
+			   int flags ATTRIBUTE_UNUSED,
+			   bool *no_add_attrs)
+{
+	if (!POINTER_TYPE_P(*node)) {
+		*no_add_attrs = true;
+		warning(OPT_Wattributes,
+			"%qE attribute only applies to pointer types",
+			get_identifier("swmmu_ptr"));
+	}
+
+	return NULL_TREE;
+}
+
 static void
 register_swmmu_attributes(void *, void *)
 {
@@ -110,8 +127,22 @@ register_swmmu_attributes(void *, void *)
 		.exclude = nullptr,
 	};
 
+	static const attribute_spec swmmu_ptr_attribute = {
+		.name = "swmmu_ptr",
+		.min_length = 0,
+		.max_length = 0,
+		.decl_required = false,
+		.type_required = true,
+		.function_type_required = false,
+		.affects_type_identity = true,
+		.handler = handle_swmmu_ptr_attribute,
+		.exclude = nullptr,
+	};
+
 	register_attribute(&swmmu_attribute);
+	register_attribute(&swmmu_ptr_attribute);
 }
+
 
 static bool
 is_swmmu_function(function *fn)
@@ -131,6 +162,39 @@ is_swmmu_lvalue(tree expr)
 	case ARRAY_REF:
 	case INDIRECT_REF:
 		return true;
+	default:
+		return false;
+	}
+}
+
+static bool
+is_swmmu_pointer_type(tree type)
+{
+	return type &&
+	       POINTER_TYPE_P(type) &&
+	       lookup_attribute("swmmu_ptr",
+				TYPE_ATTRIBUTES(type)) != NULL_TREE;
+}
+
+static bool
+is_swmmu_provenance_lvalue(tree expr)
+{
+	tree address;
+
+	if (!is_swmmu_lvalue(expr))
+		return false;
+
+	/*
+	 * For the initial provenance step, inspect the pointer used
+	 * by the direct memory reference. This covers *p and aliases
+	 * such as *alias.
+	 */
+	switch (TREE_CODE(expr)) {
+	case MEM_REF:
+	case TARGET_MEM_REF:
+	case INDIRECT_REF:
+		address = TREE_OPERAND(expr, 0);
+		return is_swmmu_pointer_type(TREE_TYPE(address));
 	default:
 		return false;
 	}
@@ -216,7 +280,7 @@ rewrite_load(gimple_stmt_iterator *gsi, gassign *stmt)
 	gimple_set_location(call, gimple_location(stmt));
 	gsi_insert_before(gsi, call, GSI_SAME_STMT);
 
-	fprintf(stderr, "[swmmu] generated load: ");
+	fprintf(stderr, "[swmmu] generated load: \n");
 
 	tree converted = fold_convert(type, loaded);
 	converted = force_swmmu_operand(gsi,
@@ -287,10 +351,39 @@ rewrite_store(gimple_stmt_iterator *gsi, gassign *stmt)
 	gimple_set_location(call, gimple_location(stmt));
 	gsi_replace(gsi, call, true);
 
-	fprintf(stderr, "[swmmu] generated store: ");
+	fprintf(stderr, "[swmmu] generated store: \n");
 
 	return true;
 }
+
+static bool
+function_has_swmmu_access(function *fn)
+{
+	basic_block bb;
+
+	FOR_ALL_BB_FN(bb, fn) {
+		for (gimple_stmt_iterator gsi = gsi_start_bb(bb);
+		     !gsi_end_p(gsi);
+		     gsi_next(&gsi)) {
+			gimple stmt = gsi_stmt(gsi);
+			tree lhs;
+			tree rhs;
+
+			if (gimple_code(stmt) != GIMPLE_ASSIGN)
+				continue;
+
+			lhs = gimple_assign_lhs(stmt);
+			rhs = gimple_assign_rhs1(stmt);
+
+			if (is_swmmu_provenance_lvalue(lhs) ||
+			    is_swmmu_provenance_lvalue(rhs))
+				return true;
+		}
+	}
+
+	return false;
+}
+
 
 namespace {
 
@@ -317,14 +410,10 @@ public:
 		{
 			const char *name = IDENTIFIER_POINTER(DECL_NAME(fn->decl));
 
-			//    fprintf(stderr, "[swmmu] enter %s\n", name);
-
-			if (!is_swmmu_function(fn)) {
-				//fprintf(stderr, "[swmmu] skip %s\n", name);
+			bool function_marked = is_swmmu_function(fn);
+			if (!function_marked &&
+			    !function_has_swmmu_access(fn))
 				return 0;
-			}
-
-			fprintf(stderr, "[swmmu] processing %s\n", name);
 
 			init_runtime_decls();
 
@@ -349,10 +438,12 @@ public:
 					tree lhs = gimple_assign_lhs(stmt);
 					tree rhs = gimple_assign_rhs1(stmt);
 
-					if (is_swmmu_lvalue(rhs))
+					if (function_marked ||
+					    is_swmmu_provenance_lvalue(rhs))
 						rewrite_load(&gsi, stmt);
 
-					if (is_swmmu_lvalue(lhs))
+					if (function_marked ||
+					    is_swmmu_provenance_lvalue(lhs))
 						rewrite_store(&gsi, stmt);
 
 					gsi_next(&gsi);
