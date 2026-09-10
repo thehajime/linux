@@ -2652,9 +2652,6 @@ SYSCALL_DEFINE4(nommu_swmmu_load,
 	if (flags & ~NOMMU_SWMMU_ACCESS_MASK)
 		return -EINVAL;
 
-	if (flags & NOMMU_SWMMU_ACCESS_SIGNAL)
-		return -EOPNOTSUPP;
-
 	ret = nommu_swmmu_load_u64_checked(address, size, &value);
 	if (ret)
 		return swmmu_signal_access_error(address, ret, flags);
@@ -2675,9 +2672,6 @@ SYSCALL_DEFINE4(nommu_swmmu_store,
 
 	if (flags & ~NOMMU_SWMMU_ACCESS_MASK)
 		return -EINVAL;
-
-	if (flags & NOMMU_SWMMU_ACCESS_SIGNAL)
-		return -EOPNOTSUPP;
 
 	ret = nommu_swmmu_store_u64_checked(address, size, value);
 	return swmmu_signal_access_error(address, ret, flags);

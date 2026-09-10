@@ -13,6 +13,7 @@
 #include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <setjmp.h>
 
 
 #include "kselftest.h"
@@ -2664,6 +2665,293 @@ static int test_signal_access_faults(void){
 	return KSFT_PASS;
 }
 
+static volatile sig_atomic_t swmmu_returned_faults;
+
+static void swmmu_sigsegv_return_once(int signo,
+				      siginfo_t *info,
+				      void *context)
+{
+	(void)info;
+	(void)context;
+
+	swmmu_returned_faults++;
+
+	if (swmmu_returned_faults == 1)
+		return;
+
+	_exit(128 + signo);
+}
+
+static void swmmu_sigalrm_exit(int signo)
+{
+	(void)signo;
+	_exit(124);
+}
+
+static int swmmu_expect_signal_restart_child(void *address)
+{
+	struct sigaction action = {};
+	pid_t pid;
+	int status;
+	long ret;
+
+	pid = fork();
+	if (pid < 0) {
+		SWMMU_TEST_FAIL("fork failed: %s\n", strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	if (pid == 0) {
+		uint64_t value = 0;
+
+		swmmu_returned_faults = 0;
+
+		action.sa_sigaction = swmmu_sigsegv_return_once;
+		action.sa_flags = SA_SIGINFO;
+		sigemptyset(&action.sa_mask);
+
+		if (sigaction(SIGSEGV, &action, NULL) < 0)
+			_exit(125);
+
+		if (signal(SIGALRM, swmmu_sigalrm_exit) == SIG_ERR)
+			_exit(125);
+
+		alarm(2);
+
+		ret = syscall(SYS_nommu_swmmu_load,
+			      (uintptr_t)address,
+			      sizeof(value),
+			      &value,
+			      NOMMU_SWMMU_ACCESS_SIGNAL);
+
+		/*
+		 * Returning here means the syscall was not restarted and
+		 * the fault did not recur.
+		 */
+		(void)ret;
+		_exit(126);
+	}
+
+	if (waitpid(pid, &status, 0) < 0) {
+		SWMMU_TEST_FAIL("waitpid failed: %s\n",
+				strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	if (!WIFEXITED(status) ||
+	    WEXITSTATUS(status) != 128 + SIGSEGV) {
+		SWMMU_TEST_FAIL(
+			"signal restart failed: status=%d\n",
+			status);
+		return KSFT_FAIL;
+	}
+
+	return KSFT_PASS;
+}
+
+static int test_signal_restart(void)
+{
+	size_t ps = getpagesize();
+	void *mapping;
+	int ret;
+
+	if (prctl(PR_SET_SWMMU, PR_SWMMU_ON, 0, 0, 0) < 0) {
+		SWMMU_TEST_FAIL("failed to enable SWMMU: %s\n",
+				strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	mapping = mmap(NULL, ps,
+		       PROT_READ | PROT_WRITE,
+		       MAP_PRIVATE | MAP_ANONYMOUS,
+		       -1, 0);
+	if (mapping == MAP_FAILED) {
+		SWMMU_TEST_FAIL("mmap failed: %s\n",
+				strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	if (munmap(mapping, ps) < 0) {
+		SWMMU_TEST_FAIL("munmap failed: %s\n",
+				strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	ret = swmmu_expect_signal_restart_child(mapping);
+
+	if (ret == KSFT_PASS)
+		SWMMU_TEST_PASS(
+			"SWMMU SIGSEGV handler return and syscall restart work\n");
+
+	return ret;
+}
+
+static sigjmp_buf swmmu_jmp_env;
+static volatile sig_atomic_t swmmu_jmp_signo;
+
+static void swmmu_siglongjmp_handler(int signo,
+				     siginfo_t *info,
+				     void *context)
+{
+	(void)info;
+	(void)context;
+
+	swmmu_jmp_signo = signo;
+	siglongjmp(swmmu_jmp_env, 1);
+}
+
+static int swmmu_expect_siglongjmp_usr1(void)
+{
+	struct sigaction action = {};
+	pid_t pid;
+	int status;
+
+	pid = fork();
+	if (pid < 0)
+		return KSFT_FAIL;
+
+	if (pid == 0) {
+		swmmu_jmp_signo = 0;
+		swmmu_returned_faults = 0;
+
+		action.sa_sigaction = swmmu_siglongjmp_handler;
+		action.sa_flags = SA_SIGINFO;
+		sigemptyset(&action.sa_mask);
+
+		if (sigaction(SIGUSR1, &action, NULL) < 0)
+			_exit(125);
+
+		if (sigsetjmp(swmmu_jmp_env, 1) == 0) {
+			if (kill(getpid(), SIGUSR1) < 0)
+				_exit(126);
+
+			_exit(127);
+		}
+
+		if (swmmu_jmp_signo != SIGUSR1)
+			_exit(128);
+
+		_exit(0);
+	}
+
+	if (waitpid(pid, &status, 0) < 0)
+		return KSFT_FAIL;
+
+	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+		if (WIFSIGNALED(status))
+			SWMMU_TEST_FAIL(
+				"siglongjmp child killed by signal %d\n",
+				WTERMSIG(status));
+		else
+			SWMMU_TEST_FAIL(
+				"siglongjmp child exited with status %d\n",
+				WEXITSTATUS(status));
+		return KSFT_FAIL;
+	}
+
+	return KSFT_PASS;
+}
+
+static int swmmu_expect_siglongjmp_swmmu(void *address)
+{
+	struct sigaction action = {};
+	pid_t pid;
+	int status;
+
+	pid = fork();
+	if (pid < 0)
+		return KSFT_FAIL;
+
+	if (pid == 0) {
+		uint64_t value = 0;
+
+		swmmu_jmp_signo = 0;
+		swmmu_returned_faults = 0;
+
+		action.sa_sigaction = swmmu_siglongjmp_handler;
+		action.sa_flags = SA_SIGINFO;
+		sigemptyset(&action.sa_mask);
+
+		if (sigaction(SIGSEGV, &action, NULL) < 0)
+			_exit(125);
+
+		if (sigsetjmp(swmmu_jmp_env, 1) == 0) {
+			(void)syscall(SYS_nommu_swmmu_load,
+				      (uintptr_t)address,
+				      sizeof(value),
+				      &value,
+				      NOMMU_SWMMU_ACCESS_SIGNAL);
+			_exit(126);
+		}
+
+		if (swmmu_jmp_signo != SIGSEGV)
+			_exit(127);
+
+		_exit(0);
+	}
+
+	if (waitpid(pid, &status, 0) < 0)
+		return KSFT_FAIL;
+
+	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+		if (WIFSIGNALED(status))
+			SWMMU_TEST_FAIL(
+				"siglongjmp child killed by signal %d\n",
+				WTERMSIG(status));
+		else
+			SWMMU_TEST_FAIL(
+				"siglongjmp child exited with status %d\n",
+				WEXITSTATUS(status));
+		return KSFT_FAIL;
+	}
+
+	return KSFT_PASS;
+}
+
+static int test_siglongjmp_paths(void)
+{
+	size_t ps = getpagesize();
+	void *mapping;
+	int ret;
+
+	if (prctl(PR_SET_SWMMU, PR_SWMMU_ON, 0, 0, 0) < 0) {
+		SWMMU_TEST_FAIL("failed to enable SWMMU: %s\n",
+				strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	ret = swmmu_expect_siglongjmp_usr1();
+	if (ret != KSFT_PASS) {
+		SWMMU_TEST_FAIL("SIGUSR1 siglongjmp test failed\n");
+		return KSFT_FAIL;
+	}
+
+	mapping = mmap(NULL, ps,
+		       PROT_READ | PROT_WRITE,
+		       MAP_PRIVATE | MAP_ANONYMOUS,
+		       -1, 0);
+	if (mapping == MAP_FAILED) {
+		SWMMU_TEST_FAIL("mmap failed: %s\n",
+				strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	if (munmap(mapping, ps) < 0) {
+		SWMMU_TEST_FAIL("munmap failed: %s\n",
+				strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	ret = swmmu_expect_siglongjmp_swmmu(mapping);
+	if (ret != KSFT_PASS) {
+		SWMMU_TEST_FAIL("SWMMU SIGSEGV siglongjmp test failed\n");
+		return KSFT_FAIL;
+	}
+
+	SWMMU_TEST_PASS(
+		"siglongjmp works for ordinary and SWMMU signals\n");
+	return KSFT_PASS;
+}
 
 
 int main(void)
@@ -2677,7 +2965,7 @@ int main(void)
 	}
 
 	ksft_print_header();
-	ksft_set_plan(35);
+	ksft_set_plan(37);
 
 	if (test_default_mode_off() == KSFT_FAIL)
 		result = KSFT_FAIL;
@@ -2776,6 +3064,12 @@ int main(void)
 		result = KSFT_FAIL;
 
 	if (test_signal_access_faults() == KSFT_FAIL)
+		result = KSFT_FAIL;
+
+	if (test_signal_restart() == KSFT_FAIL)
+		result = KSFT_FAIL;
+
+	if (test_siglongjmp_paths() == KSFT_FAIL)
 		result = KSFT_FAIL;
 
 
