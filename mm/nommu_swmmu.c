@@ -2608,13 +2608,20 @@ out:
 	return ret;
 }
 
-SYSCALL_DEFINE3(nommu_swmmu_load,
+SYSCALL_DEFINE4(nommu_swmmu_load,
 		void __user *, address,
 		size_t, size,
-		u64 __user *, result)
+		u64 __user *, result,
+		unsigned int, flags)
 {
 	u64 value;
 	int ret;
+
+	if (flags & ~NOMMU_SWMMU_ACCESS_MASK)
+		return -EINVAL;
+
+	if (flags & NOMMU_SWMMU_ACCESS_SIGNAL)
+		return -EOPNOTSUPP;
 
 	ret = nommu_swmmu_load_u64_checked(address, size, &value);
 	if (ret)
@@ -2626,7 +2633,17 @@ SYSCALL_DEFINE3(nommu_swmmu_load,
 	return 0;
 }
 
-SYSCALL_DEFINE3(nommu_swmmu_store, void __user *, address, size_t, size, uint64_t, value)
+SYSCALL_DEFINE4(nommu_swmmu_store,
+		void __user *, address,
+		size_t, size,
+		uint64_t, value,
+		unsigned int, flags)
 {
+	if (flags & ~NOMMU_SWMMU_ACCESS_MASK)
+		return -EINVAL;
+
+	if (flags & NOMMU_SWMMU_ACCESS_SIGNAL)
+		return -EOPNOTSUPP;
+
 	return nommu_swmmu_store_u64_checked(address, size, value);
 }

@@ -1981,6 +1981,38 @@ out:
 
 }
 
+static int test_checked_access_swmmu_disabled(void)
+{
+	uint64_t value = 0;
+	int ret;
+
+	if (prctl(PR_SET_SWMMU, PR_SWMMU_OFF, 0, 0, 0) < 0) {
+		SWMMU_TEST_FAIL("failed to disable SWMMU: %s\n",
+				strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	ret = nommu_swmmu_load_u64_checked(NULL, sizeof(value), &value);
+	if (ret != -EOPNOTSUPP) {
+		SWMMU_TEST_FAIL(
+			"disabled SWMMU load returned %d, expected %d\n",
+			ret, -EOPNOTSUPP);
+		return KSFT_FAIL;
+	}
+
+	ret = nommu_swmmu_store_u64_checked(NULL, sizeof(value), value);
+	if (ret != -EOPNOTSUPP) {
+		SWMMU_TEST_FAIL(
+			"disabled SWMMU store returned %d, expected %d\n",
+			ret, -EOPNOTSUPP);
+		return KSFT_FAIL;
+	}
+
+	SWMMU_TEST_PASS(
+		"checked SWMMU accesses report disabled mode\n");
+	return KSFT_PASS;
+}
+
 static int test_disable_and_reenable(void)
 {
 	size_t ps = getpagesize();
@@ -2478,6 +2510,9 @@ int main(void)
 		result = KSFT_FAIL;
 
 	if (test_disable_and_reenable() == KSFT_FAIL)
+		result = KSFT_FAIL;
+
+	if (test_checked_access_swmmu_disabled() == KSFT_FAIL)
 		result = KSFT_FAIL;
 
 	if (test_fork_mode_inheritance() == KSFT_FAIL)

@@ -8,6 +8,7 @@
 #include <linux/refcount.h>
 #include <linux/gfp_types.h>
 #include <linux/rwsem.h>
+#include <uapi/linux/nommu_swmmu.h>
 #include <vdso/limits.h>
 
 #define SWMMU_PAGE_SIZE 4096UL
