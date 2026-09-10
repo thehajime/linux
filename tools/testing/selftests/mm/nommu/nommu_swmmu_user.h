@@ -4,6 +4,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <linux/nommu_swmmu.h>
 
 #define SYS_nommu_swmmu_alloc 472
 #define SYS_nommu_swmmu_free 473

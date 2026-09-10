@@ -10,7 +10,9 @@
 #include <unistd.h>
 #include <string.h>
 #include <sys/mman.h>
-
+#include <signal.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 
 #include "kselftest.h"
@@ -2487,6 +2489,183 @@ static int test_fork_mapping_isolation_after_head_trim(void)
 	return KSFT_PASS;
 }
 
+struct swmmu_fault_report {
+	int signo;
+	int code;
+	uintptr_t address;
+};
+
+static int swmmu_fault_report_fd = -1;
+
+static void swmmu_sigsegv_exit(int signo,
+			       siginfo_t *info,
+			       void *context)
+{
+	struct swmmu_fault_report report = {
+		.signo = signo,
+		.code = info ? info->si_code : 0,
+		.address = info ? (uintptr_t)info->si_addr : 0,
+	};
+
+	(void)context;
+
+	if (swmmu_fault_report_fd >= 0)
+		(void)write(swmmu_fault_report_fd,
+			    &report, sizeof(report));
+
+	_exit(128 + signo);
+}
+
+static int swmmu_expect_signal_child(void *address,
+				     int write_access,
+				     int expected_code)
+{
+	struct swmmu_fault_report report;
+	struct sigaction action = {};
+	int pipefd[2];
+	pid_t pid;
+	int status;
+	ssize_t count;
+
+	if (pipe(pipefd) < 0) {
+		SWMMU_TEST_FAIL("pipe failed: %s\n", strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	pid = fork();
+	if (pid < 0) {
+		close(pipefd[0]);
+		close(pipefd[1]);
+		SWMMU_TEST_FAIL("fork failed: %s\n", strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	if (pid == 0) {
+		uint64_t value = 0;
+
+		close(pipefd[0]);
+		swmmu_fault_report_fd = pipefd[1];
+
+		action.sa_sigaction = swmmu_sigsegv_exit;
+		action.sa_flags = SA_SIGINFO;
+		sigemptyset(&action.sa_mask);
+
+		if (sigaction(SIGSEGV, &action, NULL) < 0)
+			_exit(125);
+
+		if (write_access) {
+			(void)syscall(SYS_nommu_swmmu_store,
+				      (uintptr_t)address,
+				      sizeof(value),
+				      value,
+				      NOMMU_SWMMU_ACCESS_SIGNAL);
+		} else {
+			(void)syscall(SYS_nommu_swmmu_load,
+				      (uintptr_t)address,
+				      sizeof(value),
+				      &value,
+				      NOMMU_SWMMU_ACCESS_SIGNAL);
+		}
+
+		/*
+		 * The signal-mode access returned instead of delivering
+		 * SIGSEGV.
+		 */
+		_exit(126);
+	}
+
+	close(pipefd[1]);
+
+	count = read(pipefd[0], &report, sizeof(report));
+	close(pipefd[0]);
+
+	if (waitpid(pid, &status, 0) < 0) {
+		SWMMU_TEST_FAIL("waitpid failed: %s\n",
+				strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	if (count != sizeof(report) ||
+	    !WIFEXITED(status) ||
+	    WEXITSTATUS(status) != 128 + SIGSEGV) {
+		SWMMU_TEST_FAIL(
+			"child did not report SIGSEGV: count=%zd status=%d\n",
+			count, status);
+		return KSFT_FAIL;
+	}
+
+	if (report.signo != SIGSEGV ||
+	    report.code != expected_code ||
+	    report.address != (uintptr_t)address) {
+		SWMMU_TEST_FAIL(
+			"unexpected fault: signo=%d code=%d address=%p\n",
+			report.signo,
+			report.code,
+			(void *)report.address);
+		return KSFT_FAIL;
+	}
+
+	return KSFT_PASS;
+}
+
+
+static int test_signal_access_faults(void){
+	size_t ps = getpagesize();
+	void *mapping;
+
+	if (prctl(PR_SET_SWMMU, PR_SWMMU_ON, 0, 0, 0) < 0) {
+		SWMMU_TEST_FAIL("failed to enable SWMMU: %s\n",
+				strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	mapping = mmap(NULL, ps,
+		PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS,
+		-1, 0);
+	if (mapping == MAP_FAILED) {
+		SWMMU_TEST_FAIL("mmap failed: %s\n",
+				strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	if (munmap(mapping, ps) < 0) {
+		SWMMU_TEST_FAIL("munmap failed: %s\n",
+				strerror(errno));
+		return KSFT_FAIL;
+	}
+	if (swmmu_expect_signal_child(mapping, 0, SEGV_MAPERR) != KSFT_PASS)
+		return KSFT_FAIL;
+
+	mapping = mmap(NULL, ps,
+		PROT_READ,
+		MAP_PRIVATE | MAP_ANONYMOUS,
+		-1, 0);
+
+	if (mapping == MAP_FAILED) {
+		SWMMU_TEST_FAIL("read-only mmap failed: %s\n",
+				strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	if (swmmu_expect_signal_child(mapping, 1, SEGV_ACCERR) != KSFT_PASS) {
+		munmap(mapping, ps);
+		return KSFT_FAIL;
+	}
+
+	if (munmap(mapping, ps) < 0) {
+		SWMMU_TEST_FAIL("munmap failed: %s\n",
+				strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	SWMMU_TEST_PASS(
+		"SWMMU access faults deliver SIGSEGV correctly\n");
+	return KSFT_PASS;
+}
+
+
+
 int main(void)
 {
 	int result = KSFT_PASS;
@@ -2498,7 +2677,7 @@ int main(void)
 	}
 
 	ksft_print_header();
-	ksft_set_plan(33);
+	ksft_set_plan(35);
 
 	if (test_default_mode_off() == KSFT_FAIL)
 		result = KSFT_FAIL;
@@ -2594,6 +2773,9 @@ int main(void)
 		result = KSFT_FAIL;
 
 	if (test_fork_mapping_isolation_after_head_trim() == KSFT_FAIL)
+		result = KSFT_FAIL;
+
+	if (test_signal_access_faults() == KSFT_FAIL)
 		result = KSFT_FAIL;
 
 

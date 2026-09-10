@@ -920,6 +920,38 @@ static int __swmmu_check_access_mm(struct mm_struct *mm,
 	return 0;
 }
 
+#include <linux/sched/signal.h>
+#include <linux/signal.h>
+
+static long swmmu_signal_access_error(void __user *address,
+				      int ret,
+				      unsigned int flags)
+{
+	int code;
+
+	if (!(flags & NOMMU_SWMMU_ACCESS_SIGNAL))
+		return ret;
+
+	switch (ret) {
+	case -EFAULT:
+		code = SEGV_MAPERR;
+		break;
+	case -EACCES:
+		code = SEGV_ACCERR;
+		break;
+	default:
+		return ret;
+	}
+
+	force_sig_fault(SIGSEGV, code, address);
+
+	/*
+	 * If a handler returns, retry the access after signal delivery.
+	 * The default SIGSEGV action terminates the process.
+	 */
+	return -ERESTARTNOINTR;
+}
+
 int nommu_swmmu_check_access(struct nommu_swmmu_space *space,
 			uintptr_t address,
 			size_t size,
@@ -2625,7 +2657,7 @@ SYSCALL_DEFINE4(nommu_swmmu_load,
 
 	ret = nommu_swmmu_load_u64_checked(address, size, &value);
 	if (ret)
-		return ret;
+		return swmmu_signal_access_error(address, ret, flags);
 
 	if (copy_to_user(result, &value, sizeof(value)))
 		return -EFAULT;
@@ -2639,11 +2671,14 @@ SYSCALL_DEFINE4(nommu_swmmu_store,
 		uint64_t, value,
 		unsigned int, flags)
 {
+	int ret;
+
 	if (flags & ~NOMMU_SWMMU_ACCESS_MASK)
 		return -EINVAL;
 
 	if (flags & NOMMU_SWMMU_ACCESS_SIGNAL)
 		return -EOPNOTSUPP;
 
-	return nommu_swmmu_store_u64_checked(address, size, value);
+	ret = nommu_swmmu_store_u64_checked(address, size, value);
+	return swmmu_signal_access_error(address, ret, flags);
 }

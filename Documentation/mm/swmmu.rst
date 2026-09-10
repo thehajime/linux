@@ -26,10 +26,19 @@ access is validated before data is copied.
 A successful load returns zero and writes the loaded value to the result
 argument. A successful store returns zero.
 
+The access syscall supports two modes:
+
+``NOMMU_SWMMU_ACCESS_CHECKED``
+   Return an error to the caller without delivering a signal.
+
+``NOMMU_SWMMU_ACCESS_SIGNAL``
+   Convert SWMMU address and permission faults into synchronous ``SIGSEGV``
+   delivery.
+
 The checked-access error contract is:
 
 ``-EINVAL``
-   The access size or another argument is invalid.
+   The access size, flags, or another argument is invalid.
 
 ``-EFAULT``
    The address is unmapped, outside a SWMMU VMA, or exceeds the mapped range.
@@ -40,10 +49,20 @@ The checked-access error contract is:
 ``-EOPNOTSUPP``
    SWMMU mode is disabled for the current process.
 
+For signal-mode accesses, the kernel maps SWMMU faults as follows:
+
+``-EFAULT``
+   ``SIGSEGV`` with ``si_code`` set to ``SEGV_MAPERR``.
+
+``-EACCES``
+   ``SIGSEGV`` with ``si_code`` set to ``SEGV_ACCERR``.
+
+The faulting address is reported through ``siginfo_t.si_addr``. Invalid
+arguments and disabled SWMMU mode remain ordinary syscall errors and do not
+generate ``SIGSEGV``.
+
+When a signal handler returns, the faulting access is retried. The default
+``SIGSEGV`` disposition terminates the process.
+
 Kernel mapping inconsistencies are internal errors and are not user-visible
 SWMMU access faults.
-
-Checked access helpers return these errors without delivering a signal. The
-non-checked compiler runtime helpers currently terminate on an access failure.
-Their signal behavior is not yet part of the defined ABI and will be specified
-separately.
