@@ -952,7 +952,7 @@ nommu_swmmu_load_u64_checked(const void *address,
 	struct mm_struct *mm = current->mm;
 
 	if (!mm || mm->swmmu_mode != NOMMU_SWMMU_ON)
-		return -EFAULT;
+		return -EOPNOTSUPP;
 
 	if (!value ||
 	    (size != 1 && size != 2 && size != 4 && size != 8))
@@ -972,7 +972,7 @@ nommu_swmmu_store_u64_checked(void *address,
 	struct mm_struct *mm = current->mm;
 
 	if (!mm || mm->swmmu_mode != NOMMU_SWMMU_ON)
-		return -EFAULT;
+		return -EOPNOTSUPP;
 
 	if (size != 1 && size != 2 && size != 4 && size != 8)
 		return -EINVAL;
