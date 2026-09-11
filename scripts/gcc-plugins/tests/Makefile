@@ -28,7 +28,7 @@ UNKNOWN_ASM := $(DUMP_DIR_ABS)/swmmu_provenance_unknown.s
 
 
 .PHONY: all test compile dump dump-unknown-boundary \
-	test-negative test-negative-return clean
+	test-negative test-negative-* clean
 
 all: test
 
@@ -128,6 +128,27 @@ test-negative-return:
 		exit 1; \
 	fi
 	@echo "ok: unknown SWMMU return is diagnosed"
+
+test-negative-mixedphi:
+	@rm -f "$(UNKNOWN_LOG)" "$(UNKNOWN_ASM)"
+	@mkdir -p "$(DUMP_DIR_ABS)"
+	@if $(CC) $(CFLAGS) -fno-inline -fno-lto \
+		-DSWMMU_TEST_MIXED_PHI \
+		-fplugin="$(PLUGIN_ABS)" \
+		-S -c "$(UNKNOWN_SOURCE_ABS)" \
+		-o "$(UNKNOWN_ASM)" \
+		>"$(UNKNOWN_LOG)" 2>&1; then \
+		echo "error: mixed-PHI test unexpectedly compiled" >&2; \
+		cat "$(UNKNOWN_LOG)" >&2; \
+		exit 1; \
+	fi
+	@if ! grep -q "SWMMU pointer state is unknown" \
+		"$(UNKNOWN_LOG)"; then \
+		echo "error: expected mixed-PHI diagnostic was not found" >&2; \
+		cat "$(UNKNOWN_LOG)" >&2; \
+		exit 1; \
+	fi
+	@echo "ok: unknown SWMMU mixed phi is diagnosed"
 
 
 compile: $(TEST_ASM)

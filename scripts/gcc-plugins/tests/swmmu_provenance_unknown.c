@@ -43,6 +43,21 @@ uint64_t unknown_return_load(swmmu_u64_ptr context)
 	return *pointer;
 }
 
+#elif defined(SWMMU_TEST_MIXED_PHI)
+
+__attribute__((noinline))
+uint64_t mixed_phi_load(swmmu_u64_ptr swmmu_pointer,
+			uint64_t *ordinary_pointer,
+			int condition)
+{
+	uint64_t *selected;
+
+	selected = condition ?
+		(uint64_t *)swmmu_pointer : ordinary_pointer;
+
+	return *selected;
+}
+
 #else
 
 #error "select an SWMMU negative test"

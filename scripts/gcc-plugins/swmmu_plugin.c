@@ -542,7 +542,8 @@ rewrite_load(gimple_stmt_iterator *gsi, gassign *stmt)
 					address,
 					size_arg);
 
-	tree loaded = create_tmp_var(uint64_type_node, "swmmu_value");
+	tree loaded = make_temp_ssa_name(uint64_type_node,
+					call, "swmmu_value");
 	gimple_call_set_lhs(call, loaded);
 
 	gimple_set_location(call, gimple_location(stmt));
@@ -672,6 +673,41 @@ function_has_swmmu_parameter(function *fn)
 	return false;
 }
 
+static void
+swmmu_record_pointer_phi(
+	gphi *phi,
+	hash_map<tree, enum swmmu_pointer_state> &states)
+{
+	tree result;
+	enum swmmu_pointer_state state;
+	unsigned int i;
+	unsigned int count;
+
+	result = gimple_phi_result(phi);
+	if (!result || !TREE_TYPE(result) ||
+	    !POINTER_TYPE_P(TREE_TYPE(result)))
+		return;
+
+	count = gimple_phi_num_args(phi);
+	if (!count) {
+		state = swmmu_pointer_state_from_type(TREE_TYPE(result));
+		swmmu_pointer_state_put(result, state, states);
+		return;
+	}
+
+	state = swmmu_pointer_state_of(
+		gimple_phi_arg_def(phi, 0), states);
+
+	for (i = 1; i < count; i++)
+		state = swmmu_pointer_state_join(
+			state,
+			swmmu_pointer_state_of(
+				gimple_phi_arg_def(phi, i),
+				states));
+
+	swmmu_pointer_state_put(result, state, states);
+}
+
 
 namespace {
 
@@ -680,11 +716,11 @@ namespace {
 		"swmmu",
 		OPTGROUP_NONE,
 		TV_NONE,
-		PROP_cfg,
+		PROP_cfg | PROP_ssa,
 		0,
 		0,
 		0,
-		TODO_rebuild_cgraph_edges
+		TODO_update_ssa | TODO_rebuild_cgraph_edges
 	};
 
 	class swmmu_pass : public gimple_opt_pass {
@@ -722,6 +758,12 @@ public:
 			basic_block bb;
 
 			FOR_ALL_BB_FN(bb, fn) {
+				for (gphi_iterator psi = gsi_start_phis(bb);
+				     !gsi_end_p(psi);
+				     gsi_next(&psi)) {
+					swmmu_record_pointer_phi(psi.phi(), states);
+				}
+
 				for (gimple_stmt_iterator gsi = gsi_start_bb(bb);
 				     !gsi_end_p(gsi);) {
 					gimple generic_stmt = gsi_stmt(gsi);
@@ -804,7 +846,7 @@ plugin_init(struct plugin_name_args *plugin_info,
 	static register_pass_info pass_info;
 
 	pass_info.pass = new swmmu_pass(g);
-	pass_info.reference_pass_name = "*build_cgraph_edges";
+	pass_info.reference_pass_name = "ssa";
 	pass_info.ref_pass_instance_number = 1;
 	pass_info.pos_op = PASS_POS_INSERT_AFTER;
 
