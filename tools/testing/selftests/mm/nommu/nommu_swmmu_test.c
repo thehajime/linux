@@ -2954,6 +2954,50 @@ static int test_siglongjmp_paths(void)
 }
 
 
+typedef int (*swmmu_test_fn)(void);
+static const swmmu_test_fn testcases[] = {
+	test_default_mode_off,
+	test_enable_swmmu,
+	test_enable_and_mapping,
+	test_disable_and_reenable,
+	test_checked_access_swmmu_disabled,
+	test_fork_mode_inheritance,
+	test_fork_mapping_isolation,
+	test_scalar_access,
+	test_eager_copy_fork,
+	test_repeated_fork,
+	test_mremap,
+	test_standard_mmap,
+	test_standard_mmap_shrink,
+	test_standard_mmap_fork,
+	test_standard_mmap_fork_child_remap,
+	test_standard_mmap_fork_unmap,
+	test_repeated_standard_mmap_fork,
+	test_multiple_standard_mmap_children,
+	test_standard_mmap_fork_child_isolation,
+	test_standard_mmap_permission,
+	test_standard_mmap_nonzero_hint,
+	test_standard_mmap_occupied_hint,
+	test_standard_mmap_fixed_noreplace,
+	test_standard_mmap_access,
+	test_standard_munmap_tail,
+	test_standard_munmap_middle,
+	test_standard_mmap_expand,
+	test_standard_mmap_expand_tail_munmap,
+	test_standard_mmap_overlap_expand,
+	test_standard_mmap_expand_rejects_maymove,
+	test_standard_mmap_rejects_nonexact_old_range,
+	test_fork_mapping_isolation_after_head_trim,
+	test_signal_access_faults,
+	test_signal_restart,
+	test_siglongjmp_paths,
+	/*
+	 * Keep cleanup tests last.
+	 */
+	test_standard_mmap_exit_cleanup_churn,
+	test_standard_mmap_exit_cleanup,
+};
+
 int main(void)
 {
 	int result = KSFT_PASS;
@@ -2965,121 +3009,12 @@ int main(void)
 	}
 
 	ksft_print_header();
-	ksft_set_plan(37);
+	ksft_set_plan(ARRAY_SIZE(testcases));
 
-	if (test_default_mode_off() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
-	if (test_enable_swmmu() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
-	if (test_enable_and_mapping() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
-	if (test_disable_and_reenable() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
-	if (test_checked_access_swmmu_disabled() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
-	if (test_fork_mode_inheritance() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
-	if (test_fork_mapping_isolation() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
-	if (test_scalar_access() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
-	if (test_eager_copy_fork() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
-	if (test_repeated_fork() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
-	if (test_mremap() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
-	if (test_standard_mmap() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
-	if (test_standard_mmap_shrink() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
-	if (test_standard_mmap_fork() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
-	if (test_standard_mmap_fork_child_remap() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
-	if (test_standard_mmap_fork_unmap() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
-	if (test_repeated_standard_mmap_fork() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
-	if (test_multiple_standard_mmap_children() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
-	if (test_standard_mmap_fork_child_isolation() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
-	if (test_standard_mmap_permission() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
-	if (test_standard_mmap_nonzero_hint() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
-	if (test_standard_mmap_occupied_hint() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
-	if (test_standard_mmap_fixed_noreplace() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
-	if (test_standard_mmap_access() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
-	if (test_standard_munmap_tail() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
-	if (test_standard_munmap_middle() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
-	if (test_standard_mmap_expand() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
-	if (test_standard_mmap_expand_tail_munmap() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
-	if (test_standard_mmap_overlap_expand() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
-	if (test_standard_mmap_expand_rejects_maymove() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
-	if (test_standard_mmap_rejects_nonexact_old_range() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
-	if (test_fork_mapping_isolation_after_head_trim() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
-	if (test_signal_access_faults() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
-	if (test_signal_restart() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
-	if (test_siglongjmp_paths() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
-
-	/* two tests below shall be the last */
-	if (test_standard_mmap_exit_cleanup_churn() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
-	if (test_standard_mmap_exit_cleanup() == KSFT_FAIL)
-		result = KSFT_FAIL;
-
+	for (int i = 0; i < ARRAY_SIZE(testcases); i++) {
+		if (testcases[i]() == KSFT_FAIL)
+			result = KSFT_FAIL;
+	}
 
 	if (result == KSFT_PASS)
 		ksft_finished();
