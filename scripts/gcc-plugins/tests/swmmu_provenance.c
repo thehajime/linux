@@ -107,3 +107,36 @@ uint64_t typed_pointer_array_load(swmmu_u64_ptr *array,
 {
 	return *array[index];
 }
+
+__attribute__((noinline))
+swmmu_u64_ptr typed_select(swmmu_u64_ptr first,
+			   swmmu_u64_ptr second,
+			   int condition)
+{
+	return condition ? first : second;
+}
+
+__attribute__((noinline))
+uint64_t typed_phi_load(swmmu_u64_ptr first,
+			swmmu_u64_ptr second,
+			int condition)
+{
+	return *typed_select(first, second, condition);
+}
+
+__attribute__((noinline))
+uint64_t typed_parameter_caller(swmmu_u64_ptr pointer)
+{
+	return typed_load(pointer);
+}
+
+__attribute__((noinline))
+uint64_t typed_direct_phi_load(swmmu_u64_ptr first,
+			       swmmu_u64_ptr second,
+			       int condition)
+{
+	swmmu_u64_ptr selected;
+
+	selected = condition ? first : second;
+	return *selected;
+}

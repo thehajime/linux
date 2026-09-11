@@ -15,8 +15,20 @@ OUTPUT ?= $(SRCTREE)/build/scripts/gcc-plugins/tests
 
 TEST_SOURCE := $(TEST_DIR)/swmmu_provenance.c
 TEST_ASM := $(OUTPUT)/swmmu_provenance.s
+DUMP_DIR ?= /tmp/swmmu-provenance
+DUMP_DIR_ABS := $(abspath $(DUMP_DIR))
+TEST_SOURCE_ABS := $(abspath $(TEST_SOURCE))
+PLUGIN_ABS := $(abspath $(PLUGIN))
+DUMP_ASM := $(DUMP_DIR_ABS)/swmmu_provenance.s
 
-.PHONY: all test compile clean
+UNKNOWN_SOURCE := $(TEST_DIR)/swmmu_provenance_unknown.c
+UNKNOWN_SOURCE_ABS = $(abspath $(UNKNOWN_SOURCE))
+UNKNOWN_LOG := $(DUMP_DIR_ABS)/swmmu_provenance_unknown.log
+UNKNOWN_ASM := $(DUMP_DIR_ABS)/swmmu_provenance_unknown.s
+
+
+.PHONY: all test compile dump dump-unknown-boundary \
+	test-negative clean
 
 all: test
 
@@ -70,9 +82,62 @@ test: $(TEST_ASM)
 	check_call typed_load_through_return nommu_swmmu_load_u64; \
 	check_call typed_struct_load nommu_swmmu_load_u64; \
 	check_call typed_struct_store nommu_swmmu_store_u64; \
-	check_call typed_pointer_array_load nommu_swmmu_load_u64
+	check_call typed_pointer_array_load nommu_swmmu_load_u64; \
+	check_call typed_phi_load nommu_swmmu_load_u64; \
+	check_call typed_direct_phi_load nommu_swmmu_load_u64; \
+	check_call typed_parameter_caller typed_load;
+
+test-negative:
+	@rm -f "$(UNKNOWN_LOG)" "$(UNKNOWN_ASM)"
+	@mkdir -p "$(DUMP_DIR_ABS)"
+	@if $(CC) $(CFLAGS) -fno-inline -fno-lto \
+		-fplugin="$(PLUGIN_ABS)" \
+		-S -c "$(UNKNOWN_SOURCE_ABS)" \
+		-o "$(UNKNOWN_ASM)" \
+		>"$(UNKNOWN_LOG)" 2>&1; then \
+		echo "error: unknown-boundary test unexpectedly compiled" >&2; \
+		cat "$(UNKNOWN_LOG)" >&2; \
+		exit 1; \
+	fi
+	@if ! grep -q "SWMMU pointer state is unknown" "$(UNKNOWN_LOG)"; then \
+		echo "error: expected provenance diagnostic was not found" >&2; \
+		cat "$(UNKNOWN_LOG)" >&2; \
+		exit 1; \
+	fi
+	@echo "ok: unknown SWMMU provenance is diagnosed"
 
 compile: $(TEST_ASM)
+
+dump:
+	@rm -rf "$(DUMP_DIR_ABS)"
+	@mkdir -p "$(DUMP_DIR_ABS)"
+	@cd "$(DUMP_DIR_ABS)" && \
+		$(CC) $(CFLAGS) -fno-inline -fno-lto \
+		-fplugin="$(PLUGIN_ABS)" \
+		-fdump-tree-gimple \
+		-fdump-tree-ssa \
+		-fdump-tree-optimized \
+		-S -c "$(TEST_SOURCE_ABS)" \
+		-o "$(DUMP_ASM)"
+
+dump-unknown-boundary: dump
+	@set -eu; \
+	found=0; \
+	for file in \
+		"$(DUMP_DIR_ABS)"/swmmu_provenance.c.*gimple \
+		"$(DUMP_DIR_ABS)"/swmmu_provenance.c.*ssa \
+		"$(DUMP_DIR_ABS)"/swmmu_provenance.c.*optimized; do \
+		if test -f "$$file"; then \
+			found=1; \
+			echo "===== $$file ====="; \
+			grep -n -A25 -B5 \
+				'unknown_boundary_load' "$$file" || true; \
+		fi; \
+	done; \
+	if test "$$found" -eq 0; then \
+		echo "error: no compiler dump files found" >&2; \
+		exit 1; \
+	fi
 
 $(TEST_ASM): $(TEST_SOURCE) $(PLUGIN)
 	@mkdir -p "$(OUTPUT)"

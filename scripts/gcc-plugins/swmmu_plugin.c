@@ -24,6 +24,14 @@ int plugin_is_GPL_compatible;
 static tree swmmu_load_decl;
 static tree swmmu_store_decl;
 
+
+enum swmmu_pointer_state {
+	SWMMU_POINTER_ORDINARY,
+	SWMMU_POINTER_SWMMU,
+	SWMMU_POINTER_UNKNOWN,
+};
+
+
 static tree
 find_function_decl(const char *name)
 {
@@ -174,6 +182,78 @@ is_swmmu_pointer_type(tree type)
 	       POINTER_TYPE_P(type) &&
 	       lookup_attribute("swmmu_ptr",
 				TYPE_ATTRIBUTES(type)) != NULL_TREE;
+}
+
+static enum swmmu_pointer_state
+swmmu_pointer_state_from_type(tree type)
+{
+	if (is_swmmu_pointer_type(type))
+		return SWMMU_POINTER_SWMMU;
+
+	return SWMMU_POINTER_ORDINARY;
+}
+
+static tree
+swmmu_call_argument_type(gcall *call, unsigned int index)
+{
+	tree fndecl;
+	tree argtypes;
+
+	fndecl = gimple_call_fndecl(call);
+	if (!fndecl)
+		return NULL_TREE;
+
+	argtypes = TYPE_ARG_TYPES(TREE_TYPE(fndecl));
+
+	while (argtypes && argtypes != void_list_node) {
+		if (!index)
+			return TREE_VALUE(argtypes);
+
+		index--;
+		argtypes = TREE_CHAIN(argtypes);
+	}
+
+	return NULL_TREE;
+}
+
+static bool
+swmmu_call_has_unannotated_argument(gcall *call)
+{
+	unsigned int i;
+
+	for (i = 0; i < gimple_call_num_args(call); i++) {
+		tree argument = gimple_call_arg(call, i);
+		tree argument_type = TREE_TYPE(argument);
+		tree formal_type;
+		enum swmmu_pointer_state state;
+
+		if (!POINTER_TYPE_P(argument_type))
+			continue;
+
+		state = swmmu_pointer_state_from_type(argument_type);
+		if (state != SWMMU_POINTER_SWMMU)
+			continue;
+
+		formal_type = swmmu_call_argument_type(call, i);
+		if (!formal_type ||
+		    !is_swmmu_pointer_type(formal_type))
+			return true;
+	}
+
+	return false;
+}
+
+static bool
+check_swmmu_call(gcall *call)
+{
+	if (!swmmu_call_has_unannotated_argument(call))
+		return true;
+
+	error_at(gimple_location(call),
+		 "SWMMU pointer state is unknown at an "
+		 "unannotated function boundary");
+
+	return false;
 }
 
 static bool
@@ -384,6 +464,21 @@ function_has_swmmu_access(function *fn)
 	return false;
 }
 
+static bool
+function_has_swmmu_parameter(function *fn)
+{
+	tree argument;
+
+	for (argument = DECL_ARGUMENTS(fn->decl);
+	     argument;
+	     argument = TREE_CHAIN(argument)) {
+		if (is_swmmu_pointer_type(TREE_TYPE(argument)))
+			return true;
+	}
+
+	return false;
+}
+
 
 namespace {
 
@@ -412,7 +507,8 @@ public:
 
 			bool function_marked = is_swmmu_function(fn);
 			if (!function_marked &&
-			    !function_has_swmmu_access(fn))
+			    !function_has_swmmu_access(fn) &&
+			    !function_has_swmmu_parameter(fn))
 				return 0;
 
 			init_runtime_decls();
@@ -428,6 +524,13 @@ public:
 				for (gimple_stmt_iterator gsi = gsi_start_bb(bb);
 				     !gsi_end_p(gsi);) {
 					gimple generic_stmt = gsi_stmt(gsi);
+
+					if (gimple_code(generic_stmt) == GIMPLE_CALL) {
+						check_swmmu_call(
+							as_a_gcall(generic_stmt));
+						gsi_next(&gsi);
+						continue;
+					}
 
 					if (gimple_code(generic_stmt) != GIMPLE_ASSIGN) {
 						gsi_next(&gsi);
