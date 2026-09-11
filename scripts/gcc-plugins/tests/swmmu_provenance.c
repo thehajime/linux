@@ -1,5 +1,6 @@
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 extern uint64_t nommu_swmmu_load_u64(const void *address, size_t size);
 extern long nommu_swmmu_store_u64(void *address,
@@ -140,3 +141,49 @@ uint64_t typed_direct_phi_load(swmmu_u64_ptr first,
 	selected = condition ? first : second;
 	return *selected;
 }
+
+__attribute__((noinline))
+void ordinary_memcpy(uint8_t *destination,
+		     const uint8_t *source,
+		     size_t size)
+{
+	memcpy(destination, source, size);
+}
+
+__attribute__((noinline))
+void ordinary_memmove(uint8_t *destination,
+		      const uint8_t *source,
+		      size_t size)
+{
+	memmove(destination, source, size);
+}
+
+__attribute__((noinline))
+void ordinary_memset(uint8_t *destination,
+		     int value,
+		     size_t size)
+{
+	memset(destination, value, size);
+}
+
+extern void *nommu_swmmu_memcpy(void *destination,
+				const void *source,
+				size_t size);
+
+static void *(* const __attribute__((used))
+keep_swmmu_memcpy)(void *, const void *, size_t) =
+	nommu_swmmu_memcpy;
+
+extern void *contract_memcpy(void *destination,
+			     const void *source,
+			     size_t size)
+	__attribute__((swmmu_memop("memcpy")));
+
+__attribute__((noinline))
+void swmmu_contract_memcpy(swmmu_u64_ptr destination,
+			   swmmu_u64_ptr source,
+			   size_t size)
+{
+	contract_memcpy(destination, source, size);
+}
+

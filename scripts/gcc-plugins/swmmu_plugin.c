@@ -19,6 +19,7 @@
 
 #define SWMMU_LOAD_NAME  "nommu_swmmu_load_u64"
 #define SWMMU_STORE_NAME "nommu_swmmu_store_u64"
+#define SWMMU_MEMCPY_NAME "nommu_swmmu_memcpy"
 
 #ifdef SWMMU_PLUGIN_DEBUG
 #define debug_print(...) fprintf(__VA_ARGS__)
@@ -30,6 +31,7 @@ int plugin_is_GPL_compatible;
 
 static tree swmmu_load_decl;
 static tree swmmu_store_decl;
+static tree swmmu_memcpy_decl;
 
 
 enum swmmu_pointer_state {
@@ -38,6 +40,12 @@ enum swmmu_pointer_state {
 	SWMMU_POINTER_UNKNOWN,
 };
 
+enum swmmu_memop_kind {
+	SWMMU_MEMOP_NONE,
+	SWMMU_MEMOP_MEMCPY,
+	SWMMU_MEMOP_MEMMOVE,
+	SWMMU_MEMOP_MEMSET,
+};
 
 static tree
 find_function_decl(const char *name)
@@ -66,6 +74,25 @@ protect_runtime_decl(tree decl)
 	DECL_UNINLINABLE(decl) = 1;
 	DECL_PRESERVE_P(decl) = 1;
 	TREE_USED(decl) = 1;
+}
+
+static tree
+swmmu_memop_runtime_decl(enum swmmu_memop_kind kind)
+{
+	switch (kind) {
+	case SWMMU_MEMOP_MEMCPY:
+		if (!swmmu_memcpy_decl)
+			swmmu_memcpy_decl =
+				find_function_decl(SWMMU_MEMCPY_NAME);
+
+		if (swmmu_memcpy_decl)
+			protect_runtime_decl(swmmu_memcpy_decl);
+
+		return swmmu_memcpy_decl;
+
+	default:
+		return NULL_TREE;
+	}
 }
 
 static void
@@ -127,6 +154,46 @@ handle_swmmu_ptr_attribute(tree *node,
 	return NULL_TREE;
 }
 
+static tree
+handle_swmmu_memop_attribute(tree *node,
+			     tree name ATTRIBUTE_UNUSED,
+			     tree args,
+			     int flags ATTRIBUTE_UNUSED,
+			     bool *no_add_attrs)
+{
+	tree value;
+	const char *kind;
+
+	if (TREE_CODE(*node) != FUNCTION_DECL) {
+		*no_add_attrs = true;
+		warning(OPT_Wattributes,
+			"%qE attribute only applies to functions",
+			get_identifier("swmmu_memop"));
+		return NULL_TREE;
+	}
+
+	if (!args || TREE_CODE(TREE_VALUE(args)) != STRING_CST) {
+		*no_add_attrs = true;
+		error_at(DECL_SOURCE_LOCATION(*node),
+			 "swmmu_memop requires a string argument");
+		return NULL_TREE;
+	}
+
+	value = TREE_VALUE(args);
+	kind = TREE_STRING_POINTER(value);
+
+	if (strcmp(kind, "memcpy") &&
+	    strcmp(kind, "memmove") &&
+	    strcmp(kind, "memset")) {
+		*no_add_attrs = true;
+		error_at(DECL_SOURCE_LOCATION(*node),
+			 "unsupported swmmu_memop kind '%s'",
+			 kind);
+	}
+
+	return NULL_TREE;
+}
+
 static void
 register_swmmu_attributes(void *, void *)
 {
@@ -154,8 +221,21 @@ register_swmmu_attributes(void *, void *)
 		.exclude = nullptr,
 	};
 
+	static const attribute_spec swmmu_memop_attribute = {
+		.name = "swmmu_memop",
+		.min_length = 1,
+		.max_length = 1,
+		.decl_required = true,
+		.type_required = false,
+		.function_type_required = false,
+		.affects_type_identity = false,
+		.handler = handle_swmmu_memop_attribute,
+		.exclude = nullptr,
+	};
+
 	register_attribute(&swmmu_attribute);
 	register_attribute(&swmmu_ptr_attribute);
+	register_attribute(&swmmu_memop_attribute);
 }
 
 
@@ -405,6 +485,39 @@ swmmu_record_pointer_assignment(
 	swmmu_pointer_state_put(lhs, state, states);
 }
 
+static enum swmmu_memop_kind
+swmmu_memop_kind_of(tree fndecl)
+{
+	tree attr;
+	tree args;
+	tree value;
+	const char *kind;
+
+	if (!fndecl || TREE_CODE(fndecl) != FUNCTION_DECL)
+		return SWMMU_MEMOP_NONE;
+
+	attr = lookup_attribute("swmmu_memop",
+				DECL_ATTRIBUTES(fndecl));
+	if (!attr)
+		return SWMMU_MEMOP_NONE;
+
+	args = TREE_VALUE(attr);
+	if (!args || TREE_CODE(TREE_VALUE(args)) != STRING_CST)
+		return SWMMU_MEMOP_NONE;
+
+	value = TREE_VALUE(args);
+	kind = TREE_STRING_POINTER(value);
+
+	if (!strcmp(kind, "memcpy"))
+		return SWMMU_MEMOP_MEMCPY;
+	if (!strcmp(kind, "memmove"))
+		return SWMMU_MEMOP_MEMMOVE;
+	if (!strcmp(kind, "memset"))
+		return SWMMU_MEMOP_MEMSET;
+
+	return SWMMU_MEMOP_NONE;
+}
+
 static tree
 swmmu_call_argument_type(gcall *call, unsigned int index)
 {
@@ -456,8 +569,66 @@ swmmu_call_has_unannotated_argument(gcall *call)
 }
 
 static bool
+swmmu_call_has_swmmu_argument(gcall *call)
+{
+	unsigned int i;
+
+	for (i = 0; i < gimple_call_num_args(call); i++) {
+		tree argument = gimple_call_arg(call, i);
+
+		if (!TREE_TYPE(argument) ||
+		    !POINTER_TYPE_P(TREE_TYPE(argument)))
+			continue;
+
+		if (swmmu_pointer_state_from_type(TREE_TYPE(argument)) ==
+		    SWMMU_POINTER_SWMMU)
+			return true;
+	}
+
+	return false;
+}
+
+static bool
+swmmu_lower_memop_call(gcall *call,
+		       enum swmmu_memop_kind kind)
+{
+	tree runtime_decl;
+
+	if (kind != SWMMU_MEMOP_MEMCPY) {
+		error_at(gimple_location(call),
+			 "SWMMU memory operation lowering is not "
+			 "implemented for this operation");
+		return false;
+	}
+
+	runtime_decl = swmmu_memop_runtime_decl(kind);
+	if (!runtime_decl) {
+		error_at(gimple_location(call),
+			 "SWMMU memcpy runtime declaration is missing");
+		return false;
+	}
+
+	/*
+	 * The runtime helper has the same ABI as memcpy():
+	 *
+	 *     void *fn(void *dst, const void *src, size_t size)
+	 */
+	gimple_call_set_fndecl(call, runtime_decl);
+
+	return true;
+}
+
+static bool
 check_swmmu_call(gcall *call)
 {
+	tree fndecl = gimple_call_fndecl(call);
+
+	if (swmmu_memop_kind_of(fndecl) != SWMMU_MEMOP_NONE &&
+		swmmu_call_has_swmmu_argument(call))
+		return swmmu_lower_memop_call(
+			call,
+			swmmu_memop_kind_of(fndecl));
+
 	if (!swmmu_call_has_unannotated_argument(call))
 		return true;
 

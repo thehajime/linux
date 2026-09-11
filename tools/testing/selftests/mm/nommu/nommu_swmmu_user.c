@@ -94,3 +94,21 @@ int nommu_swmmu_free(void *address)
 	return 0;
 }
 
+void *nommu_swmmu_memcpy(void *destination,
+			 const void *source,
+			 size_t size)
+{
+	unsigned char *dst = destination;
+	const unsigned char *src = source;
+
+	while (size--) {
+		uint64_t val;
+		val = nommu_swmmu_load_u64(src, 1);
+		nommu_swmmu_store_u64(dst, 1, val);
+
+		src++;
+		dst++;
+	}
+
+	return destination;
+}

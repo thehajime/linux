@@ -27,8 +27,8 @@ UNKNOWN_LOG := $(DUMP_DIR_ABS)/swmmu_provenance_unknown.log
 UNKNOWN_ASM := $(DUMP_DIR_ABS)/swmmu_provenance_unknown.s
 
 
-.PHONY: all test compile dump dump-unknown-boundary \
-	test-negative test-negative-* clean
+.PHONY: all test compile dump dump-unknown-boundary clean
+.PHONY: $(filter test-negative%,$(MAKECMDGOALS))
 
 all: test
 
@@ -71,6 +71,9 @@ test: $(TEST_ASM)
 		echo "ok: $$fn remains native"; \
 	}; \
 	check_native ordinary_load; \
+	check_native ordinary_memcpy; \
+	check_native ordinary_memmove; \
+	check_native ordinary_memset; \
 	check_call function_marked_load nommu_swmmu_load_u64; \
 	check_call function_marked_store nommu_swmmu_store_u64; \
 	check_call typed_load nommu_swmmu_load_u64; \
@@ -85,6 +88,7 @@ test: $(TEST_ASM)
 	check_call typed_pointer_array_load nommu_swmmu_load_u64; \
 	check_call typed_phi_load nommu_swmmu_load_u64; \
 	check_call typed_direct_phi_load nommu_swmmu_load_u64; \
+	check_call swmmu_contract_memcpy nommu_swmmu_memcpy; \
 	check_call typed_parameter_caller typed_load;
 
 test-negative:
@@ -150,6 +154,101 @@ test-negative-mixedphi:
 	fi
 	@echo "ok: unknown SWMMU mixed phi is diagnosed"
 
+test-negative-memops:
+	@rm -f "$(UNKNOWN_LOG)" "$(UNKNOWN_ASM)"
+	@mkdir -p "$(DUMP_DIR_ABS)"
+	@if $(CC) $(CFLAGS) -fno-inline -fno-lto \
+		-DSWMMU_TEST_MEMOPS \
+		-fplugin="$(PLUGIN_ABS)" \
+		-S -c "$(UNKNOWN_SOURCE_ABS)" \
+		-o "$(UNKNOWN_ASM)" \
+		>"$(UNKNOWN_LOG)" 2>&1; then \
+		echo "error: SWMMU memory-operation test unexpectedly compiled" \
+			>&2; \
+		cat "$(UNKNOWN_LOG)" >&2; \
+		exit 1; \
+	fi
+	@if ! grep -q \
+		"SWMMU pointer state is unknown at an unannotated function boundary" \
+		"$(UNKNOWN_LOG)"; then \
+		echo "error: expected memory-operation diagnostic was not found" \
+			>&2; \
+		cat "$(UNKNOWN_LOG)" >&2; \
+		exit 1; \
+	fi
+	@echo "ok: unannotated SWMMU memory operations are diagnosed"
+
+test-negative-memop-contract:
+	@rm -f "$(UNKNOWN_LOG)" "$(UNKNOWN_ASM)"
+	@mkdir -p "$(DUMP_DIR_ABS)"
+	@if $(CC) $(CFLAGS) -fno-inline -fno-lto \
+		-DSWMMU_TEST_MEMOP_CONTRACT \
+		-fplugin="$(PLUGIN_ABS)" \
+		-S -c "$(UNKNOWN_SOURCE_ABS)" \
+		-o "$(UNKNOWN_ASM)" \
+		>"$(UNKNOWN_LOG)" 2>&1; then \
+		echo "error: combined memory-operation contract unexpectedly compiled" \
+			>&2; \
+		cat "$(UNKNOWN_LOG)" >&2; \
+		exit 1; \
+	fi
+	@if ! grep -q \
+		"SWMMU memory operation lowering is not implemented" \
+		"$(UNKNOWN_LOG)"; then \
+		echo "error: expected memmove/memset diagnostic was not found" \
+			>&2; \
+		cat "$(UNKNOWN_LOG)" >&2; \
+		exit 1; \
+	fi
+	@echo "ok: unsupported SWMMU memory operations are diagnosed"
+
+test-negative-memmove-contract:
+	@rm -f "$(UNKNOWN_LOG)" "$(UNKNOWN_ASM)"
+	@mkdir -p "$(DUMP_DIR_ABS)"
+	@if $(CC) $(CFLAGS) -fno-inline -fno-lto \
+		-DSWMMU_TEST_MEMMOVE_CONTRACT \
+		-fplugin="$(PLUGIN_ABS)" \
+		-S -c "$(UNKNOWN_SOURCE_ABS)" \
+		-o "$(UNKNOWN_ASM)" \
+		>"$(UNKNOWN_LOG)" 2>&1; then \
+		echo "error: annotated memmove test unexpectedly compiled" \
+			>&2; \
+		cat "$(UNKNOWN_LOG)" >&2; \
+		exit 1; \
+	fi
+	@if ! grep -q \
+		"SWMMU memory operation lowering is not implemented" \
+		"$(UNKNOWN_LOG)"; then \
+		echo "error: expected memmove diagnostic was not found" \
+			>&2; \
+		cat "$(UNKNOWN_LOG)" >&2; \
+		exit 1; \
+	fi
+	@echo "ok: annotated SWMMU memmove requires lowering"
+
+test-negative-memset-contract:
+	@rm -f "$(UNKNOWN_LOG)" "$(UNKNOWN_ASM)"
+	@mkdir -p "$(DUMP_DIR_ABS)"
+	@if $(CC) $(CFLAGS) -fno-inline -fno-lto \
+		-DSWMMU_TEST_MEMSET_CONTRACT \
+		-fplugin="$(PLUGIN_ABS)" \
+		-S -c "$(UNKNOWN_SOURCE_ABS)" \
+		-o "$(UNKNOWN_ASM)" \
+		>"$(UNKNOWN_LOG)" 2>&1; then \
+		echo "error: annotated memset test unexpectedly compiled" \
+			>&2; \
+		cat "$(UNKNOWN_LOG)" >&2; \
+		exit 1; \
+	fi
+	@if ! grep -q \
+		"SWMMU memory operation lowering is not implemented" \
+		"$(UNKNOWN_LOG)"; then \
+		echo "error: expected memset diagnostic was not found" \
+			>&2; \
+		cat "$(UNKNOWN_LOG)" >&2; \
+		exit 1; \
+	fi
+	@echo "ok: annotated SWMMU memset requires lowering"
 
 compile: $(TEST_ASM)
 

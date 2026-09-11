@@ -25,4 +25,8 @@ int nommu_swmmu_load_u64_checked(const void *address,
 int nommu_swmmu_store_u64_checked(void *address,
 				size_t size,
 				uint64_t value);
+
+void *nommu_swmmu_memcpy(void *destination,
+			 const void *source,
+			 size_t size);
 #endif

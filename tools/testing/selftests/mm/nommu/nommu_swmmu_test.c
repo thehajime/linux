@@ -59,6 +59,26 @@ static long (* const __attribute__((used))
 keep_swmmu_store)(void *, size_t, uint64_t) =
 	nommu_swmmu_store_u64;
 
+typedef unsigned char * __attribute__((swmmu_ptr)) swmmu_byte_ptr;
+
+extern void *memcpy(void *destination,
+		    const void *source,
+		    size_t size)
+	__attribute__((swmmu_memop("memcpy")));
+
+static void *(* const __attribute__((used))
+keep_swmmu_memcpy)(void *, const void *, size_t) =
+	nommu_swmmu_memcpy;
+
+
+static __attribute__((noinline))
+void swmmu_memcpy_typed(swmmu_byte_ptr destination,
+			swmmu_byte_ptr source,
+			size_t size)
+{
+	memcpy(destination, source, size);
+}
+
 struct swmmu_test_object {
 	uint64_t value;
 };
@@ -2953,6 +2973,96 @@ static int test_siglongjmp_paths(void)
 	return KSFT_PASS;
 }
 
+static int test_standard_mmap_memcpy(void)
+{
+	size_t ps = getpagesize();
+	size_t size = ps * 2 + 17;
+	void *source;
+	void *destination;
+	size_t i;
+	uint64_t value;
+	int ret;
+
+	if (prctl(PR_SET_SWMMU, PR_SWMMU_ON, 0, 0, 0) < 0) {
+		SWMMU_TEST_FAIL("failed to enable SWMMU: %s\n",
+				strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	source = mmap(NULL, size,
+		      PROT_READ | PROT_WRITE,
+		      MAP_PRIVATE | MAP_ANONYMOUS,
+		      -1, 0);
+	if (source == MAP_FAILED) {
+		SWMMU_TEST_FAIL("source mmap failed: %s\n",
+				strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	destination = mmap(NULL, size,
+			   PROT_READ | PROT_WRITE,
+			   MAP_PRIVATE | MAP_ANONYMOUS,
+			   -1, 0);
+	if (destination == MAP_FAILED) {
+		SWMMU_TEST_FAIL("destination mmap failed: %s\n",
+				strerror(errno));
+		munmap(source, size);
+		return KSFT_FAIL;
+	}
+
+	for (i = 0; i < size; i++) {
+		ret = nommu_swmmu_store_u64_checked(
+			(unsigned char *)source + i,
+			1,
+			(i * 37 + 11) & 0xff);
+		if (ret) {
+			SWMMU_TEST_FAIL(
+				"source initialization failed at %zu: %s\n",
+				i, strerror(-ret));
+			goto out_unmap;
+		}
+	}
+
+	swmmu_memcpy_typed((swmmu_byte_ptr)destination,
+			   (swmmu_byte_ptr)source,
+			   size);
+
+	for (i = 0; i < size; i++) {
+		ret = nommu_swmmu_load_u64_checked(
+			(unsigned char *)destination + i,
+			1,
+			&value);
+		if (ret) {
+			SWMMU_TEST_FAIL(
+				"destination load failed at %zu: %s\n",
+				i, strerror(-ret));
+			goto out_unmap;
+		}
+
+		if (value != ((i * 37 + 11) & 0xff)) {
+			SWMMU_TEST_FAIL(
+				"memcpy mismatch at %zu: got %llu\n",
+				i, (unsigned long long)value);
+			goto out_unmap;
+		}
+	}
+
+	if (munmap(source, size) < 0 ||
+	    munmap(destination, size) < 0) {
+		SWMMU_TEST_FAIL("munmap failed: %s\n",
+				strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	SWMMU_TEST_PASS(
+		"SWMMU memcpy preserves data across multiple pages\n");
+	return KSFT_PASS;
+
+out_unmap:
+	munmap(source, size);
+	munmap(destination, size);
+	return KSFT_FAIL;
+}
 
 typedef int (*swmmu_test_fn)(void);
 static const swmmu_test_fn testcases[] = {
@@ -2991,6 +3101,7 @@ static const swmmu_test_fn testcases[] = {
 	test_signal_access_faults,
 	test_signal_restart,
 	test_siglongjmp_paths,
+	test_standard_mmap_memcpy,
 	/*
 	 * Keep cleanup tests last.
 	 */
