@@ -28,7 +28,7 @@ UNKNOWN_ASM := $(DUMP_DIR_ABS)/swmmu_provenance_unknown.s
 
 
 .PHONY: all test compile dump dump-unknown-boundary \
-	test-negative clean
+	test-negative test-negative-return clean
 
 all: test
 
@@ -91,6 +91,7 @@ test-negative:
 	@rm -f "$(UNKNOWN_LOG)" "$(UNKNOWN_ASM)"
 	@mkdir -p "$(DUMP_DIR_ABS)"
 	@if $(CC) $(CFLAGS) -fno-inline -fno-lto \
+		-DSWMMU_TEST_UNKNOWN_BOUNDARY \
 		-fplugin="$(PLUGIN_ABS)" \
 		-S -c "$(UNKNOWN_SOURCE_ABS)" \
 		-o "$(UNKNOWN_ASM)" \
@@ -99,12 +100,35 @@ test-negative:
 		cat "$(UNKNOWN_LOG)" >&2; \
 		exit 1; \
 	fi
-	@if ! grep -q "SWMMU pointer state is unknown" "$(UNKNOWN_LOG)"; then \
-		echo "error: expected provenance diagnostic was not found" >&2; \
+	@if ! grep -q "SWMMU pointer state is unknown" \
+		"$(UNKNOWN_LOG)"; then \
+		echo "error: expected boundary diagnostic was not found" >&2; \
 		cat "$(UNKNOWN_LOG)" >&2; \
 		exit 1; \
 	fi
-	@echo "ok: unknown SWMMU provenance is diagnosed"
+	@echo "ok: unknown SWMMU boundary is diagnosed"
+
+test-negative-return:
+	@rm -f "$(UNKNOWN_LOG)" "$(UNKNOWN_ASM)"
+	@mkdir -p "$(DUMP_DIR_ABS)"
+	@if $(CC) $(CFLAGS) -fno-inline -fno-lto \
+		-DSWMMU_TEST_UNKNOWN_RETURN \
+		-fplugin="$(PLUGIN_ABS)" \
+		-S -c "$(UNKNOWN_SOURCE_ABS)" \
+		-o "$(UNKNOWN_ASM)" \
+		>"$(UNKNOWN_LOG)" 2>&1; then \
+		echo "error: unknown-return test unexpectedly compiled" >&2; \
+		cat "$(UNKNOWN_LOG)" >&2; \
+		exit 1; \
+	fi
+	@if ! grep -q "SWMMU pointer state is unknown" \
+		"$(UNKNOWN_LOG)"; then \
+		echo "error: expected return diagnostic was not found" >&2; \
+		cat "$(UNKNOWN_LOG)" >&2; \
+		exit 1; \
+	fi
+	@echo "ok: unknown SWMMU return is diagnosed"
+
 
 compile: $(TEST_ASM)
 

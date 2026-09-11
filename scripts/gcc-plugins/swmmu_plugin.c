@@ -13,6 +13,7 @@
 #include "gimplify-me.h"
 #include "gimple-pretty-print.h"
 #include "tree-cfg.h"
+#include "hash-map.h"
 
 #include <cstring>
 
@@ -190,6 +191,30 @@ is_swmmu_pointer_type(tree type)
 				TYPE_ATTRIBUTES(type)) != NULL_TREE;
 }
 
+static bool
+is_swmmu_provenance_lvalue(tree expr)
+{
+	tree address;
+
+	if (!is_swmmu_lvalue(expr))
+		return false;
+
+	/*
+	 * For the initial provenance step, inspect the pointer used
+	 * by the direct memory reference. This covers *p and aliases
+	 * such as *alias.
+	 */
+	switch (TREE_CODE(expr)) {
+	case MEM_REF:
+	case TARGET_MEM_REF:
+	case INDIRECT_REF:
+		address = TREE_OPERAND(expr, 0);
+		return is_swmmu_pointer_type(TREE_TYPE(address));
+	default:
+		return false;
+	}
+}
+
 static enum swmmu_pointer_state
 swmmu_pointer_state_from_type(tree type)
 {
@@ -197,6 +222,187 @@ swmmu_pointer_state_from_type(tree type)
 		return SWMMU_POINTER_SWMMU;
 
 	return SWMMU_POINTER_ORDINARY;
+}
+
+static enum swmmu_pointer_state
+swmmu_pointer_state_join(enum swmmu_pointer_state first,
+			 enum swmmu_pointer_state second)
+{
+	if (first == second)
+		return first;
+
+	if (first == SWMMU_POINTER_UNKNOWN ||
+	    second == SWMMU_POINTER_UNKNOWN)
+		return SWMMU_POINTER_UNKNOWN;
+
+	return SWMMU_POINTER_UNKNOWN;
+}
+
+static enum swmmu_pointer_state
+swmmu_pointer_state_of(
+	tree expr,
+	hash_map<tree, enum swmmu_pointer_state> &states)
+{
+	enum swmmu_pointer_state *state;
+	tree var;
+
+	if (!expr)
+		return SWMMU_POINTER_ORDINARY;
+
+	/*
+	 * The expression may be a VAR_DECL or an SSA_NAME depending
+	 * on the pass stage. Check the exact tree first.
+	 */
+	state = states.get(expr);
+	if (state)
+		return *state;
+
+	if (TREE_CODE(expr) == SSA_NAME) {
+		var = SSA_NAME_VAR(expr);
+		if (var) {
+			state = states.get(var);
+			if (state)
+				return *state;
+		}
+	}
+
+	if (!TREE_TYPE(expr) ||
+	    !POINTER_TYPE_P(TREE_TYPE(expr)))
+		return SWMMU_POINTER_ORDINARY;
+
+	if (is_swmmu_pointer_type(TREE_TYPE(expr)))
+		return SWMMU_POINTER_SWMMU;
+
+	switch (TREE_CODE(expr)) {
+	case POINTER_PLUS_EXPR:
+	case PLUS_EXPR:
+	case MINUS_EXPR:
+	case NOP_EXPR:
+	case CONVERT_EXPR:
+	case VIEW_CONVERT_EXPR:
+		return swmmu_pointer_state_of(TREE_OPERAND(expr, 0),
+					      states);
+
+	case COND_EXPR:
+		return swmmu_pointer_state_join(
+			swmmu_pointer_state_of(TREE_OPERAND(expr, 1),
+					       states),
+			swmmu_pointer_state_of(TREE_OPERAND(expr, 2),
+					       states));
+
+	default:
+		return SWMMU_POINTER_ORDINARY;
+	}
+}
+
+static void
+swmmu_pointer_state_put(
+	tree expr,
+	enum swmmu_pointer_state state,
+	hash_map<tree, enum swmmu_pointer_state> &states)
+{
+	tree var;
+
+	states.put(expr, state);
+
+	if (TREE_CODE(expr) != SSA_NAME)
+		return;
+
+	var = SSA_NAME_VAR(expr);
+	if (var)
+		states.put(var, state);
+}
+
+static enum swmmu_pointer_state
+swmmu_lvalue_state(
+	tree expr,
+	hash_map<tree, enum swmmu_pointer_state> &states)
+{
+	tree address;
+
+	if (!is_swmmu_lvalue(expr))
+		return SWMMU_POINTER_ORDINARY;
+
+	switch (TREE_CODE(expr)) {
+	case MEM_REF:
+	case TARGET_MEM_REF:
+	case INDIRECT_REF:
+		address = TREE_OPERAND(expr, 0);
+		return swmmu_pointer_state_of(address, states);
+
+	default:
+		if (is_swmmu_provenance_lvalue(expr))
+			return SWMMU_POINTER_SWMMU;
+
+		return SWMMU_POINTER_ORDINARY;
+	}
+}
+
+static void
+swmmu_seed_pointer_states(
+	function *fn,
+	bool function_marked,
+	hash_map<tree, enum swmmu_pointer_state> &states)
+{
+	tree argument;
+
+	for (argument = DECL_ARGUMENTS(fn->decl);
+	     argument;
+	     argument = TREE_CHAIN(argument)) {
+		tree type = TREE_TYPE(argument);
+		enum swmmu_pointer_state state;
+
+		if (!type || !POINTER_TYPE_P(type))
+			continue;
+
+		state = function_marked ?
+			SWMMU_POINTER_SWMMU :
+			swmmu_pointer_state_from_type(type);
+
+		swmmu_pointer_state_put(argument, state, states);
+	}
+}
+
+static void
+swmmu_record_pointer_call(
+	gcall *call,
+	bool swmmu_context,
+	hash_map<tree, enum swmmu_pointer_state> &states)
+{
+	tree lhs;
+	enum swmmu_pointer_state state;
+
+	lhs = gimple_call_lhs(call);
+	if (!lhs || !TREE_TYPE(lhs) ||
+	    !POINTER_TYPE_P(TREE_TYPE(lhs)))
+		return;
+
+	state = swmmu_pointer_state_from_type(TREE_TYPE(lhs));
+
+	if (state == SWMMU_POINTER_ORDINARY && swmmu_context)
+		state = SWMMU_POINTER_UNKNOWN;
+
+	swmmu_pointer_state_put(lhs, state, states);
+}
+
+static void
+swmmu_record_pointer_assignment(
+	gassign *stmt,
+	hash_map<tree, enum swmmu_pointer_state> &states)
+{
+	tree lhs;
+	tree rhs;
+	enum swmmu_pointer_state state;
+
+	lhs = gimple_assign_lhs(stmt);
+	if (!lhs || !TREE_TYPE(lhs) ||
+	    !POINTER_TYPE_P(TREE_TYPE(lhs)))
+		return;
+
+	rhs = gimple_assign_rhs1(stmt);
+	state = swmmu_pointer_state_of(rhs, states);
+
+	swmmu_pointer_state_put(lhs, state, states);
 }
 
 static tree
@@ -260,30 +466,6 @@ check_swmmu_call(gcall *call)
 		 "unannotated function boundary");
 
 	return false;
-}
-
-static bool
-is_swmmu_provenance_lvalue(tree expr)
-{
-	tree address;
-
-	if (!is_swmmu_lvalue(expr))
-		return false;
-
-	/*
-	 * For the initial provenance step, inspect the pointer used
-	 * by the direct memory reference. This covers *p and aliases
-	 * such as *alias.
-	 */
-	switch (TREE_CODE(expr)) {
-	case MEM_REF:
-	case TARGET_MEM_REF:
-	case INDIRECT_REF:
-		address = TREE_OPERAND(expr, 0);
-		return is_swmmu_pointer_type(TREE_TYPE(address));
-	default:
-		return false;
-	}
 }
 
 static tree
@@ -478,7 +660,12 @@ function_has_swmmu_parameter(function *fn)
 	for (argument = DECL_ARGUMENTS(fn->decl);
 	     argument;
 	     argument = TREE_CHAIN(argument)) {
-		if (is_swmmu_pointer_type(TREE_TYPE(argument)))
+		tree type = DECL_ARG_TYPE(argument);
+
+		if (!type)
+			type = TREE_TYPE(argument);
+
+		if (is_swmmu_pointer_type(type))
 			return true;
 	}
 
@@ -517,6 +704,14 @@ public:
 			    !function_has_swmmu_parameter(fn))
 				return 0;
 
+			bool swmmu_context;
+			hash_map<tree, enum swmmu_pointer_state> states;
+
+			swmmu_context = function_marked ||
+				function_has_swmmu_parameter(fn);
+
+			swmmu_seed_pointer_states(fn, function_marked, states);
+
 			init_runtime_decls();
 
 			if (!swmmu_load_decl || !swmmu_store_decl) {
@@ -532,8 +727,11 @@ public:
 					gimple generic_stmt = gsi_stmt(gsi);
 
 					if (gimple_code(generic_stmt) == GIMPLE_CALL) {
-						check_swmmu_call(
-							as_a_gcall(generic_stmt));
+						gcall *call = as_a_gcall(generic_stmt);
+
+						check_swmmu_call(call);
+						swmmu_record_pointer_call(call, swmmu_context, states);
+
 						gsi_next(&gsi);
 						continue;
 					}
@@ -546,15 +744,29 @@ public:
 					gassign *stmt = as_a_gassign(generic_stmt);
 					tree lhs = gimple_assign_lhs(stmt);
 					tree rhs = gimple_assign_rhs1(stmt);
+					enum swmmu_pointer_state rhs_state;
+					enum swmmu_pointer_state lhs_state;
 
-					if (function_marked ||
-					    is_swmmu_provenance_lvalue(rhs))
+					rhs_state = swmmu_lvalue_state(rhs, states);
+					lhs_state = swmmu_lvalue_state(lhs, states);
+
+					if (rhs_state == SWMMU_POINTER_UNKNOWN) {
+						error_at(gimple_location(stmt),
+							"SWMMU pointer state is unknown at dereference");
+					} else if (function_marked ||
+						rhs_state == SWMMU_POINTER_SWMMU) {
 						rewrite_load(&gsi, stmt);
+					}
 
-					if (function_marked ||
-					    is_swmmu_provenance_lvalue(lhs))
+					if (lhs_state == SWMMU_POINTER_UNKNOWN) {
+						error_at(gimple_location(stmt),
+							"SWMMU pointer state is unknown at dereference");
+					} else if (function_marked ||
+						lhs_state == SWMMU_POINTER_SWMMU) {
 						rewrite_store(&gsi, stmt);
+					}
 
+					swmmu_record_pointer_assignment(stmt, states);
 					gsi_next(&gsi);
 				}
 			}
