@@ -19,6 +19,12 @@
 #define SWMMU_LOAD_NAME  "nommu_swmmu_load_u64"
 #define SWMMU_STORE_NAME "nommu_swmmu_store_u64"
 
+#ifdef SWMMU_PLUGIN_DEBUG
+#define debug_print(...) fprintf(__VA_ARGS__)
+#else
+#define debug_print(...)
+#endif
+
 int plugin_is_GPL_compatible;
 
 static tree swmmu_load_decl;
@@ -83,7 +89,7 @@ init_runtime_decls(void)
 		return;
 	}
 
-	fprintf(stderr, "[swmmu] found runtime declarations\n");
+	debug_print(stderr, "[swmmu] found runtime declarations\n");
 }
 
 static tree
@@ -332,7 +338,7 @@ rewrite_load(gimple_stmt_iterator *gsi, gassign *stmt)
 	tree type = TREE_TYPE(mem);
 	unsigned HOST_WIDE_INT size;
 
-	fprintf(stderr, "[swmmu] rewriting load\n");
+	debug_print(stderr, "[swmmu] rewriting load\n");
 	if (!is_swmmu_lvalue(mem))
 		return false;
 
@@ -360,7 +366,7 @@ rewrite_load(gimple_stmt_iterator *gsi, gassign *stmt)
 	gimple_set_location(call, gimple_location(stmt));
 	gsi_insert_before(gsi, call, GSI_SAME_STMT);
 
-	fprintf(stderr, "[swmmu] generated load: \n");
+	debug_print(stderr, "[swmmu] generated load: \n");
 
 	tree converted = fold_convert(type, loaded);
 	converted = force_swmmu_operand(gsi,
@@ -388,7 +394,7 @@ rewrite_store(gimple_stmt_iterator *gsi, gassign *stmt)
 	unsigned HOST_WIDE_INT access_size;
 	unsigned HOST_WIDE_INT value_size;
 
-	fprintf(stderr, "[swmmu] rewriting store\n");
+	debug_print(stderr, "[swmmu] rewriting store\n");
 	if (!is_swmmu_lvalue(mem))
 		return false;
 
@@ -431,7 +437,7 @@ rewrite_store(gimple_stmt_iterator *gsi, gassign *stmt)
 	gimple_set_location(call, gimple_location(stmt));
 	gsi_replace(gsi, call, true);
 
-	fprintf(stderr, "[swmmu] generated store: \n");
+	debug_print(stderr, "[swmmu] generated store: \n");
 
 	return true;
 }
@@ -514,7 +520,7 @@ public:
 			init_runtime_decls();
 
 			if (!swmmu_load_decl || !swmmu_store_decl) {
-				fprintf(stderr, "[swmmu] runtime declarations unavailable\n");
+				debug_print(stderr, "[swmmu] runtime declarations unavailable\n");
 				return 0;
 			}
 
@@ -553,10 +559,10 @@ public:
 				}
 			}
 
-			fprintf(stderr, "[swmmu] leave %s\n", name);
+			debug_print(stderr, "[swmmu] leave %s\n", name);
 			bool invalid = verify_gimple_in_cfg(cfun, true, true);
 
-			fprintf(stderr,
+			debug_print(stderr,
 				"[swmmu] GIMPLE verification for %s: %s\n",
 				name,
 				invalid ? "FAILED" : "OK");
