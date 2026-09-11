@@ -166,24 +166,62 @@ void ordinary_memset(uint8_t *destination,
 	memset(destination, value, size);
 }
 
-extern void *nommu_swmmu_memcpy(void *destination,
-				const void *source,
+extern void *nommu_swmmu_memcpy(void *dst,
+				const void *src,
+				size_t size);
+extern void *nommu_swmmu_memmove(void *dst,
+				const void *src,
+				size_t size);
+extern void *nommu_swmmu_memset(void *dst,
+				int b,
 				size_t size);
 
 static void *(* const __attribute__((used))
 keep_swmmu_memcpy)(void *, const void *, size_t) =
 	nommu_swmmu_memcpy;
+static void *(* const __attribute__((used))
+keep_swmmu_memmove)(void *, const void *, size_t) =
+	nommu_swmmu_memmove;
+static void *(* const __attribute__((used))
+keep_swmmu_memset)(void *, int, size_t) =
+	nommu_swmmu_memset;
 
-extern void *contract_memcpy(void *destination,
-			     const void *source,
+
+extern void *contract_memcpy(void *dst,
+			     const void *src,
 			     size_t size)
 	__attribute__((swmmu_memop("memcpy")));
 
 __attribute__((noinline))
-void swmmu_contract_memcpy(swmmu_u64_ptr destination,
-			   swmmu_u64_ptr source,
+void swmmu_contract_memcpy(swmmu_u64_ptr dst,
+			   swmmu_u64_ptr src,
 			   size_t size)
 {
-	contract_memcpy(destination, source, size);
+	contract_memcpy(dst, src, size);
 }
 
+extern void *contract_memmove(void *dst,
+			     const void *src,
+			     size_t size)
+	__attribute__((swmmu_memop("memmove")));
+
+__attribute__((noinline))
+void swmmu_contract_memmove(swmmu_u64_ptr dst,
+			   swmmu_u64_ptr src,
+			   size_t size)
+{
+	contract_memmove(dst, src, size);
+}
+
+extern void *contract_memset(void *dst,
+			     int b,
+			     size_t size)
+	__attribute__((swmmu_memop("memset")));
+
+__attribute__((noinline))
+void swmmu_contract_memset(swmmu_u64_ptr dst,
+			   int b,
+			   size_t size)
+{
+	contract_memset(dst, b, size);
+}

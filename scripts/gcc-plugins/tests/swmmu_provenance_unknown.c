@@ -86,62 +86,6 @@ void swmmu_memset(swmmu_u64_ptr destination,
 	memset(destination, value, size);
 }
 
-#elif defined(SWMMU_TEST_MEMOP_CONTRACT)
-
-extern void *contract_memcpy(void *destination,
-			const void *source,
-			size_t size)
-	__attribute__((swmmu_memop("memcpy")));
-extern void *contract_memmove(void *destination,
-			const void *source,
-			size_t size)
-	__attribute__((swmmu_memop("memmove")));
-
-extern void *contract_memset(void *destination,
-			int value,
-			size_t size)
-	__attribute__((swmmu_memop("memset")));
-
-__attribute__((noinline))
-void swmmu_contract_memops(swmmu_u64_ptr destination,
-			swmmu_u64_ptr source,
-			size_t size)
-{
-	contract_memcpy(destination, source, size);
-	contract_memmove(destination, source, size);
-	contract_memset(destination, 0, size);
-}
-
-#elif defined(SWMMU_TEST_MEMMOVE_CONTRACT)
-
-extern void *contract_memmove(void *destination,
-			      const void *source,
-			      size_t size)
-	__attribute__((swmmu_memop("memmove")));
-
-__attribute__((noinline))
-void swmmu_contract_memmove(swmmu_u64_ptr destination,
-			    swmmu_u64_ptr source,
-			    size_t size)
-{
-	contract_memmove(destination, source, size);
-}
-
-#elif defined(SWMMU_TEST_MEMSET_CONTRACT)
-
-extern void *contract_memset(void *destination,
-			     int value,
-			     size_t size)
-	__attribute__((swmmu_memop("memset")));
-
-__attribute__((noinline))
-void swmmu_contract_memset(swmmu_u64_ptr destination,
-			   int value,
-			   size_t size)
-{
-	contract_memset(destination, value, size);
-}
-
 #else
 
 #error "select an SWMMU negative test"

@@ -79,6 +79,85 @@ void swmmu_memcpy_typed(swmmu_byte_ptr destination,
 	memcpy(destination, source, size);
 }
 
+extern void *memmove(void *dst,
+		    const void *src,
+		    size_t size)
+	__attribute__((swmmu_memop("memmove")));
+
+static void *(* const __attribute__((used))
+keep_swmmu_memmove)(void *, const void *, size_t) =
+	nommu_swmmu_memmove;
+
+static __attribute__((noinline))
+void swmmu_memmove_typed(swmmu_byte_ptr dst, swmmu_byte_ptr src,
+			size_t size)
+{
+	memmove(dst, src, size);
+}
+
+
+extern void *memset(void *dst, int b, size_t size)
+	__attribute__((swmmu_memop("memset")));
+
+static void *(* const __attribute__((used))
+keep_swmmu_memset)(void *, int, size_t) =
+	nommu_swmmu_memset;
+
+static __attribute__((noinline))
+void swmmu_memset_typed(swmmu_byte_ptr dst,
+			int b,
+			size_t size)
+{
+	memset(dst, b, size);
+}
+
+static int swmmu_write_bytes(void *address,
+			     const unsigned char *data,
+			     size_t size)
+{
+	size_t i;
+	int ret;
+
+	for (i = 0; i < size; i++) {
+		ret = nommu_swmmu_store_u64_checked(
+			(unsigned char *)address + i,
+			1,
+			data[i]);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
+static int swmmu_expect_bytes(const void *address,
+			      const unsigned char *expected,
+			      size_t size,
+			      size_t *bad_index)
+{
+	size_t i;
+	uint64_t value;
+	int ret;
+
+	for (i = 0; i < size; i++) {
+		ret = nommu_swmmu_load_u64_checked(
+			(unsigned char *)address + i,
+			1,
+			&value);
+		if (ret)
+			return ret;
+
+		if (value != expected[i]) {
+			if (bad_index)
+				*bad_index = i;
+			return -EINVAL;
+		}
+	}
+
+	return 0;
+}
+
+
 struct swmmu_test_object {
 	uint64_t value;
 };
@@ -3064,6 +3143,188 @@ out_unmap:
 	return KSFT_FAIL;
 }
 
+static int test_standard_mmap_memmove(void)
+{
+	size_t ps = getpagesize();
+	size_t size = ps * 2 + 64;
+	size_t offset = 32;
+	unsigned char *reference;
+	unsigned char *expected;
+	void *mapping = MAP_FAILED;
+	size_t bad_index;
+	int ret;
+
+	if (prctl(PR_SET_SWMMU, PR_SWMMU_OFF, 0, 0, 0) < 0) {
+		SWMMU_TEST_FAIL("failed to disable SWMMU: %s\n",
+				strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	reference = malloc(size);
+	expected = malloc(size);
+	if (!reference || !expected) {
+		SWMMU_TEST_FAIL("reference allocation failed\n");
+		free(reference);
+		free(expected);
+		return KSFT_FAIL;
+	}
+
+	for (size_t i = 0; i < size; i++)
+		reference[i] = (unsigned char)(i * 37 + 11);
+
+	if (prctl(PR_SET_SWMMU, PR_SWMMU_ON, 0, 0, 0) < 0) {
+		SWMMU_TEST_FAIL("failed to enable SWMMU: %s\n",
+				strerror(errno));
+		free(reference);
+		free(expected);
+		return KSFT_FAIL;
+	}
+
+	mapping = mmap(NULL, size,
+		       PROT_READ | PROT_WRITE,
+		       MAP_PRIVATE | MAP_ANONYMOUS,
+		       -1, 0);
+	if (mapping == MAP_FAILED) {
+		SWMMU_TEST_FAIL("mmap failed: %s\n",
+				strerror(errno));
+		ret = KSFT_FAIL;
+		goto out_free;
+	}
+
+	ret = swmmu_write_bytes(mapping, reference, size);
+	if (ret) {
+		SWMMU_TEST_FAIL("initialization failed: %s\n",
+				strerror(-ret));
+		ret = KSFT_FAIL;
+		goto out_unmap;
+	}
+
+	/*
+	 * Forward copy: destination is above source and overlaps it.
+	 */
+	memcpy(expected, reference, size);
+	memmove(expected + offset, expected, size - offset);
+
+	swmmu_memmove_typed((swmmu_byte_ptr)mapping + offset,
+			    (swmmu_byte_ptr)mapping,
+			    size - offset);
+
+	ret = swmmu_expect_bytes(mapping, expected, size, &bad_index);
+	if (ret) {
+		SWMMU_TEST_FAIL(
+			"forward memmove mismatch at %zu: %s\n",
+			bad_index, strerror(-ret));
+		ret = KSFT_FAIL;
+		goto out_unmap;
+	}
+
+	/*
+	 * Backward copy: destination is below source and overlaps it.
+	 */
+	ret = swmmu_write_bytes(mapping, reference, size);
+	if (ret) {
+		SWMMU_TEST_FAIL("reset failed: %s\n",
+				strerror(-ret));
+		ret = KSFT_FAIL;
+		goto out_unmap;
+	}
+
+	memcpy(expected, reference, size);
+	memmove(expected, expected + offset, size - offset);
+
+	swmmu_memmove_typed((swmmu_byte_ptr)mapping,
+			    (swmmu_byte_ptr)mapping + offset,
+			    size - offset);
+
+	ret = swmmu_expect_bytes(mapping, expected, size, &bad_index);
+	if (ret) {
+		SWMMU_TEST_FAIL(
+			"backward memmove mismatch at %zu: %s\n",
+			bad_index, strerror(-ret));
+		ret = KSFT_FAIL;
+		goto out_unmap;
+	}
+
+	SWMMU_TEST_PASS(
+		"SWMMU memmove handles overlapping forward and backward copies\n");
+	ret = KSFT_PASS;
+
+out_unmap:
+	munmap(mapping, size);
+out_free:
+	free(expected);
+	free(reference);
+	return ret;
+}
+
+static int test_standard_mmap_memset(void)
+{
+	size_t ps = getpagesize();
+	size_t size = ps * 2 + 17;
+	unsigned char *expected;
+	void *mapping;
+	size_t bad_index;
+	int ret;
+
+	if (prctl(PR_SET_SWMMU, PR_SWMMU_OFF, 0, 0, 0) < 0) {
+		SWMMU_TEST_FAIL("failed to disable SWMMU: %s\n",
+				strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	expected = malloc(size);
+	if (!expected) {
+		SWMMU_TEST_FAIL("reference allocation failed\n");
+		return KSFT_FAIL;
+	}
+	if (prctl(PR_SET_SWMMU, PR_SWMMU_ON, 0, 0, 0) < 0) {
+		SWMMU_TEST_FAIL("failed to enable SWMMU: %s\n",
+				strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	memset(expected, 0x34, size);
+
+	mapping = mmap(NULL, size,
+		       PROT_READ | PROT_WRITE,
+		       MAP_PRIVATE | MAP_ANONYMOUS,
+		       -1, 0);
+	if (mapping == MAP_FAILED) {
+		SWMMU_TEST_FAIL("mmap failed: %s\n",
+				strerror(errno));
+		free(expected);
+		return KSFT_FAIL;
+	}
+
+	swmmu_memset_typed((swmmu_byte_ptr)mapping,
+			   0x1234,
+			   size);
+
+	ret = swmmu_expect_bytes(mapping, expected, size, &bad_index);
+	if (ret) {
+		SWMMU_TEST_FAIL(
+			"memset mismatch at %zu: %s\n",
+			bad_index, strerror(-ret));
+		munmap(mapping, size);
+		free(expected);
+		return KSFT_FAIL;
+	}
+
+	if (munmap(mapping, size) < 0) {
+		SWMMU_TEST_FAIL("munmap failed: %s\n",
+				strerror(errno));
+		free(expected);
+		return KSFT_FAIL;
+	}
+
+	free(expected);
+
+	SWMMU_TEST_PASS(
+		"SWMMU memset applies the low byte across multiple pages\n");
+	return KSFT_PASS;
+}
+
+
 typedef int (*swmmu_test_fn)(void);
 static const swmmu_test_fn testcases[] = {
 	test_default_mode_off,
@@ -3102,6 +3363,8 @@ static const swmmu_test_fn testcases[] = {
 	test_signal_restart,
 	test_siglongjmp_paths,
 	test_standard_mmap_memcpy,
+	test_standard_mmap_memmove,
+	test_standard_mmap_memset,
 	/*
 	 * Keep cleanup tests last.
 	 */

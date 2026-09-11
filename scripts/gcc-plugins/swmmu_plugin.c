@@ -20,6 +20,8 @@
 #define SWMMU_LOAD_NAME  "nommu_swmmu_load_u64"
 #define SWMMU_STORE_NAME "nommu_swmmu_store_u64"
 #define SWMMU_MEMCPY_NAME "nommu_swmmu_memcpy"
+#define SWMMU_MEMMOVE_NAME "nommu_swmmu_memmove"
+#define SWMMU_MEMSET_NAME "nommu_swmmu_memset"
 
 #ifdef SWMMU_PLUGIN_DEBUG
 #define debug_print(...) fprintf(__VA_ARGS__)
@@ -32,6 +34,8 @@ int plugin_is_GPL_compatible;
 static tree swmmu_load_decl;
 static tree swmmu_store_decl;
 static tree swmmu_memcpy_decl;
+static tree swmmu_memmove_decl;
+static tree swmmu_memset_decl;
 
 
 enum swmmu_pointer_state {
@@ -89,7 +93,24 @@ swmmu_memop_runtime_decl(enum swmmu_memop_kind kind)
 			protect_runtime_decl(swmmu_memcpy_decl);
 
 		return swmmu_memcpy_decl;
+	case SWMMU_MEMOP_MEMMOVE:
+		if (!swmmu_memmove_decl)
+			swmmu_memmove_decl =
+				find_function_decl(SWMMU_MEMMOVE_NAME);
 
+		if (swmmu_memmove_decl)
+			protect_runtime_decl(swmmu_memmove_decl);
+
+		return swmmu_memmove_decl;
+	case SWMMU_MEMOP_MEMSET:
+		if (!swmmu_memset_decl)
+			swmmu_memset_decl =
+				find_function_decl(SWMMU_MEMSET_NAME);
+
+		if (swmmu_memset_decl)
+			protect_runtime_decl(swmmu_memset_decl);
+
+		return swmmu_memset_decl;
 	default:
 		return NULL_TREE;
 	}
@@ -594,7 +615,9 @@ swmmu_lower_memop_call(gcall *call,
 {
 	tree runtime_decl;
 
-	if (kind != SWMMU_MEMOP_MEMCPY) {
+	if (kind != SWMMU_MEMOP_MEMCPY &&
+		kind != SWMMU_MEMOP_MEMMOVE &&
+		kind != SWMMU_MEMOP_MEMSET) {
 		error_at(gimple_location(call),
 			 "SWMMU memory operation lowering is not "
 			 "implemented for this operation");
@@ -604,15 +627,11 @@ swmmu_lower_memop_call(gcall *call,
 	runtime_decl = swmmu_memop_runtime_decl(kind);
 	if (!runtime_decl) {
 		error_at(gimple_location(call),
-			 "SWMMU memcpy runtime declaration is missing");
+			 "SWMMU memory operation runtime declaration "
+			"is missing (kind=%d)", kind);
 		return false;
 	}
 
-	/*
-	 * The runtime helper has the same ABI as memcpy():
-	 *
-	 *     void *fn(void *dst, const void *src, size_t size)
-	 */
 	gimple_call_set_fndecl(call, runtime_decl);
 
 	return true;

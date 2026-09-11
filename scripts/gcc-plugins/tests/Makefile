@@ -89,6 +89,8 @@ test: $(TEST_ASM)
 	check_call typed_phi_load nommu_swmmu_load_u64; \
 	check_call typed_direct_phi_load nommu_swmmu_load_u64; \
 	check_call swmmu_contract_memcpy nommu_swmmu_memcpy; \
+	check_call swmmu_contract_memmove nommu_swmmu_memmove; \
+	check_call swmmu_contract_memset nommu_swmmu_memset; \
 	check_call typed_parameter_caller typed_load;
 
 test-negative:
@@ -177,78 +179,6 @@ test-negative-memops:
 		exit 1; \
 	fi
 	@echo "ok: unannotated SWMMU memory operations are diagnosed"
-
-test-negative-memop-contract:
-	@rm -f "$(UNKNOWN_LOG)" "$(UNKNOWN_ASM)"
-	@mkdir -p "$(DUMP_DIR_ABS)"
-	@if $(CC) $(CFLAGS) -fno-inline -fno-lto \
-		-DSWMMU_TEST_MEMOP_CONTRACT \
-		-fplugin="$(PLUGIN_ABS)" \
-		-S -c "$(UNKNOWN_SOURCE_ABS)" \
-		-o "$(UNKNOWN_ASM)" \
-		>"$(UNKNOWN_LOG)" 2>&1; then \
-		echo "error: combined memory-operation contract unexpectedly compiled" \
-			>&2; \
-		cat "$(UNKNOWN_LOG)" >&2; \
-		exit 1; \
-	fi
-	@if ! grep -q \
-		"SWMMU memory operation lowering is not implemented" \
-		"$(UNKNOWN_LOG)"; then \
-		echo "error: expected memmove/memset diagnostic was not found" \
-			>&2; \
-		cat "$(UNKNOWN_LOG)" >&2; \
-		exit 1; \
-	fi
-	@echo "ok: unsupported SWMMU memory operations are diagnosed"
-
-test-negative-memmove-contract:
-	@rm -f "$(UNKNOWN_LOG)" "$(UNKNOWN_ASM)"
-	@mkdir -p "$(DUMP_DIR_ABS)"
-	@if $(CC) $(CFLAGS) -fno-inline -fno-lto \
-		-DSWMMU_TEST_MEMMOVE_CONTRACT \
-		-fplugin="$(PLUGIN_ABS)" \
-		-S -c "$(UNKNOWN_SOURCE_ABS)" \
-		-o "$(UNKNOWN_ASM)" \
-		>"$(UNKNOWN_LOG)" 2>&1; then \
-		echo "error: annotated memmove test unexpectedly compiled" \
-			>&2; \
-		cat "$(UNKNOWN_LOG)" >&2; \
-		exit 1; \
-	fi
-	@if ! grep -q \
-		"SWMMU memory operation lowering is not implemented" \
-		"$(UNKNOWN_LOG)"; then \
-		echo "error: expected memmove diagnostic was not found" \
-			>&2; \
-		cat "$(UNKNOWN_LOG)" >&2; \
-		exit 1; \
-	fi
-	@echo "ok: annotated SWMMU memmove requires lowering"
-
-test-negative-memset-contract:
-	@rm -f "$(UNKNOWN_LOG)" "$(UNKNOWN_ASM)"
-	@mkdir -p "$(DUMP_DIR_ABS)"
-	@if $(CC) $(CFLAGS) -fno-inline -fno-lto \
-		-DSWMMU_TEST_MEMSET_CONTRACT \
-		-fplugin="$(PLUGIN_ABS)" \
-		-S -c "$(UNKNOWN_SOURCE_ABS)" \
-		-o "$(UNKNOWN_ASM)" \
-		>"$(UNKNOWN_LOG)" 2>&1; then \
-		echo "error: annotated memset test unexpectedly compiled" \
-			>&2; \
-		cat "$(UNKNOWN_LOG)" >&2; \
-		exit 1; \
-	fi
-	@if ! grep -q \
-		"SWMMU memory operation lowering is not implemented" \
-		"$(UNKNOWN_LOG)"; then \
-		echo "error: expected memset diagnostic was not found" \
-			>&2; \
-		cat "$(UNKNOWN_LOG)" >&2; \
-		exit 1; \
-	fi
-	@echo "ok: annotated SWMMU memset requires lowering"
 
 compile: $(TEST_ASM)
 
