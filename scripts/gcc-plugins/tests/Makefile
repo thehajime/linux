@@ -180,6 +180,30 @@ test-negative-memops:
 	fi
 	@echo "ok: unannotated SWMMU memory operations are diagnosed"
 
+test-negative-allocator-result:
+	@rm -f "$(UNKNOWN_LOG)" "$(UNKNOWN_ASM)"
+	@mkdir -p "$(DUMP_DIR_ABS)"
+	@if $(CC) $(CFLAGS) -fno-inline -fno-lto \
+		-DSWMMU_TEST_ALLOCATOR_RESULT \
+		-fplugin="$(PLUGIN_ABS)" \
+		-S -c "$(UNKNOWN_SOURCE_ABS)" \
+		-o "$(UNKNOWN_ASM)" \
+		>"$(UNKNOWN_LOG)" 2>&1; then \
+		echo "error: allocator-result test unexpectedly compiled" \
+			>&2; \
+		cat "$(UNKNOWN_LOG)" >&2; \
+		exit 1; \
+	fi
+	@if ! grep -q \
+		"SWMMU pointer state is unknown at dereference" \
+		"$(UNKNOWN_LOG)"; then \
+		echo "error: expected allocator-result diagnostic was not found" \
+			>&2; \
+		cat "$(UNKNOWN_LOG)" >&2; \
+		exit 1; \
+	fi
+	@echo "ok: allocator result requires runtime dispatch"
+
 compile: $(TEST_ASM)
 
 dump:

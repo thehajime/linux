@@ -86,6 +86,21 @@ void swmmu_memset(swmmu_u64_ptr destination,
 	memset(destination, value, size);
 }
 
+#elif defined(SWMMU_TEST_ALLOCATOR_RESULT)
+
+extern void *contract_malloc(size_t size)
+	__attribute__((swmmu_allocator_result));
+
+__attribute__((noinline))
+uint64_t load_from_contract_malloc(void)
+{
+	swmmu_u64_ptr pointer;
+
+	pointer = contract_malloc(sizeof(uint64_t));
+
+	return *pointer;
+}
+
 #else
 
 #error "select an SWMMU negative test"

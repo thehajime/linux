@@ -3324,6 +3324,127 @@ static int test_standard_mmap_memset(void)
 	return KSFT_PASS;
 }
 
+static int test_dynamic_access(void)
+{
+	size_t ps = getpagesize();
+	void *ordinary;
+	void *swmmu = MAP_FAILED;
+	uint64_t value;
+	long ret;
+	int result = KSFT_FAIL;
+
+	/*
+	 * Ensure malloc() returns an ordinary mapping for this test.
+	 */
+	if (prctl(PR_SET_SWMMU, PR_SWMMU_OFF, 0, 0, 0) < 0) {
+		SWMMU_TEST_FAIL("failed to disable SWMMU: %s\n",
+				strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	ordinary = malloc(sizeof(value));
+	if (!ordinary) {
+		SWMMU_TEST_FAIL("ordinary allocation failed\n");
+		return KSFT_FAIL;
+	}
+
+	*(uint64_t *)ordinary = 0x1122334455667788ULL;
+
+	if (prctl(PR_SET_SWMMU, PR_SWMMU_ON, 0, 0, 0) < 0) {
+		SWMMU_TEST_FAIL("failed to enable SWMMU: %s\n",
+				strerror(errno));
+		free(ordinary);
+		return KSFT_FAIL;
+	}
+
+	/*
+	 * Dynamic access to an ordinary pointer.
+	 */
+	ret = nommu_swmmu_store_dynamic_checked(
+		ordinary, sizeof(value), 0x8877665544332211ULL);
+	if (ret) {
+		SWMMU_TEST_FAIL(
+			"dynamic store to ordinary memory failed: %s\n",
+			strerror(-ret));
+		goto out;
+	}
+
+	ret = nommu_swmmu_load_dynamic_checked(ordinary, sizeof(value), &value);
+	if (ret) {
+		SWMMU_TEST_FAIL("dynamic ordinary load failed: %s\n",
+				strerror(-ret));
+		goto out;
+	}
+	if (value != 0x8877665544332211ULL) {
+		SWMMU_TEST_FAIL(
+			"dynamic ordinary load mismatch: %#llx\n",
+			(unsigned long long)value);
+		goto out;
+	}
+
+	/*
+	 * Dynamic access to a SWMMU mapping.
+	 */
+	swmmu = mmap(NULL, ps,
+		     PROT_READ | PROT_WRITE,
+		     MAP_PRIVATE | MAP_ANONYMOUS,
+		     -1, 0);
+	if (swmmu == MAP_FAILED) {
+		SWMMU_TEST_FAIL("SWMMU mmap failed: %s\n",
+				strerror(errno));
+		goto out;
+	}
+
+	ret = nommu_swmmu_store_dynamic_checked(
+		swmmu, sizeof(value), 0xaabbccddeeff0011ULL);
+	if (ret) {
+		SWMMU_TEST_FAIL(
+			"dynamic store to SWMMU memory failed: %s\n",
+			strerror(-ret));
+		goto out;
+	}
+
+	ret = nommu_swmmu_load_dynamic_checked(swmmu, sizeof(value), &value);
+	if (ret) {
+		SWMMU_TEST_FAIL("dynamic SWMMU load failed: %s\n",
+				strerror(-ret));
+		goto out;
+	}
+	if (value != 0xaabbccddeeff0011ULL) {
+		SWMMU_TEST_FAIL(
+			"dynamic SWMMU load mismatch: %#llx\n",
+			(unsigned long long)value);
+		goto out;
+	}
+
+	result = KSFT_PASS;
+	SWMMU_TEST_PASS(
+		"dynamic access dispatches ordinary and SWMMU mappings\n");
+
+out:
+	if (swmmu != MAP_FAILED) {
+		if (munmap(swmmu, ps) < 0)
+			result = KSFT_FAIL;
+		swmmu = MAP_FAILED;
+	}
+
+	if (prctl(PR_SET_SWMMU, PR_SWMMU_OFF, 0, 0, 0) < 0) {
+		SWMMU_TEST_FAIL("failed to disable SWMMU after test: %s\n",
+				strerror(errno));
+		result = KSFT_FAIL;
+	}
+
+	free(ordinary);
+
+	/*
+	 * Preserve the mode expected by subsequent SWMMU tests.
+	 */
+	if (prctl(PR_SET_SWMMU, PR_SWMMU_ON, 0, 0, 0) < 0)
+		result = KSFT_FAIL;
+
+	return result;
+}
+
 
 typedef int (*swmmu_test_fn)(void);
 static const swmmu_test_fn testcases[] = {
@@ -3365,6 +3486,8 @@ static const swmmu_test_fn testcases[] = {
 	test_standard_mmap_memcpy,
 	test_standard_mmap_memmove,
 	test_standard_mmap_memset,
+	test_dynamic_access,
+
 	/*
 	 * Keep cleanup tests last.
 	 */

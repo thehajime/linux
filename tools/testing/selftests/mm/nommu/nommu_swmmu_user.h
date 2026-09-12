@@ -30,4 +30,11 @@ void *nommu_swmmu_memcpy(void *dst, const void *src, size_t size);
 void *nommu_swmmu_memmove(void *dst, const void *src, size_t size);
 void *nommu_swmmu_memset(void *dst, int b, size_t size);
 
+uint64_t nommu_swmmu_load_dynamic(const void *address, size_t size);
+long nommu_swmmu_store_dynamic(void *address, size_t size, uint64_t value);
+int nommu_swmmu_load_dynamic_checked(const void *address, size_t size,
+				uint64_t *result);
+int nommu_swmmu_store_dynamic_checked(void *address, size_t size,
+				uint64_t value);
+
 #endif

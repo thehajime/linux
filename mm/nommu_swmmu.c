@@ -893,6 +893,99 @@ out:
 	return ret;
 }
 
+static int swmmu_dynamic_copy_from_mm(struct mm_struct *mm,
+				      unsigned long address,
+				      void *destination,
+				      size_t size)
+{
+	int ret = 0;
+
+	if (!mm || !size)
+		return -EINVAL;
+
+	mmap_read_lock(mm);
+
+	while (size) {
+		struct vm_area_struct *vma;
+		unsigned long offset;
+		size_t chunk;
+		void *source;
+
+		offset = address & (SWMMU_PAGE_SIZE - 1);
+		chunk = SWMMU_PAGE_SIZE - offset;
+		if (chunk > size)
+			chunk = size;
+
+		vma = find_vma(mm, address);
+		if (vma && vma->vm_swmmu_pt_range) {
+			source = __swmmu_translate_mm(mm, address, chunk,
+						      &ret, false);
+			if (!source)
+				break;
+
+			memcpy(destination, source, chunk);
+		} else if (copy_from_user(destination,
+					  (const void __user *)address,
+					  chunk)) {
+			ret = -EFAULT;
+			break;
+		}
+
+		address += chunk;
+		destination = (unsigned char *)destination + chunk;
+		size -= chunk;
+	}
+
+	mmap_read_unlock(mm);
+	return ret;
+}
+
+static int swmmu_dynamic_copy_to_mm(struct mm_struct *mm,
+				    unsigned long address,
+				    const void *source,
+				    size_t size)
+{
+	int ret = 0;
+
+	if (!mm || !size)
+		return -EINVAL;
+
+	mmap_read_lock(mm);
+
+	while (size) {
+		struct vm_area_struct *vma;
+		unsigned long offset;
+		size_t chunk;
+		void *destination;
+
+		offset = address & (SWMMU_PAGE_SIZE - 1);
+		chunk = SWMMU_PAGE_SIZE - offset;
+		if (chunk > size)
+			chunk = size;
+
+		vma = find_vma(mm, address);
+		if (vma && vma->vm_swmmu_pt_range) {
+			destination = __swmmu_translate_mm(mm, address, chunk,
+							  &ret, true);
+			if (!destination)
+				break;
+
+			memcpy(destination, source, chunk);
+		} else if (copy_to_user((void __user *)address,
+					source, chunk)) {
+			ret = -EFAULT;
+			break;
+		}
+
+		address += chunk;
+		source = (const unsigned char *)source + chunk;
+		size -= chunk;
+	}
+
+	mmap_read_unlock(mm);
+	return ret;
+}
+
 static int __swmmu_check_access_mm(struct mm_struct *mm,
 				   unsigned long address,
 				   size_t size,
@@ -2598,6 +2691,11 @@ long nommu_swmmu_get_mode(struct mm_struct *mm)
 	return READ_ONCE(mm->swmmu_mode);
 }
 
+static bool swmmu_valid_access_size(size_t size)
+{
+	return size == 1 || size == 2 || size == 4 || size == 8;
+}
+
 SYSCALL_DEFINE1(nommu_swmmu_alloc, size_t, size)
 {
 	struct mm_struct *mm = current->mm;
@@ -2652,7 +2750,18 @@ SYSCALL_DEFINE4(nommu_swmmu_load,
 	if (flags & ~NOMMU_SWMMU_ACCESS_MASK)
 		return -EINVAL;
 
-	ret = nommu_swmmu_load_u64_checked(address, size, &value);
+	if (!swmmu_valid_access_size(size))
+		return -EINVAL;
+
+	if (flags & NOMMU_SWMMU_ACCESS_DYNAMIC) {
+		ret = swmmu_dynamic_copy_from_mm(
+			current->mm, (unsigned long)address,
+			&value, size);
+	} else {
+		ret = nommu_swmmu_load_u64_checked(
+			address, size, &value);
+	}
+
 	if (ret)
 		return swmmu_signal_access_error(address, ret, flags);
 
@@ -2673,6 +2782,17 @@ SYSCALL_DEFINE4(nommu_swmmu_store,
 	if (flags & ~NOMMU_SWMMU_ACCESS_MASK)
 		return -EINVAL;
 
-	ret = nommu_swmmu_store_u64_checked(address, size, value);
+	if (!swmmu_valid_access_size(size))
+		return -EINVAL;
+
+	if (flags & NOMMU_SWMMU_ACCESS_DYNAMIC) {
+		ret = swmmu_dynamic_copy_to_mm(
+			current->mm, (unsigned long)address,
+			&value, size);
+	} else {
+		ret = nommu_swmmu_store_u64_checked(
+			address, size, value);
+	}
+
 	return swmmu_signal_access_error(address, ret, flags);
 }

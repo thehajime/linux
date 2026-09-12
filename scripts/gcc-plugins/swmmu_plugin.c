@@ -215,6 +215,38 @@ handle_swmmu_memop_attribute(tree *node,
 	return NULL_TREE;
 }
 
+static tree
+handle_swmmu_allocator_result_attribute(
+	tree *node,
+	tree name ATTRIBUTE_UNUSED,
+	tree args ATTRIBUTE_UNUSED,
+	int flags ATTRIBUTE_UNUSED,
+	bool *no_add_attrs)
+{
+	tree function_type;
+	tree result_type;
+
+	if (TREE_CODE(*node) != FUNCTION_DECL) {
+		*no_add_attrs = true;
+		warning(OPT_Wattributes,
+			"%qE attribute only applies to functions",
+			get_identifier("swmmu_allocator_result"));
+		return NULL_TREE;
+	}
+
+	function_type = TREE_TYPE(*node);
+	result_type = TREE_TYPE(function_type);
+
+	if (!POINTER_TYPE_P(result_type)) {
+		*no_add_attrs = true;
+		error_at(DECL_SOURCE_LOCATION(*node),
+			 "swmmu_allocator_result requires "
+			 "a pointer return type");
+	}
+
+	return NULL_TREE;
+}
+
 static void
 register_swmmu_attributes(void *, void *)
 {
@@ -254,9 +286,22 @@ register_swmmu_attributes(void *, void *)
 		.exclude = nullptr,
 	};
 
+	static const attribute_spec swmmu_allocator_result_attribute = {
+		.name = "swmmu_allocator_result",
+		.min_length = 0,
+		.max_length = 0,
+		.decl_required = true,
+		.type_required = false,
+		.function_type_required = false,
+		.affects_type_identity = false,
+		.handler = handle_swmmu_allocator_result_attribute,
+		.exclude = nullptr,
+	};
+
 	register_attribute(&swmmu_attribute);
 	register_attribute(&swmmu_ptr_attribute);
 	register_attribute(&swmmu_memop_attribute);
+	register_attribute(&swmmu_allocator_result_attribute);
 }
 
 
@@ -314,6 +359,15 @@ is_swmmu_provenance_lvalue(tree expr)
 	default:
 		return false;
 	}
+}
+
+static bool
+is_swmmu_allocator_result(tree fndecl)
+{
+	return fndecl &&
+	       TREE_CODE(fndecl) == FUNCTION_DECL &&
+	       lookup_attribute("swmmu_allocator_result",
+				DECL_ATTRIBUTES(fndecl));
 }
 
 static enum swmmu_pointer_state
@@ -470,9 +524,11 @@ swmmu_record_pointer_call(
 	bool swmmu_context,
 	hash_map<tree, enum swmmu_pointer_state> &states)
 {
+	tree fndecl;
 	tree lhs;
 	enum swmmu_pointer_state state;
 
+	fndecl = gimple_call_fndecl(call);
 	lhs = gimple_call_lhs(call);
 	if (!lhs || !TREE_TYPE(lhs) ||
 	    !POINTER_TYPE_P(TREE_TYPE(lhs)))
@@ -480,7 +536,9 @@ swmmu_record_pointer_call(
 
 	state = swmmu_pointer_state_from_type(TREE_TYPE(lhs));
 
-	if (state == SWMMU_POINTER_ORDINARY && swmmu_context)
+	if (is_swmmu_allocator_result(fndecl))
+		state = SWMMU_POINTER_UNKNOWN;
+	else if (state == SWMMU_POINTER_ORDINARY && swmmu_context)
 		state = SWMMU_POINTER_UNKNOWN;
 
 	swmmu_pointer_state_put(lhs, state, states);

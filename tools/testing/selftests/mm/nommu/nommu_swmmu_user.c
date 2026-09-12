@@ -158,3 +158,69 @@ void *nommu_swmmu_memset(void *dst, int b, size_t size)
 	}
 	return dst;
 }
+
+uint64_t nommu_swmmu_load_dynamic(const void *address, size_t size)
+{
+	uint64_t result;
+	long ret;
+
+	ret = syscall(SYS_nommu_swmmu_load,
+		      (uintptr_t)address,
+		      size,
+		      &result,
+		      NOMMU_SWMMU_ACCESS_DYNAMIC |
+		      NOMMU_SWMMU_ACCESS_SIGNAL);
+	if (ret < 0)
+		abort();
+
+	return result;
+}
+
+long nommu_swmmu_store_dynamic(void *address, size_t size, uint64_t value)
+{
+	long ret;
+
+	ret = syscall(SYS_nommu_swmmu_store,
+		      (uintptr_t)address,
+		      size,
+		      value,
+		      NOMMU_SWMMU_ACCESS_DYNAMIC |
+		      NOMMU_SWMMU_ACCESS_SIGNAL);
+	if (ret < 0)
+		abort();
+
+	return ret;
+}
+
+int nommu_swmmu_load_dynamic_checked(const void *address, size_t size,
+				uint64_t *result)
+{
+	long ret;
+
+	if (!result)
+		return -EINVAL;
+
+	ret = syscall(SYS_nommu_swmmu_load,
+		      (uintptr_t)address,
+		      size,
+		      result,
+		      NOMMU_SWMMU_ACCESS_DYNAMIC |
+		      NOMMU_SWMMU_ACCESS_CHECKED);
+
+	return ret < 0 ? -errno : 0;
+}
+
+int nommu_swmmu_store_dynamic_checked(void *address, size_t size,
+				uint64_t value)
+{
+	long ret;
+
+	ret = syscall(SYS_nommu_swmmu_store,
+		      (uintptr_t)address,
+		      size,
+		      value,
+		      NOMMU_SWMMU_ACCESS_DYNAMIC |
+		      NOMMU_SWMMU_ACCESS_CHECKED);
+
+	return ret < 0 ? -errno : 0;
+}
