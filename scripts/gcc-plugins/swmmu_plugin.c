@@ -411,9 +411,30 @@ is_swmmu_standard_allocator(tree fndecl)
 	function_name = IDENTIFIER_POINTER(name);
 
 	return !strcmp(function_name, "malloc") ||
-	       !strcmp(function_name, "calloc") ||
-	       !strcmp(function_name, "__builtin_malloc") ||
-	       !strcmp(function_name, "__builtin_calloc");
+		!strcmp(function_name, "calloc") ||
+		!strcmp(function_name, "realloc") ||
+		!strcmp(function_name, "__builtin_malloc") ||
+		!strcmp(function_name, "__builtin_calloc") ||
+		!strcmp(function_name, "__builtin_realloc");
+}
+
+static bool
+is_swmmu_reallocator(tree fndecl)
+{
+	tree name;
+	const char *function_name;
+
+	if (!fndecl || TREE_CODE(fndecl) != FUNCTION_DECL)
+		return false;
+
+	name = DECL_NAME(fndecl);
+	if (!name)
+		return false;
+
+	function_name = IDENTIFIER_POINTER(name);
+
+	return !strcmp(function_name, "realloc") ||
+	       !strcmp(function_name, "__builtin_realloc");
 }
 
 static bool
@@ -758,9 +779,31 @@ swmmu_lower_memop_call(gcall *call,
 }
 
 static bool
-check_swmmu_call(gcall *call)
+check_swmmu_call(
+	gcall *call,
+	hash_map<tree, enum swmmu_pointer_state> &states)
 {
 	tree fndecl = gimple_call_fndecl(call);
+
+	if (is_swmmu_reallocator(fndecl)) {
+		tree pointer = gimple_call_num_args(call) ?
+			gimple_call_arg(call, 0) : NULL_TREE;
+		enum swmmu_pointer_state state =
+			swmmu_pointer_state_of(pointer, states);
+
+		if (state == SWMMU_POINTER_UNKNOWN) {
+			error_at(gimple_location(call),
+				 "SWMMU pointer state is unknown at "
+				 "realloc boundary");
+			return false;
+		}
+
+		/*
+		 * ordinary, SWMMU, DYNAMIC, and NULL are valid
+		 * realloc inputs.
+		 */
+		return true;
+	}
 
 	if (swmmu_memop_kind_of(fndecl) != SWMMU_MEMOP_NONE &&
 		swmmu_call_has_swmmu_argument(call))
@@ -1128,7 +1171,7 @@ public:
 					if (gimple_code(generic_stmt) == GIMPLE_CALL) {
 						gcall *call = as_a_gcall(generic_stmt);
 
-						check_swmmu_call(call);
+						check_swmmu_call(call, states);
 						swmmu_record_pointer_call(call, swmmu_context, states);
 
 						gsi_next(&gsi);

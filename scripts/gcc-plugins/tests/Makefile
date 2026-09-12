@@ -98,6 +98,9 @@ test: $(TEST_ASM)
 	check_call load_from_malloc nommu_swmmu_load_dynamic; \
 	check_call store_to_malloc nommu_swmmu_store_dynamic; \
 	check_call load_from_calloc nommu_swmmu_load_dynamic; \
+	check_call load_from_realloc nommu_swmmu_load_dynamic; \
+	check_call load_from_realloc_swmmu nommu_swmmu_load_dynamic; \
+	check_call load_from_realloc_ordinary nommu_swmmu_load_dynamic; \
 	check_call typed_parameter_caller typed_load;
 
 test-negative:
@@ -186,6 +189,30 @@ test-negative-memops:
 		exit 1; \
 	fi
 	@echo "ok: unannotated SWMMU memory operations are diagnosed"
+
+test-negative-realloc:
+	@rm -f "$(UNKNOWN_LOG)" "$(UNKNOWN_ASM)"
+	@mkdir -p "$(DUMP_DIR_ABS)"
+	@if $(CC) $(CFLAGS) -fno-inline -fno-lto \
+		-DSWMMU_TEST_REALLOC_UNKNOWN \
+		-fplugin="$(PLUGIN_ABS)" \
+		-S -c "$(UNKNOWN_SOURCE_ABS)" \
+		-o "$(UNKNOWN_ASM)" \
+		>"$(UNKNOWN_LOG)" 2>&1; then \
+		echo "error: SWMMU realloc test unexpectedly compiled" \
+			>&2; \
+		cat "$(UNKNOWN_LOG)" >&2; \
+		exit 1; \
+	fi
+	@if ! grep -q \
+		"SWMMU pointer state is unknown at realloc boundary" \
+		"$(UNKNOWN_LOG)"; then \
+		echo "error: expected realloc diagnostic was not found" \
+			>&2; \
+		cat "$(UNKNOWN_LOG)" >&2; \
+		exit 1; \
+	fi
+	@echo "ok: unannotated SWMMU realloc are diagnosed"
 
 compile: $(TEST_ASM)
 

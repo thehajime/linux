@@ -325,3 +325,34 @@ uint64_t load_from_calloc(void)
 	pointer = calloc(1, sizeof(*pointer));
 	return *pointer;
 }
+
+__attribute__((noinline))
+uint64_t load_from_realloc(void)
+{
+	uint64_t *pointer;
+
+	pointer = malloc(sizeof(*pointer));
+	pointer = realloc(pointer, sizeof(*pointer));
+
+	return *pointer;
+}
+
+__attribute__((noinline))
+uint64_t load_from_realloc_swmmu(swmmu_u64_ptr pointer)
+{
+	uint64_t *result;
+
+	result = realloc((uint64_t *)pointer, sizeof(uint64_t));
+
+	return *result;
+}
+
+__attribute__((noinline))
+uint64_t load_from_realloc_ordinary(uint64_t *pointer)
+{
+	uint64_t *result;
+
+	result = realloc(pointer, sizeof(uint64_t));
+
+	return *result;
+}

@@ -59,6 +59,14 @@ static long (* const __attribute__((used))
 keep_swmmu_store)(void *, size_t, uint64_t) =
 	nommu_swmmu_store_u64;
 
+static uint64_t (* const __attribute__((used))
+keep_swmmu_load_dynamic)(const void *, size_t) =
+	nommu_swmmu_load_dynamic;
+
+static long (* const __attribute__((used))
+keep_swmmu_store_dynamic)(void *, size_t, uint64_t) =
+	nommu_swmmu_store_dynamic;
+
 typedef unsigned char * __attribute__((swmmu_ptr)) swmmu_byte_ptr;
 
 extern void *memcpy(void *destination,
@@ -155,6 +163,14 @@ static int swmmu_expect_bytes(const void *address,
 	}
 
 	return 0;
+}
+
+static void swmmu_test_stage(const char *message)
+{
+	size_t length = strlen(message);
+
+	(void)write(STDERR_FILENO, message, length);
+	(void)write(STDERR_FILENO, "\n", 1);
 }
 
 
@@ -3546,6 +3562,135 @@ static int test_allocator_domains(void)
 
 	SWMMU_TEST_PASS(
 		"malloc/free work across ordinary and SWMMU domains\n");
+	return KSFT_PASS;
+}
+
+static int test_realloc_domains(void)
+{
+	size_t ps = getpagesize();
+	pid_t pid;
+	int status;
+
+	pid = fork();
+	if (pid < 0) {
+		SWMMU_TEST_FAIL("fork failed: %s\n",
+				strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	if (pid == 0) {
+		void *pointer;
+		void *resized;
+		uint64_t value;
+		int ret;
+
+		if (prctl(PR_SET_SWMMU, PR_SWMMU_OFF, 0, 0, 0) < 0)
+			_exit(1);
+
+		/*
+		 * realloc(NULL, size) has malloc-like semantics. With
+		 * SWMMU enabled, its result may be ordinary or SWMMU-backed.
+		 */
+		if (prctl(PR_SET_SWMMU, PR_SWMMU_ON, 0, 0, 0) < 0)
+			_exit(2);
+
+		pointer = realloc(NULL, ps);
+		if (!pointer)
+			_exit(3);
+
+		ret = nommu_swmmu_store_dynamic_checked(
+			pointer, sizeof(value),
+			0x1122334455667788ULL);
+		if (ret)
+			_exit(4);
+
+		ret = nommu_swmmu_load_dynamic_checked(
+			pointer, sizeof(value), &value);
+		if (ret || value != 0x1122334455667788ULL)
+			_exit(5);
+
+		/*
+		 * Grow and verify preservation.
+		 */
+		resized = realloc(pointer, ps * 2);
+		if (!resized)
+			_exit(6);
+
+		pointer = resized;
+
+		ret = nommu_swmmu_load_dynamic_checked(
+			pointer, sizeof(value), &value);
+		if (ret || value != 0x1122334455667788ULL)
+			_exit(7);
+
+		ret = nommu_swmmu_store_dynamic_checked(
+			(unsigned char *)pointer + ps,
+			sizeof(value),
+			0xaabbccddeeff0011ULL);
+		if (ret)
+			_exit(8);
+
+		/*
+		 * Shrink and verify preservation of the prefix.
+		 */
+		resized = realloc(pointer, ps);
+		if (!resized)
+			_exit(9);
+
+		pointer = resized;
+
+		ret = nommu_swmmu_load_dynamic_checked(
+			pointer, sizeof(value), &value);
+		if (ret || value != 0x1122334455667788ULL)
+			_exit(10);
+
+		/*
+		 * A failed realloc must preserve the original allocation.
+		 */
+		volatile size_t huge_size = SIZE_MAX;
+
+		errno = 0;
+		resized = realloc(pointer, huge_size);
+		if (resized) {
+			free(resized);
+			_exit(11);
+		}
+
+		ret = nommu_swmmu_load_dynamic_checked(
+			pointer, sizeof(value), &value);
+		if (ret || value != 0x1122334455667788ULL)
+			_exit(12);
+
+		free(pointer);
+
+		if (prctl(PR_SET_SWMMU, PR_SWMMU_OFF, 0, 0, 0) < 0)
+			_exit(13);
+
+		_exit(0);
+	}
+
+	if (waitpid(pid, &status, 0) != pid) {
+		SWMMU_TEST_FAIL("waitpid failed: %s\n",
+				strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	if (!WIFEXITED(status) ||
+	    WEXITSTATUS(status) != 0) {
+		if (WIFSIGNALED(status)) {
+			SWMMU_TEST_FAIL(
+				"realloc child killed by signal %d\n",
+				WTERMSIG(status));
+		} else {
+			SWMMU_TEST_FAIL(
+				"realloc child exited with status %d\n",
+				WEXITSTATUS(status));
+		}
+		return KSFT_FAIL;
+	}
+
+	SWMMU_TEST_PASS(
+		"realloc preserves data across dynamic allocation domains\n");
 	return KSFT_PASS;
 }
 
