@@ -3445,6 +3445,110 @@ out:
 	return result;
 }
 
+static int test_allocator_domains(void)
+{
+	pid_t pid;
+	int status;
+
+	pid = fork();
+	if (pid < 0) {
+		SWMMU_TEST_FAIL("fork failed: %s\n",
+				strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	if (pid == 0) {
+		void *ordinary;
+		void *dynamic;
+		uint64_t value;
+		int ret;
+
+		/*
+		 * The first allocation should belong to the ordinary
+		 * memory domain.
+		 */
+		if (prctl(PR_SET_SWMMU, PR_SWMMU_OFF, 0, 0, 0) < 0)
+			_exit(1);
+
+		ordinary = malloc(sizeof(value));
+		if (!ordinary)
+			_exit(2);
+
+		*(uint64_t *)ordinary = 0x1122334455667788ULL;
+
+		if (prctl(PR_SET_SWMMU, PR_SWMMU_ON, 0, 0, 0) < 0)
+			_exit(3);
+
+		/*
+		 * Dynamic access must handle the ordinary allocation while
+		 * SWMMU is enabled.
+		 */
+		ret = nommu_swmmu_store_dynamic_checked(
+			ordinary, sizeof(value),
+			0x8877665544332211ULL);
+		if (ret)
+			_exit(4);
+
+		ret = nommu_swmmu_load_dynamic_checked(
+			ordinary, sizeof(value), &value);
+		if (ret || value != 0x8877665544332211ULL)
+			_exit(5);
+
+		/*
+		 * The second allocation is made while SWMMU is enabled.
+		 */
+		dynamic = malloc(sizeof(value));
+		if (!dynamic)
+			_exit(6);
+
+		ret = nommu_swmmu_store_dynamic_checked(
+			dynamic, sizeof(value),
+			0xaabbccddeeff0011ULL);
+		if (ret)
+			_exit(7);
+
+		ret = nommu_swmmu_load_dynamic_checked(
+			dynamic, sizeof(value), &value);
+		if (ret || value != 0xaabbccddeeff0011ULL)
+			_exit(8);
+
+		/*
+		 * Test allocator release while SWMMU remains enabled.
+		 */
+		free(ordinary);
+		free(dynamic);
+
+		if (prctl(PR_SET_SWMMU, PR_SWMMU_OFF, 0, 0, 0) < 0)
+			_exit(9);
+
+		_exit(0);
+	}
+
+	if (waitpid(pid, &status, 0) != pid) {
+		SWMMU_TEST_FAIL("waitpid failed: %s\n",
+				strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	if (!WIFEXITED(status) ||
+	    WEXITSTATUS(status) != 0) {
+		if (WIFSIGNALED(status)) {
+			SWMMU_TEST_FAIL(
+				"allocator child killed by signal %d\n",
+				WTERMSIG(status));
+		} else {
+			SWMMU_TEST_FAIL(
+				"allocator child exited with status %d\n",
+				WEXITSTATUS(status));
+		}
+		return KSFT_FAIL;
+	}
+
+	SWMMU_TEST_PASS(
+		"malloc/free work across ordinary and SWMMU domains\n");
+	return KSFT_PASS;
+}
+
 
 typedef int (*swmmu_test_fn)(void);
 static const swmmu_test_fn testcases[] = {
@@ -3487,6 +3591,7 @@ static const swmmu_test_fn testcases[] = {
 	test_standard_mmap_memmove,
 	test_standard_mmap_memset,
 	test_dynamic_access,
+	test_allocator_domains,
 
 	/*
 	 * Keep cleanup tests last.

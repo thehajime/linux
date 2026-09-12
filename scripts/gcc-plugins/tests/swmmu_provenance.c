@@ -1,6 +1,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include <stdlib.h>
 
 extern uint64_t nommu_swmmu_load_u64(const void *address, size_t size);
 extern long nommu_swmmu_store_u64(void *address,
@@ -296,4 +297,31 @@ void store_to_contract_malloc(swmmu_u64_ptr context,
 
 	pointer = contract_malloc(sizeof(uint64_t));
 	*pointer = value;
+}
+
+__attribute__((noinline))
+uint64_t load_from_malloc(void)
+{
+	uint64_t *pointer;
+
+	pointer = malloc(sizeof(*pointer));
+	return *pointer;
+}
+
+__attribute__((noinline))
+void store_to_malloc(uint64_t value)
+{
+	uint64_t *pointer;
+
+	pointer = malloc(sizeof(*pointer));
+	*pointer = value;
+}
+
+__attribute__((noinline))
+uint64_t load_from_calloc(void)
+{
+	uint64_t *pointer;
+
+	pointer = calloc(1, sizeof(*pointer));
+	return *pointer;
 }

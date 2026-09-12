@@ -395,6 +395,35 @@ is_swmmu_allocator_result(tree fndecl)
 				DECL_ATTRIBUTES(fndecl));
 }
 
+static bool
+is_swmmu_standard_allocator(tree fndecl)
+{
+	tree name;
+	const char *function_name;
+
+	if (!fndecl || TREE_CODE(fndecl) != FUNCTION_DECL)
+		return false;
+
+	name = DECL_NAME(fndecl);
+	if (!name)
+		return false;
+
+	function_name = IDENTIFIER_POINTER(name);
+
+	return !strcmp(function_name, "malloc") ||
+	       !strcmp(function_name, "calloc") ||
+	       !strcmp(function_name, "__builtin_malloc") ||
+	       !strcmp(function_name, "__builtin_calloc");
+}
+
+static bool
+is_swmmu_allocator_function(tree fndecl)
+{
+	return is_swmmu_allocator_result(fndecl) ||
+	       is_swmmu_standard_allocator(fndecl);
+}
+
+
 static enum swmmu_pointer_state
 swmmu_pointer_state_from_type(tree type)
 {
@@ -568,9 +597,10 @@ swmmu_record_pointer_call(
 
 	state = swmmu_pointer_state_from_type(TREE_TYPE(lhs));
 
-	if (is_swmmu_allocator_result(fndecl))
+	if (is_swmmu_allocator_function(fndecl))
 		state = SWMMU_POINTER_DYNAMIC;
-	else if (state == SWMMU_POINTER_ORDINARY && swmmu_context)
+	else if (state == SWMMU_POINTER_ORDINARY &&
+		 swmmu_context)
 		state = SWMMU_POINTER_UNKNOWN;
 
 	swmmu_pointer_state_put(lhs, state, states);
@@ -957,6 +987,30 @@ function_has_swmmu_parameter(function *fn)
 	return false;
 }
 
+static bool
+function_has_swmmu_allocator_call(function *fn)
+{
+	basic_block bb;
+
+	FOR_ALL_BB_FN(bb, fn) {
+		for (gimple_stmt_iterator gsi = gsi_start_bb(bb);
+		     !gsi_end_p(gsi);
+		     gsi_next(&gsi)) {
+			gimple stmt = gsi_stmt(gsi);
+
+			if (gimple_code(stmt) != GIMPLE_CALL)
+				continue;
+
+			if (is_swmmu_allocator_function(
+				    gimple_call_fndecl(as_a_gcall(stmt))))
+				return true;
+		}
+	}
+
+	return false;
+}
+
+
 static void
 swmmu_record_pointer_phi(
 	gphi *phi,
@@ -1038,8 +1092,9 @@ public:
 
 			bool function_marked = is_swmmu_function(fn);
 			if (!function_marked &&
-			    !function_has_swmmu_access(fn) &&
-			    !function_has_swmmu_parameter(fn))
+				!function_has_swmmu_access(fn) &&
+				!function_has_swmmu_parameter(fn) &&
+				!function_has_swmmu_allocator_call(fn))
 				return 0;
 
 			bool swmmu_context;
