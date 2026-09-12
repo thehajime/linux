@@ -7,11 +7,26 @@ extern long nommu_swmmu_store_u64(void *address,
 				  size_t size,
 				  uint64_t value);
 
+extern uint64_t nommu_swmmu_load_dynamic(const void *address,
+					 size_t size);
+
+extern long nommu_swmmu_store_dynamic(void *address,
+				      size_t size,
+				      uint64_t value);
+
 static uint64_t (* const __attribute__((used))
 keep_swmmu_load)(const void *, size_t) = nommu_swmmu_load_u64;
 
 static long (* const __attribute__((used))
 keep_swmmu_store)(void *, size_t, uint64_t) = nommu_swmmu_store_u64;
+
+static uint64_t (* const __attribute__((used))
+keep_swmmu_load_dynamic)(const void *, size_t) =
+	nommu_swmmu_load_dynamic;
+
+static long (* const __attribute__((used))
+keep_swmmu_store_dynamic)(void *, size_t, uint64_t) =
+	nommu_swmmu_store_dynamic;
 
 __attribute__((noinline, swmmu))
 uint64_t function_marked_load(uint64_t *p)
@@ -224,4 +239,49 @@ void swmmu_contract_memset(swmmu_u64_ptr dst,
 			   size_t size)
 {
 	contract_memset(dst, b, size);
+}
+
+extern void *contract_malloc(size_t size)
+	__attribute__((swmmu_allocator_result));
+
+__attribute__((noinline))
+uint64_t load_from_contract_malloc(void)
+{
+	swmmu_u64_ptr pointer;
+
+	pointer = contract_malloc(sizeof(uint64_t));
+
+	return *pointer;
+}
+
+__attribute__((noinline))
+uint64_t load_from_contract_malloc_alias(void)
+{
+	swmmu_u64_ptr pointer;
+	swmmu_u64_ptr alias;
+
+	pointer = contract_malloc(sizeof(uint64_t));
+	alias = pointer;
+
+	return *alias;
+}
+
+extern uint64_t *ordinary_pointer(void);
+
+__attribute__((noinline))
+uint64_t dynamic_or_ordinary_load(swmmu_u64_ptr context,
+				  uint64_t *ordinary,
+				  int condition)
+{
+	swmmu_u64_ptr dynamic;
+	uint64_t *selected;
+
+	(void)context;
+
+	dynamic = contract_malloc(sizeof(uint64_t));
+
+	selected = condition ?
+		(uint64_t *)dynamic : ordinary;
+
+	return *selected;
 }

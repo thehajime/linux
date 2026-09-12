@@ -91,6 +91,9 @@ test: $(TEST_ASM)
 	check_call swmmu_contract_memcpy nommu_swmmu_memcpy; \
 	check_call swmmu_contract_memmove nommu_swmmu_memmove; \
 	check_call swmmu_contract_memset nommu_swmmu_memset; \
+	check_call load_from_contract_malloc nommu_swmmu_load_dynamic; \
+	check_call load_from_contract_malloc_alias nommu_swmmu_load_dynamic; \
+	check_call dynamic_or_ordinary_load nommu_swmmu_load_dynamic; \
 	check_call typed_parameter_caller typed_load;
 
 test-negative:
@@ -179,30 +182,6 @@ test-negative-memops:
 		exit 1; \
 	fi
 	@echo "ok: unannotated SWMMU memory operations are diagnosed"
-
-test-negative-allocator-result:
-	@rm -f "$(UNKNOWN_LOG)" "$(UNKNOWN_ASM)"
-	@mkdir -p "$(DUMP_DIR_ABS)"
-	@if $(CC) $(CFLAGS) -fno-inline -fno-lto \
-		-DSWMMU_TEST_ALLOCATOR_RESULT \
-		-fplugin="$(PLUGIN_ABS)" \
-		-S -c "$(UNKNOWN_SOURCE_ABS)" \
-		-o "$(UNKNOWN_ASM)" \
-		>"$(UNKNOWN_LOG)" 2>&1; then \
-		echo "error: allocator-result test unexpectedly compiled" \
-			>&2; \
-		cat "$(UNKNOWN_LOG)" >&2; \
-		exit 1; \
-	fi
-	@if ! grep -q \
-		"SWMMU pointer state is unknown at dereference" \
-		"$(UNKNOWN_LOG)"; then \
-		echo "error: expected allocator-result diagnostic was not found" \
-			>&2; \
-		cat "$(UNKNOWN_LOG)" >&2; \
-		exit 1; \
-	fi
-	@echo "ok: allocator result requires runtime dispatch"
 
 compile: $(TEST_ASM)
 
