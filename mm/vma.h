@@ -14,6 +14,9 @@
 #ifndef __MM_VMA_H
 #define __MM_VMA_H
 
+struct vma_mapping_ops;
+struct pagetable_move_control;
+
 /*
  * VMA lock generalization
  */
@@ -43,6 +46,7 @@ struct vma_munmap_struct {
 	struct vm_area_struct *vma;     /* The first vma to munmap */
 	struct vm_area_struct *prev;    /* vma before the munmap area */
 	struct vm_area_struct *next;    /* vma after the munmap area */
+	const struct vma_mapping_ops *backend;
 	struct list_head *uf;           /* Userfaultfd list_head */
 	unsigned long start;            /* Aligned start addr (inclusive) */
 	unsigned long end;              /* Aligned end addr (exclusive) */
@@ -58,6 +62,124 @@ struct vma_munmap_struct {
 	unsigned long exec_vm;
 	unsigned long stack_vm;
 	unsigned long data_vm;
+};
+
+struct vma_replace_struct {
+	struct vma_munmap_struct *vms;
+	struct vm_area_struct *insert;
+	const struct vma_mapping_ops *backend;
+	void *backend_state;
+};
+
+/* Classify the kind of remap operation being performed. */
+enum mremap_type {
+	MREMAP_INVALID,		/* Initial state. */
+	MREMAP_NO_RESIZE,	/* old_len == new_len, if not moved, do nothing. */
+	MREMAP_SHRINK,		/* old_len > new_len. */
+	MREMAP_EXPAND,		/* old_len < new_len. */
+};
+
+/*
+ * Describes a VMA mremap() operation and is threaded throughout it.
+ *
+ * Any of the fields may be mutated by the operation, however these values will
+ * always accurately reflect the remap (for instance, we may adjust lengths and
+ * delta to account for hugetlb alignment).
+ */
+struct vma_remap_struct {
+	struct mm_struct *mm;
+
+	/* User-provided state. */
+	unsigned long addr;	/* User-specified address from which we remap. */
+	unsigned long old_len;	/* Length of range being remapped. */
+	unsigned long new_len;	/* Desired new length of mapping. */
+	const unsigned long flags; /* user-specified MREMAP_* flags. */
+	unsigned long new_addr;	/* Optionally, desired new address. */
+
+	/* uffd state. */
+	struct vm_userfaultfd_ctx *uf;
+	struct list_head *uf_unmap_early;
+	struct list_head *uf_unmap;
+
+	/* VMA state, determined in do_mremap(). */
+	struct vm_area_struct *vma;
+	struct vm_area_struct *new_vma;
+	struct vma_iterator *vmi;
+
+	/* Internal state, determined in do_mremap(). */
+	unsigned long delta;		/* Absolute delta of old_len,new_len. */
+	bool populate_expand;		/* mlock()'d expanded, must populate. */
+	enum mremap_type remap_type;	/* expand, shrink, etc. */
+	bool mmap_locked;		/* Is mm currently write-locked? */
+	unsigned long charged;		/* If VMA_ACCOUNT_BIT, # pgs to account */
+	bool vmi_needs_invalidate;	/* Is the VMA iterator invalidated? */
+
+	/* Mapping backend state. */
+	const struct vma_mapping_ops *backend;
+	void *backend_state;
+
+	bool move_backend_active;
+	bool move_backend_prepared;
+	bool new_vma_linked;
+};
+
+struct vma_mapping_ops {
+	int (*split_prepare)(struct vm_area_struct *vma,
+			     struct vm_area_struct *new,
+			     unsigned long addr,
+			     bool new_below,
+			     void **state);
+
+	void (*split_commit)(struct vm_area_struct *vma,
+			     struct vm_area_struct *new,
+			     unsigned long addr,
+			     bool new_below,
+			     void *state);
+
+	void (*split_abort)(struct vm_area_struct *vma,
+			    struct vm_area_struct *new,
+			    void *state);
+
+	void (*remove_detached)(struct mm_struct *mm,
+		       struct vm_area_struct *vma);
+
+	int (*replace_prepare)(struct vma_replace_struct *vrs);
+	void (*replace_commit)(struct vma_replace_struct *vrs);
+	void (*replace_abort)(struct vma_replace_struct *vrs);
+
+	int (*expand_prepare)(struct vm_area_struct *vma,
+			      unsigned long new_end,
+			      void **state);
+
+	void (*expand_commit)(struct vm_area_struct *vma,
+			      void *state);
+
+	void (*expand_abort)(struct vm_area_struct *vma,
+			    void *state);
+
+	int (*move_prepare)(struct vma_remap_struct *vrm,
+			struct vm_area_struct *src,
+			struct vm_area_struct **dst,
+			bool *dst_linked,
+			void **state);
+
+	void (*move_commit)(struct vma_remap_struct *vrm,
+			struct vm_area_struct *src,
+			struct vm_area_struct *dst,
+			void *state);
+
+	void (*move_abort)(struct vma_remap_struct *vrm,
+			struct vm_area_struct *src,
+			struct vm_area_struct *dst,
+			void *state);
+
+	unsigned long (*move_mapping)(struct vma_remap_struct *vrm,
+				struct pagetable_move_control *pmc);
+	void (*move_rollback)(struct vma_remap_struct *vrm,
+			unsigned long moved_len);
+
+	unsigned long (*get_unmapped_area)(struct vma_remap_struct *vrm);
+	int (*check_remap)(struct vma_remap_struct *vrm);
 };
 
 enum vma_merge_state {
@@ -165,6 +287,8 @@ struct vma_merge_struct {
 	 */
 	bool __remove_next :1;
 
+	const struct vma_mapping_ops *backend;
+	void *backend_state;
 };
 
 struct unmap_desc {
@@ -178,6 +302,38 @@ struct unmap_desc {
 	unsigned long tree_reset;     /* Where to reset the vma tree walk */
 	bool mm_wr_locked;            /* If the mmap write lock is held */
 };
+
+/*
+ * Maintains state across a page table move. The operation assumes both source
+ * and destination VMAs already exist and are specified by the user.
+ *
+ * Partial moves are permitted, but the old and new ranges must both reside
+ * within a VMA.
+ *
+ * mmap lock must be held in write and VMA write locks must be held on any VMA
+ * that is visible.
+ *
+ * Use the PAGETABLE_MOVE() macro to initialise this struct.
+ *
+ * The old_addr and new_addr fields are updated as the page table move is
+ * executed.
+ *
+ * NOTE: The page table move is affected by reading from [old_addr, old_end),
+ * and old_addr may be updated for better page table alignment, so len_in
+ * represents the length of the range being copied as specified by the user.
+ */
+struct pagetable_move_control {
+	struct vm_area_struct *old; /* Source VMA. */
+	struct vm_area_struct *new; /* Destination VMA. */
+	unsigned long old_addr; /* Address from which the move begins. */
+	unsigned long old_end; /* Exclusive address at which old range ends. */
+	unsigned long new_addr; /* Address to move page tables to. */
+	unsigned long len_in; /* Bytes to remap specified by user. */
+
+	bool need_rmap_locks; /* Do rmap locks need to be taken? */
+	bool for_stack; /* Is this an early temp stack being moved? */
+};
+
 
 /*
  * unmap_all_init() - Initialize unmap_desc to remove all vmas, point the
@@ -524,7 +680,17 @@ __must_check struct vm_area_struct *vma_modify_flags_uffd(struct vma_iterator *v
 __must_check struct vm_area_struct *vma_merge_new_range(struct vma_merge_struct *vmg);
 
 __must_check struct vm_area_struct *vma_merge_extend(struct vma_iterator *vmi,
-		  struct vm_area_struct *vma, unsigned long delta);
+						struct vm_area_struct *vma,
+						unsigned long delta,
+						const struct vma_mapping_ops *backend);
+
+void __vma_set_range(struct vm_area_struct *vma, unsigned long start,
+		unsigned long end);
+void vma_set_range(struct vm_area_struct *vma,
+		   unsigned long start,
+		   unsigned long end,
+		   pgoff_t pgoff,
+		   pgoff_t anon_pgoff);
 
 void unlink_file_vma_batch_init(struct unlink_vma_file_batch *vb);
 
@@ -845,5 +1011,99 @@ struct vm_area_struct *__install_special_mapping(struct mm_struct *mm,
 		unsigned long addr, unsigned long len,
 		vm_flags_t vm_flags, void *priv,
 		const struct vm_operations_struct *ops);
+
+void vma_backend_prepare(struct vma_prepare *vp,
+			struct vm_area_struct *vma,
+			struct vm_area_struct *insert);
+
+void vma_backend_adjust_range(struct vm_area_struct *vma,
+			      unsigned long start,
+			      unsigned long end);
+
+void vma_backend_complete(struct vma_prepare *vp,
+			  struct vma_iterator *vmi,
+			  struct mm_struct *mm);
+
+int vma_backend_dup(struct vm_area_struct *src,
+		    struct vm_area_struct *dst);
+
+void vma_backend_split_adjust(struct vm_area_struct *vma,
+			      unsigned long addr);
+
+int vma_split_backend(struct vma_iterator *vmi,
+		      struct vm_area_struct *vma,
+		      unsigned long addr,
+		      int new_below,
+		      const struct vma_mapping_ops *backend);
+
+int vma_range_count_overlaps(struct mm_struct *mm,
+			     unsigned long start,
+			     unsigned long end,
+			     struct vm_area_struct **single);
+
+void vma_init_munmap(struct vma_munmap_struct *vms,
+		     struct vma_iterator *vmi,
+		     struct vm_area_struct *vma,
+		     unsigned long start,
+		     unsigned long end,
+		     struct list_head *uf,
+		     bool unlock,
+		     const struct vma_mapping_ops *backend);
+
+int vma_gather_range(struct vma_munmap_struct *vms,
+		     struct ma_state *mas_detach);
+
+void vma_reattach_vmas(struct ma_state *mas_detach);
+
+typedef void (*vma_remove_detached_fn)(
+	struct mm_struct *mm,
+	struct vm_area_struct *vma);
+
+void vma_remove_detached(struct vma_munmap_struct *vms,
+	struct ma_state *mas_detach,
+	struct mm_struct *mm,
+	vma_remove_detached_fn remove);
+
+void vma_replace_init(
+	struct vma_replace_struct *vrs,
+	struct vma_munmap_struct *vms,
+	struct vm_area_struct *insert,
+	const struct vma_mapping_ops *backend);
+
+int vma_replace_prepare(struct vma_replace_struct *vrs,
+			struct ma_state *mas_detach);
+
+void vma_replace_commit(struct vma_replace_struct *vrs,
+			struct ma_state *mas_detach,
+			struct mm_struct *mm,
+			vma_remove_detached_fn remove);
+
+void vma_replace_abort(struct vma_replace_struct *vrs,
+		       struct ma_state *mas_detach);
+
+int vma_move_prepare(struct vma_remap_struct *vrm,
+		     struct vm_area_struct *src);
+
+void vma_move_commit(struct vma_remap_struct *vrm);
+
+void vma_move_abort(struct vma_remap_struct *vrm);
+
+int vma_move_at(struct vma_remap_struct *vrm,
+		struct vm_area_struct *src,
+		struct vm_area_struct *dst);
+
+unsigned long vma_move_mapping(struct vma_remap_struct *vrm,
+			struct pagetable_move_control *pmc);
+unsigned long vma_mmu_move_mapping(struct vma_remap_struct *vrm,
+				struct pagetable_move_control *pmc);
+void vma_move_rollback(struct vma_remap_struct *vrm, unsigned long moved_len);
+const struct vma_mapping_ops *vma_mapping_ops_for_mm(struct mm_struct *mm);
+
+int vma_move_link_destination(struct vma_remap_struct *vrm);
+unsigned long vma_get_unmapped_area(struct vma_remap_struct *vrm);
+
+bool can_vma_merge_right(struct vma_merge_struct *vmg, bool can_merge_left);
+bool can_vma_merge_left(struct vma_merge_struct *vmg);
+bool can_merge_remove_vma(struct vm_area_struct *vma);
 
 #endif	/* __MM_VMA_H */

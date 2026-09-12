@@ -80,6 +80,9 @@ static void vm_area_init_from(const struct vm_area_struct *src,
 #ifdef __HAVE_PFNMAP_TRACKING
 	dest->pfnmap_track_ctx = NULL;
 #endif
+#ifdef CONFIG_NOMMU_SWMMU
+	dest->vm_swmmu_pt_range = NULL;
+#endif
 }
 
 #ifdef __HAVE_PFNMAP_TRACKING

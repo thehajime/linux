@@ -1513,4 +1513,18 @@ config LAZY_MMU_MODE_KUNIT_TEST
 
 source "mm/damon/Kconfig"
 
+config NOMMU_SWMMU
+	bool
+	depends on !MMU
+	default y
+
+config NOMMU_SWMMU_KUNIT_TEST
+	tristate "NOMMU SWMMU KUnit tests"
+	depends on NOMMU_SWMMU
+	depends on KUNIT
+	default KUNIT_ALL_TESTS
+	depends on GCC_PLUGIN_SWMMU
+	help
+	  Test the NOMMU software address-space implementation.
+
 endmenu
