@@ -285,3 +285,15 @@ uint64_t dynamic_or_ordinary_load(swmmu_u64_ptr context,
 
 	return *selected;
 }
+
+__attribute__((noinline))
+void store_to_contract_malloc(swmmu_u64_ptr context,
+			       uint64_t value)
+{
+	swmmu_u64_ptr pointer;
+
+	(void)context;
+
+	pointer = contract_malloc(sizeof(uint64_t));
+	*pointer = value;
+}

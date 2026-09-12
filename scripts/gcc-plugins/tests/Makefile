@@ -94,6 +94,7 @@ test: $(TEST_ASM)
 	check_call load_from_contract_malloc nommu_swmmu_load_dynamic; \
 	check_call load_from_contract_malloc_alias nommu_swmmu_load_dynamic; \
 	check_call dynamic_or_ordinary_load nommu_swmmu_load_dynamic; \
+	check_call store_to_contract_malloc nommu_swmmu_store_dynamic; \
 	check_call typed_parameter_caller typed_load;
 
 test-negative:
