@@ -218,6 +218,21 @@ test_swmmu_dynamic_pointer(uint64_t *pointer)
 	return *alias;
 }
 
+__attribute__((swmmu, noinline))
+static uint64_t
+test_swmmu_load_pointer(const uint64_t *pointer)
+{
+	return *pointer;
+}
+
+__attribute__((swmmu, noinline))
+static uint64_t
+test_swmmu_store_load_pointer(uint64_t *pointer, uint64_t value)
+{
+	*pointer = value;
+	return *pointer;
+}
+
 static int
 test_scalar_access(void)
 {
@@ -3772,6 +3787,56 @@ static int test_realloc_domains(void)
 	return KSFT_PASS;
 }
 
+static int test_allocator_basic(void)
+{
+	uint64_t *malloc_pointer;
+	uint64_t *calloc_pointer;
+	uint64_t value;
+
+	if (prctl(PR_SET_SWMMU, PR_SWMMU_ON, 0, 0, 0) < 0) {
+		SWMMU_TEST_FAIL("enabling SWMMU failed: %s\n",
+				strerror(errno));
+		return KSFT_FAIL;
+	}
+
+	malloc_pointer = malloc(sizeof(*malloc_pointer));
+	if (!malloc_pointer) {
+		SWMMU_TEST_FAIL("malloc failed\n");
+		return KSFT_FAIL;
+	}
+
+	value = test_swmmu_store_load_pointer(
+		malloc_pointer, 0x1122334455667788ULL);
+	if (value != 0x1122334455667788ULL) {
+		SWMMU_TEST_FAIL("malloc round-trip returned %#llx\n",
+				(unsigned long long)value);
+		free(malloc_pointer);
+		return KSFT_FAIL;
+	}
+
+	calloc_pointer = calloc(1, sizeof(*calloc_pointer));
+	if (!calloc_pointer) {
+		SWMMU_TEST_FAIL("calloc failed\n");
+		free(malloc_pointer);
+		return KSFT_FAIL;
+	}
+
+	value = test_swmmu_load_pointer(calloc_pointer);
+	if (value != 0) {
+		SWMMU_TEST_FAIL("calloc memory was not zero: %#llx\n",
+				(unsigned long long)value);
+		free(calloc_pointer);
+		free(malloc_pointer);
+		return KSFT_FAIL;
+	}
+
+	free(calloc_pointer);
+	free(malloc_pointer);
+
+	SWMMU_TEST_PASS("malloc/calloc/free compiler access works\n");
+	return KSFT_PASS;
+}
+
 
 typedef int (*swmmu_test_fn)(void);
 static const swmmu_test_fn testcases[] = {
@@ -3814,6 +3879,7 @@ static const swmmu_test_fn testcases[] = {
 	test_standard_mmap_memmove,
 	test_standard_mmap_memset,
 	test_dynamic_access,
+	test_allocator_basic,
 	test_allocator_domains,
 
 	/*
