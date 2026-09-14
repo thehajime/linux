@@ -186,6 +186,18 @@ test_swmmu_increment(struct swmmu_test_object *object)
 	return object->value;
 }
 
+__attribute__((swmmu, noinline))
+static uint64_t
+test_swmmu_dynamic_pointer(uint64_t *pointer)
+{
+	uint64_t *alias = pointer;
+	uint64_t value;
+
+	value = *alias;
+	*alias = value + 1;
+
+	return *alias;
+}
 
 static int
 test_scalar_access(void)
@@ -219,6 +231,27 @@ test_scalar_access(void)
 	if (value != 42) {
 		SWMMU_TEST_FAIL(
 			"load returned %llu, expected 42\n",
+			(unsigned long long)value);
+		nommu_swmmu_free(object);
+		return KSFT_FAIL;
+	}
+
+	value = test_swmmu_dynamic_pointer(&object->value);
+
+	if (value != 43) {
+		SWMMU_TEST_FAIL(
+			"dynamic pointer access returned %llu, expected 43\n",
+			(unsigned long long)value);
+		nommu_swmmu_free(object);
+		return KSFT_FAIL;
+	}
+
+	value = nommu_swmmu_load_u64(&object->value,
+				     sizeof(object->value));
+
+	if (value != 43) {
+		SWMMU_TEST_FAIL(
+			"load returned %llu, expected 43\n",
 			(unsigned long long)value);
 		nommu_swmmu_free(object);
 		return KSFT_FAIL;
