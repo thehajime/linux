@@ -1200,7 +1200,9 @@ public:
 						rhs_state == SWMMU_POINTER_SWMMU) {
 						tree runtime_decl;
 
-						runtime_decl = swmmu_load_runtime_for_state(rhs_state);
+						runtime_decl = function_marked ?
+							swmmu_dynamic_runtime_decl(false) :
+							swmmu_load_runtime_for_state(rhs_state);
 						if (!runtime_decl) {
 							error_at(gimple_location(stmt),
 								"SWMMU load runtime declaration is missing");
@@ -1217,7 +1219,9 @@ public:
 						lhs_state == SWMMU_POINTER_SWMMU) {
 						tree runtime_decl;
 
-						runtime_decl = swmmu_store_runtime_for_state(lhs_state);
+						runtime_decl = function_marked ?
+							swmmu_dynamic_runtime_decl(true) :
+							swmmu_store_runtime_for_state(lhs_state);
 						if (!runtime_decl) {
 							error_at(gimple_location(stmt),
 								"SWMMU store runtime declaration is missing");

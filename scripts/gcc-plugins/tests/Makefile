@@ -74,8 +74,8 @@ test: $(TEST_ASM)
 	check_native ordinary_memcpy; \
 	check_native ordinary_memmove; \
 	check_native ordinary_memset; \
-	check_call function_marked_load nommu_swmmu_load_u64; \
-	check_call function_marked_store nommu_swmmu_store_u64; \
+	check_call function_marked_load nommu_swmmu_load_dynamic; \
+	check_call function_marked_store nommu_swmmu_store_dynamic; \
 	check_call typed_load nommu_swmmu_load_u64; \
 	check_call typed_alias_load nommu_swmmu_load_u64; \
 	check_call typed_store nommu_swmmu_store_u64; \
@@ -101,6 +101,13 @@ test: $(TEST_ASM)
 	check_call load_from_realloc nommu_swmmu_load_dynamic; \
 	check_call load_from_realloc_swmmu nommu_swmmu_load_dynamic; \
 	check_call load_from_realloc_ordinary nommu_swmmu_load_dynamic; \
+	check_call svm_plain_pointer_load nommu_swmmu_load_dynamic; \
+	check_call svm_plain_pointer_store nommu_swmmu_store_dynamic; \
+	check_call svm_plain_field_load nommu_swmmu_load_dynamic; \
+	check_call svm_plain_field_store nommu_swmmu_store_dynamic; \
+	check_call svm_plain_array_load nommu_swmmu_load_dynamic; \
+	check_call svm_plain_array_store nommu_swmmu_store_dynamic; \
+	check_call svm_plain_cross_function_load svm_plain_pointer_load; \
 	check_call typed_parameter_caller typed_load;
 
 test-negative:

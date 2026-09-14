@@ -356,3 +356,52 @@ uint64_t load_from_realloc_ordinary(uint64_t *pointer)
 
 	return *result;
 }
+
+struct svm_plain_record {
+	uint64_t value;
+};
+
+__attribute__((noinline, swmmu))
+uint64_t svm_plain_pointer_load(const uint64_t *pointer)
+{
+	return *pointer;
+}
+
+__attribute__((noinline, swmmu))
+void svm_plain_pointer_store(uint64_t *pointer, uint64_t value)
+{
+	*pointer = value;
+}
+
+__attribute__((noinline, swmmu))
+uint64_t svm_plain_field_load(const struct svm_plain_record *record)
+{
+	return record->value;
+}
+
+__attribute__((noinline, swmmu))
+void svm_plain_field_store(struct svm_plain_record *record, uint64_t value)
+{
+	record->value = value;
+}
+
+__attribute__((noinline, swmmu))
+uint64_t svm_plain_array_load(const uint64_t *array, size_t index)
+{
+	return array[index];
+}
+
+__attribute__((noinline, swmmu))
+void svm_plain_array_store(uint64_t *array, size_t index, uint64_t value)
+{
+	array[index] = value;
+}
+
+__attribute__((noinline, swmmu))
+uint64_t svm_plain_cross_function_load(const uint64_t *pointer)
+{
+	uint64_t value;
+
+	value = svm_plain_pointer_load(pointer);
+	return value + 1;
+}
