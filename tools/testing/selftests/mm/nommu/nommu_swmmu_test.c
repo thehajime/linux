@@ -173,6 +173,25 @@ static void swmmu_test_stage(const char *message)
 	(void)write(STDERR_FILENO, "\n", 1);
 }
 
+struct swmmu_pointer_holder {
+	uint64_t *pointer;
+};
+
+__attribute__((swmmu, noinline))
+static void
+test_swmmu_store_pointer_field(struct swmmu_pointer_holder *holder,
+			       uint64_t *pointer)
+{
+	holder->pointer = pointer;
+}
+
+__attribute__((swmmu, noinline))
+static uint64_t
+test_swmmu_load_pointer_field(
+	const struct swmmu_pointer_holder *holder)
+{
+	return *holder->pointer;
+}
 
 struct swmmu_test_object {
 	uint64_t value;
@@ -252,6 +271,22 @@ test_scalar_access(void)
 	if (value != 43) {
 		SWMMU_TEST_FAIL(
 			"load returned %llu, expected 43\n",
+			(unsigned long long)value);
+		nommu_swmmu_free(object);
+		return KSFT_FAIL;
+	}
+
+	{
+		struct swmmu_pointer_holder holder;
+
+		test_swmmu_store_pointer_field(&holder, &object->value);
+		value = test_swmmu_load_pointer_field(&holder);
+	}
+
+	if (value != 43) {
+		SWMMU_TEST_FAIL(
+			"cross-function pointer field access returned %llu, "
+			"expected 43\n",
 			(unsigned long long)value);
 		nommu_swmmu_free(object);
 		return KSFT_FAIL;
@@ -574,6 +609,16 @@ static int test_standard_mmap(void)
 	 */
 	nommu_swmmu_store_u64(base, sizeof(uint64_t), 100);
 
+	value = test_swmmu_dynamic_pointer(base);
+	if (value != 101) {
+		SWMMU_TEST_FAIL(
+			"compiler-generated dynamic mmap access returned %llu, "
+			"expected 101\n",
+			(unsigned long long)value);
+		ret = KSFT_FAIL;
+		goto end;
+	}
+
 	grown = mremap(base, ps, ps * 2, 0);
 	if (grown == MAP_FAILED) {
 		SWMMU_TEST_FAIL("SWMMU mremap failed: %s\n",
@@ -584,7 +629,7 @@ static int test_standard_mmap(void)
 	mapped_len = ps * 2;
 
 	value = nommu_swmmu_load_u64(grown, sizeof(uint64_t));
-	if (value != 100) {
+	if (value != 101) {
 		SWMMU_TEST_FAIL("mmap value was not preserved\n");
 		ret = KSFT_FAIL;
 		goto end;

@@ -405,3 +405,31 @@ uint64_t svm_plain_cross_function_load(const uint64_t *pointer)
 	value = svm_plain_pointer_load(pointer);
 	return value + 1;
 }
+
+struct svm_cross_holder {
+	uint64_t *pointer;
+};
+
+__attribute__((swmmu, noinline))
+static void
+svm_cross_store(struct svm_cross_holder *holder, uint64_t *pointer)
+{
+	holder->pointer = pointer;
+}
+
+__attribute__((swmmu, noinline))
+static uint64_t
+svm_cross_load(const struct svm_cross_holder *holder)
+{
+	return *holder->pointer;
+}
+
+__attribute__((swmmu, noinline))
+uint64_t
+svm_cross_function_field_load(uint64_t *pointer)
+{
+	struct svm_cross_holder holder;
+
+	svm_cross_store(&holder, pointer);
+	return svm_cross_load(&holder);
+}
