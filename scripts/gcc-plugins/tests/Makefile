@@ -26,8 +26,11 @@ UNKNOWN_SOURCE_ABS = $(abspath $(UNKNOWN_SOURCE))
 UNKNOWN_LOG := $(DUMP_DIR_ABS)/swmmu_provenance_unknown.log
 UNKNOWN_ASM := $(DUMP_DIR_ABS)/swmmu_provenance_unknown.s
 
+ALL_ACCESS_SOURCE := $(TEST_DIR)/swmmu_all_access.c
+ALL_ACCESS_ASM := $(OUTPUT)/swmmu_all_access.s
 
-.PHONY: all test compile dump dump-unknown-boundary clean
+
+.PHONY: all test compile dump dump-unknown-boundary clean all-access
 .PHONY: $(filter test-negative%,$(MAKECMDGOALS))
 
 all: test
@@ -226,6 +229,50 @@ test-negative-realloc:
 		exit 1; \
 	fi
 	@echo "ok: unannotated SWMMU realloc are diagnosed"
+
+$(ALL_ACCESS_ASM): $(ALL_ACCESS_SOURCE) $(PLUGIN)
+	@mkdir -p $(OUTPUT)
+	$(CC) $(CFLAGS) -fno-inline \
+		-fplugin=$(PLUGIN) \
+		-fplugin-arg-swmmu_plugin-all-access=1 \
+		-S -c $(ALL_ACCESS_SOURCE) \
+		-o $(ALL_ACCESS_ASM)
+
+all-access: $(ALL_ACCESS_ASM)
+	@grep -A8 'swmmu_all_access_load:' $(ALL_ACCESS_ASM) \
+		| grep -q 'nommu_swmmu_load_dynamic' || \
+		{ echo "error: all-access load was not lowered"; exit 1; }
+	@grep -A8 'swmmu_all_access_store:' $(ALL_ACCESS_ASM) \
+		| grep -q 'nommu_swmmu_store_dynamic' || \
+		{ echo "error: all-access store was not lowered"; exit 1; }
+	@grep -A8 'swmmu_all_access_field:' $(ALL_ACCESS_ASM) \
+		| grep -q 'nommu_swmmu_load_dynamic' || \
+		{ echo "error: all-access field was not lowered"; exit 1; }
+	@grep -A8 'swmmu_all_access_array:' $(ALL_ACCESS_ASM) \
+		| grep -q 'nommu_swmmu_store_dynamic' || \
+		{ echo "error: all-access array was not lowered"; exit 1; }
+	@grep -A24 'swmmu_all_access_alias_load:' $(ALL_ACCESS_ASM) \
+		| grep -q 'nommu_swmmu_load_dynamic' || \
+		{ echo "error: all-access alias load was not lowered"; exit 1; }
+	@grep -A24 'swmmu_all_access_alias_store:' $(ALL_ACCESS_ASM) \
+		| grep -q 'nommu_swmmu_store_dynamic' || \
+		{ echo "error: all-access alias store was not lowered"; exit 1; }
+	@grep -A24 'swmmu_all_access_store_field:' $(ALL_ACCESS_ASM) \
+		| grep -q 'nommu_swmmu_store_dynamic' || \
+		{ echo "error: all-access field store was not lowered"; exit 1; }
+	@grep -A24 'swmmu_all_access_load_field:' $(ALL_ACCESS_ASM) \
+		| grep -q 'nommu_swmmu_load_dynamic' || \
+		{ echo "error: all-access field load was not lowered"; exit 1; }
+	@grep -A32 'swmmu_all_access_cross_function:' $(ALL_ACCESS_ASM) \
+		| grep -q 'swmmu_all_access_load_field' || \
+		{ echo "error: all-access cross-function call is missing"; exit 1; }
+	@grep -A24 'swmmu_all_access_unknown_load:' $(ALL_ACCESS_ASM) \
+		| grep -q 'nommu_swmmu_load_dynamic' || \
+		{ echo "error: all-access unknown load was not lowered"; exit 1; }
+	@grep -A24 'swmmu_all_access_unknown_store:' $(ALL_ACCESS_ASM) \
+		| grep -q 'nommu_swmmu_store_dynamic' || \
+		{ echo "error: all-access unknown store was not lowered"; exit 1; }
+	@echo "ok: SWMMU all-access baseline lowering"
 
 compile: $(TEST_ASM)
 

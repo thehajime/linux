@@ -42,6 +42,7 @@ static tree swmmu_memset_decl;
 static tree swmmu_load_dynamic_decl;
 static tree swmmu_store_dynamic_decl;
 
+static bool swmmu_all_access;
 
 enum swmmu_pointer_state {
 	SWMMU_POINTER_ORDINARY,
@@ -442,6 +443,30 @@ is_swmmu_allocator_function(tree fndecl)
 {
 	return is_swmmu_allocator_result(fndecl) ||
 	       is_swmmu_standard_allocator(fndecl);
+}
+
+static bool
+is_swmmu_runtime_function(tree fndecl)
+{
+	tree name;
+	const char *function_name;
+
+	if (!fndecl || TREE_CODE(fndecl) != FUNCTION_DECL)
+		return false;
+
+	name = DECL_NAME(fndecl);
+	if (!name)
+		return false;
+
+	function_name = IDENTIFIER_POINTER(name);
+
+	return !strcmp(function_name, SWMMU_LOAD_NAME) ||
+		!strcmp(function_name, SWMMU_STORE_NAME) ||
+		!strcmp(function_name, SWMMU_LOAD_DYNAMIC_NAME) ||
+		!strcmp(function_name, SWMMU_STORE_DYNAMIC_NAME) ||
+		!strcmp(function_name, SWMMU_MEMCPY_NAME) ||
+		!strcmp(function_name, SWMMU_MEMMOVE_NAME) ||
+		!strcmp(function_name, SWMMU_MEMSET_NAME);
 }
 
 
@@ -1133,9 +1158,14 @@ public:
 		unsigned int execute(function *fn) override
 		{
 			const char *name = IDENTIFIER_POINTER(DECL_NAME(fn->decl));
-
 			bool function_marked = is_swmmu_function(fn);
-			if (!function_marked &&
+			bool svm_function = function_marked || swmmu_all_access;
+
+			if (swmmu_all_access &&
+				is_swmmu_runtime_function(fn->decl))
+				return 0;
+
+			if (!svm_function &&
 				!function_has_swmmu_access(fn) &&
 				!function_has_swmmu_parameter(fn) &&
 				!function_has_swmmu_allocator_call(fn))
@@ -1144,10 +1174,8 @@ public:
 			bool swmmu_context;
 			hash_map<tree, enum swmmu_pointer_state> states;
 
-			swmmu_context = function_marked ||
-				function_has_swmmu_parameter(fn);
-
-			swmmu_seed_pointer_states(fn, function_marked, states);
+			swmmu_context = svm_function || function_has_swmmu_parameter(fn);
+			swmmu_seed_pointer_states(fn, svm_function, states);
 
 			init_runtime_decls();
 
@@ -1172,7 +1200,7 @@ public:
 					if (gimple_code(generic_stmt) == GIMPLE_CALL) {
 						gcall *call = as_a_gcall(generic_stmt);
 
-						check_swmmu_call(call, states, function_marked);
+						check_swmmu_call(call, states, svm_function);
 						swmmu_record_pointer_call(call, swmmu_context, states);
 
 						gsi_next(&gsi);
@@ -1193,7 +1221,7 @@ public:
 					rhs_state = swmmu_lvalue_state(rhs, states);
 					lhs_state = swmmu_lvalue_state(lhs, states);
 
-					if (function_marked) {
+					if (svm_function) {
 						tree runtime_decl;
 
 						runtime_decl = swmmu_dynamic_runtime_decl(false);
@@ -1210,7 +1238,7 @@ public:
 						rhs_state == SWMMU_POINTER_SWMMU) {
 						tree runtime_decl;
 
-						runtime_decl = function_marked ?
+						runtime_decl = svm_function ?
 							swmmu_dynamic_runtime_decl(false) :
 							swmmu_load_runtime_for_state(rhs_state);
 						if (!runtime_decl) {
@@ -1221,7 +1249,7 @@ public:
 						}
 					}
 
-					if (function_marked) {
+					if (svm_function) {
 						tree runtime_decl;
 
 						runtime_decl = swmmu_dynamic_runtime_decl(true);
@@ -1238,7 +1266,7 @@ public:
 						lhs_state == SWMMU_POINTER_SWMMU) {
 						tree runtime_decl;
 
-						runtime_decl = function_marked ?
+						runtime_decl = svm_function ?
 							swmmu_dynamic_runtime_decl(true) :
 							swmmu_store_runtime_for_state(lhs_state);
 						if (!runtime_decl) {
@@ -1283,6 +1311,11 @@ plugin_init(struct plugin_name_args *plugin_info,
 			PLUGIN_ATTRIBUTES,
 			register_swmmu_attributes,
 			NULL);
+
+	for (int i = 0; i < plugin_info->argc; i++) {
+		if (!strcmp(plugin_info->argv[i].key, "all-access"))
+			swmmu_all_access = true;
+	}
 
 	static register_pass_info pass_info;
 
