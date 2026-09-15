@@ -781,7 +781,8 @@ swmmu_lower_memop_call(gcall *call,
 static bool
 check_swmmu_call(
 	gcall *call,
-	hash_map<tree, enum swmmu_pointer_state> &states)
+	hash_map<tree, enum swmmu_pointer_state> &states,
+	bool function_marked)
 {
 	tree fndecl = gimple_call_fndecl(call);
 
@@ -791,17 +792,14 @@ check_swmmu_call(
 		enum swmmu_pointer_state state =
 			swmmu_pointer_state_of(pointer, states);
 
-		if (state == SWMMU_POINTER_UNKNOWN) {
+		if (state == SWMMU_POINTER_UNKNOWN &&
+		    !function_marked) {
 			error_at(gimple_location(call),
 				 "SWMMU pointer state is unknown at "
 				 "realloc boundary");
 			return false;
 		}
 
-		/*
-		 * ordinary, SWMMU, DYNAMIC, and NULL are valid
-		 * realloc inputs.
-		 */
 		return true;
 	}
 
@@ -810,6 +808,9 @@ check_swmmu_call(
 		return swmmu_lower_memop_call(
 			call,
 			swmmu_memop_kind_of(fndecl));
+
+	if (function_marked)
+		return true;
 
 	if (!swmmu_call_has_unannotated_argument(call))
 		return true;
@@ -1171,7 +1172,7 @@ public:
 					if (gimple_code(generic_stmt) == GIMPLE_CALL) {
 						gcall *call = as_a_gcall(generic_stmt);
 
-						check_swmmu_call(call, states);
+						check_swmmu_call(call, states, function_marked);
 						swmmu_record_pointer_call(call, swmmu_context, states);
 
 						gsi_next(&gsi);
@@ -1192,11 +1193,20 @@ public:
 					rhs_state = swmmu_lvalue_state(rhs, states);
 					lhs_state = swmmu_lvalue_state(lhs, states);
 
-					if (rhs_state == SWMMU_POINTER_UNKNOWN) {
+					if (function_marked) {
+						tree runtime_decl;
+
+						runtime_decl = swmmu_dynamic_runtime_decl(false);
+						if (!runtime_decl) {
+							error_at(gimple_location(stmt),
+								"SWMMU load runtime declaration is missing");
+						} else {
+							rewrite_load(&gsi, stmt, runtime_decl);
+						}
+					} else if (rhs_state == SWMMU_POINTER_UNKNOWN) {
 						error_at(gimple_location(stmt),
 							"SWMMU pointer state is unknown at dereference");
 					} else if (rhs_state == SWMMU_POINTER_DYNAMIC ||
-						function_marked ||
 						rhs_state == SWMMU_POINTER_SWMMU) {
 						tree runtime_decl;
 
@@ -1211,11 +1221,20 @@ public:
 						}
 					}
 
-					if (lhs_state == SWMMU_POINTER_UNKNOWN) {
+					if (function_marked) {
+						tree runtime_decl;
+
+						runtime_decl = swmmu_dynamic_runtime_decl(true);
+						if (!runtime_decl) {
+							error_at(gimple_location(stmt),
+								"SWMMU store runtime declaration is missing");
+						} else {
+							rewrite_store(&gsi, stmt, runtime_decl);
+						}
+					} else if (lhs_state == SWMMU_POINTER_UNKNOWN) {
 						error_at(gimple_location(stmt),
 							"SWMMU pointer state is unknown at dereference");
 					} else if (lhs_state == SWMMU_POINTER_DYNAMIC ||
-						function_marked ||
 						lhs_state == SWMMU_POINTER_SWMMU) {
 						tree runtime_decl;
 

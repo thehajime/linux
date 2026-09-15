@@ -112,6 +112,8 @@ test: $(TEST_ASM)
 	check_call svm_cross_load nommu_swmmu_load_dynamic; \
 	check_call svm_cross_function_field_load svm_cross_store; \
 	check_call svm_cross_function_field_load svm_cross_load; \
+	check_call svm_unknown_return_load nommu_swmmu_load_dynamic; \
+	check_call svm_unknown_return_store nommu_swmmu_store_dynamic; \
 	check_call typed_parameter_caller typed_load;
 
 test-negative:

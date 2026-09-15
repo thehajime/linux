@@ -433,3 +433,19 @@ svm_cross_function_field_load(uint64_t *pointer)
 	svm_cross_store(&holder, pointer);
 	return svm_cross_load(&holder);
 }
+
+extern uint64_t *svm_unknown_pointer(void);
+
+__attribute__((noinline, swmmu))
+uint64_t
+svm_unknown_return_load(void)
+{
+	return *svm_unknown_pointer();
+}
+
+__attribute__((noinline, swmmu))
+void
+svm_unknown_return_store(uint64_t value)
+{
+	*svm_unknown_pointer() = value;
+}
