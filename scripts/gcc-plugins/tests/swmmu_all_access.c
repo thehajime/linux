@@ -24,6 +24,10 @@ extern void *nommu_swmmu_memset(void *destination,
 				int value,
 				size_t size);
 
+extern void *nommu_swmmu_memcpy_dynamic(
+	void *destination,
+	const void *source,
+	size_t size);
 
 static uint64_t (* const __attribute__((used))
 keep_swmmu_load)(const void *, size_t) = nommu_swmmu_load_u64;
@@ -50,6 +54,10 @@ keep_swmmu_memmove)(void *, const void *, size_t) =
 static void *(* const __attribute__((used))
 keep_swmmu_memset)(void *, int, size_t) =
 	nommu_swmmu_memset;
+
+static void *(* const __attribute__((used))
+keep_swmmu_memcpy_dynamic)(void *, const void *, size_t) =
+	nommu_swmmu_memcpy_dynamic;
 
 
 __attribute__((noinline))
@@ -189,4 +197,28 @@ swmmu_all_access_memset(void *destination,
 			size_t size)
 {
 	memset(destination, value, size);
+}
+
+struct swmmu_all_access_pair {
+	uint64_t first;
+	uint64_t second;
+};
+
+__attribute__((noinline, noipa, used))
+void
+swmmu_all_access_struct_copy(
+	struct swmmu_all_access_pair *destination,
+	const struct swmmu_all_access_pair *source)
+{
+	*destination = *source;
+}
+
+__attribute__((noinline, noipa, used))
+void
+swmmu_all_access_struct_field_copy(
+	struct swmmu_all_access_pair *destination,
+	const struct swmmu_all_access_pair *source)
+{
+	destination->first = source->first;
+	destination->second = source->second;
 }

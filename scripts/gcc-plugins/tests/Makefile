@@ -281,6 +281,10 @@ all-access: $(ALL_ACCESS_ASM)
 	@grep -A24 'swmmu_all_access_memset:' $(ALL_ACCESS_ASM) \
 		| grep -q 'nommu_swmmu_memset' || \
 		{ echo "error: all-access memset was not lowered"; exit 1; }
+	@grep -A24 'swmmu_all_access_struct_copy:' \
+		$(ALL_ACCESS_ASM) \
+		| grep -q 'nommu_swmmu_memcpy_dynamic' || \
+		{ echo "error: aggregate copy was not lowered"; exit 1; }
 	@echo "ok: SWMMU all-access baseline lowering"
 
 ALL_ACCESS_BUILTIN_ASM := \

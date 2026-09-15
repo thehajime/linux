@@ -224,3 +224,24 @@ int nommu_swmmu_store_dynamic_checked(void *address, size_t size,
 
 	return ret < 0 ? -errno : 0;
 }
+
+void *nommu_swmmu_memcpy_dynamic(void *destination,
+				 const void *source,
+				 size_t size)
+{
+	unsigned char *dst = destination;
+	const unsigned char *src = source;
+	void *result = destination;
+
+	while (size--) {
+		uint64_t value;
+
+		value = nommu_swmmu_load_dynamic(src, 1);
+		nommu_swmmu_store_dynamic(dst, 1, value);
+
+		src++;
+		dst++;
+	}
+
+	return result;
+}

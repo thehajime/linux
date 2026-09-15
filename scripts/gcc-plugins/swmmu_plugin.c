@@ -24,6 +24,16 @@
 #define SWMMU_MEMSET_NAME "nommu_swmmu_memset"
 #define SWMMU_LOAD_DYNAMIC_NAME  "nommu_swmmu_load_dynamic"
 #define SWMMU_STORE_DYNAMIC_NAME "nommu_swmmu_store_dynamic"
+#define SWMMU_MEMCPY_DYNAMIC_NAME "nommu_swmmu_memcpy_dynamic"
+
+static tree swmmu_load_decl;
+static tree swmmu_store_decl;
+static tree swmmu_memcpy_decl;
+static tree swmmu_memmove_decl;
+static tree swmmu_memset_decl;
+static tree swmmu_load_dynamic_decl;
+static tree swmmu_store_dynamic_decl;
+static tree swmmu_memcpy_dynamic_decl;
 
 
 #ifdef SWMMU_PLUGIN_DEBUG
@@ -33,14 +43,6 @@
 #endif
 
 int plugin_is_GPL_compatible;
-
-static tree swmmu_load_decl;
-static tree swmmu_store_decl;
-static tree swmmu_memcpy_decl;
-static tree swmmu_memmove_decl;
-static tree swmmu_memset_decl;
-static tree swmmu_load_dynamic_decl;
-static tree swmmu_store_dynamic_decl;
 
 static bool swmmu_all_access;
 
@@ -140,6 +142,22 @@ swmmu_dynamic_runtime_decl(bool store)
 	}
 
 	return *decl;
+}
+
+static tree
+swmmu_memcpy_dynamic_runtime_decl(void)
+{
+	if (!swmmu_memcpy_dynamic_decl) {
+		swmmu_memcpy_dynamic_decl =
+			find_function_decl(
+				SWMMU_MEMCPY_DYNAMIC_NAME);
+
+		if (swmmu_memcpy_dynamic_decl)
+			protect_runtime_decl(
+				swmmu_memcpy_dynamic_decl);
+	}
+
+	return swmmu_memcpy_dynamic_decl;
 }
 
 static void
@@ -466,7 +484,8 @@ is_swmmu_runtime_function(tree fndecl)
 		!strcmp(function_name, SWMMU_STORE_DYNAMIC_NAME) ||
 		!strcmp(function_name, SWMMU_MEMCPY_NAME) ||
 		!strcmp(function_name, SWMMU_MEMMOVE_NAME) ||
-		!strcmp(function_name, SWMMU_MEMSET_NAME);
+		!strcmp(function_name, SWMMU_MEMSET_NAME) ||
+		!strcmp(function_name, SWMMU_MEMCPY_DYNAMIC_NAME);
 }
 
 
@@ -1047,6 +1066,60 @@ rewrite_store(gimple_stmt_iterator *gsi,
 }
 
 static bool
+rewrite_aggregate_copy(
+	gimple_stmt_iterator *gsi,
+	gassign *stmt,
+	tree runtime_decl)
+{
+	tree destination;
+	tree source;
+	tree type;
+	tree destination_address;
+	tree source_address;
+	tree size_tree;
+	unsigned HOST_WIDE_INT size;
+	gcall *call;
+
+	destination = gimple_assign_lhs(stmt);
+	source = gimple_assign_rhs1(stmt);
+	type = TREE_TYPE(destination);
+
+	if (!AGGREGATE_TYPE_P(type) ||
+	    !is_swmmu_lvalue(destination) ||
+	    !is_swmmu_lvalue(source))
+		return false;
+
+	size_tree = TYPE_SIZE_UNIT(type);
+	if (!size_tree || !tree_fits_uhwi_p(size_tree))
+		return false;
+
+	size = tree_to_uhwi(size_tree);
+	if (!size)
+		return false;
+
+	destination_address =
+		build_fold_addr_expr(destination);
+	destination_address =
+		force_swmmu_operand(gsi, destination_address);
+
+	source_address =
+		build_fold_addr_expr(source);
+	source_address =
+		force_swmmu_operand(gsi, source_address);
+
+	call = gimple_build_call(runtime_decl,
+				 3,
+				 destination_address,
+				 source_address,
+				 build_int_cst(size_type_node, size));
+
+	gimple_set_location(call, gimple_location(stmt));
+	gsi_replace(gsi, call, true);
+
+	return true;
+}
+
+static bool
 function_has_swmmu_access(function *fn)
 {
 	basic_block bb;
@@ -1255,6 +1328,23 @@ public:
 					tree rhs = gimple_assign_rhs1(stmt);
 					enum swmmu_pointer_state rhs_state;
 					enum swmmu_pointer_state lhs_state;
+
+					if (svm_function &&
+						TREE_TYPE(lhs) &&
+						AGGREGATE_TYPE_P(TREE_TYPE(lhs))) {
+						tree runtime_decl;
+
+						runtime_decl = swmmu_memcpy_dynamic_runtime_decl();
+						if (!runtime_decl) {
+							error_at(gimple_location(stmt),
+								"SWMMU aggregate-copy runtime "
+								"declaration is missing");
+						} else if (rewrite_aggregate_copy(
+								&gsi, stmt, runtime_decl)) {
+							gsi_next(&gsi);
+							continue;
+						}
+					}
 
 					rhs_state = swmmu_lvalue_state(rhs, states);
 					lhs_state = swmmu_lvalue_state(lhs, states);

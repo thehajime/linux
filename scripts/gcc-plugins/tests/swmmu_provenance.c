@@ -15,6 +15,10 @@ extern long nommu_swmmu_store_dynamic(void *address,
 				      size_t size,
 				      uint64_t value);
 
+extern void *nommu_swmmu_memcpy_dynamic(void *destination,
+					const void *source,
+					size_t size);
+
 static uint64_t (* const __attribute__((used))
 keep_swmmu_load)(const void *, size_t) = nommu_swmmu_load_u64;
 
@@ -28,6 +32,11 @@ keep_swmmu_load_dynamic)(const void *, size_t) =
 static long (* const __attribute__((used))
 keep_swmmu_store_dynamic)(void *, size_t, uint64_t) =
 	nommu_swmmu_store_dynamic;
+
+static void *(* const __attribute__((used))
+keep_swmmu_memcpy_dynamic)(void *, const void *, size_t) =
+	nommu_swmmu_memcpy_dynamic;
+
 
 __attribute__((noinline, swmmu))
 uint64_t function_marked_load(uint64_t *p)

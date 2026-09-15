@@ -67,6 +67,10 @@ static long (* const __attribute__((used))
 keep_swmmu_store_dynamic)(void *, size_t, uint64_t) =
 	nommu_swmmu_store_dynamic;
 
+static void *(* const __attribute__((used))
+keep_swmmu_memcpy_dynamic)(void *, const void *, size_t) =
+	nommu_swmmu_memcpy_dynamic;
+
 typedef unsigned char * __attribute__((swmmu_ptr)) swmmu_byte_ptr;
 
 extern void *memcpy(void *destination,
@@ -231,6 +235,19 @@ test_swmmu_store_load_pointer(uint64_t *pointer, uint64_t value)
 {
 	*pointer = value;
 	return *pointer;
+}
+
+struct swmmu_test_pair {
+	uint64_t first;
+	uint64_t second;
+};
+
+__attribute__((swmmu, noinline))
+static void
+test_swmmu_struct_copy(struct swmmu_test_pair *destination,
+		       const struct swmmu_test_pair *source)
+{
+	*destination = *source;
 }
 
 static int
@@ -3837,6 +3854,65 @@ static int test_allocator_basic(void)
 	return KSFT_PASS;
 }
 
+static int test_struct_copy(void)
+{
+	struct swmmu_test_pair *source;
+	struct swmmu_test_pair *destination;
+	uint64_t value;
+
+	source = nommu_swmmu_alloc(sizeof(*source));
+	destination = nommu_swmmu_alloc(sizeof(*destination));
+
+	if (!source || !destination) {
+		if (source)
+			nommu_swmmu_free(source);
+		if (destination)
+			nommu_swmmu_free(destination);
+
+		ksft_test_result_skip(
+			"SWMMU allocation is unavailable\n");
+		return KSFT_SKIP;
+	}
+
+	nommu_swmmu_store_u64(
+		&source->first, sizeof(source->first),
+		0x1122334455667788ULL);
+	nommu_swmmu_store_u64(
+		&source->second, sizeof(source->second),
+		0x99aabbccddeeff00ULL);
+
+	test_swmmu_struct_copy(destination, source);
+
+	value = nommu_swmmu_load_u64(
+		&destination->first, sizeof(destination->first));
+	if (value != 0x1122334455667788ULL) {
+		SWMMU_TEST_FAIL(
+			"first field mismatch: %#llx\n",
+			(unsigned long long)value);
+		nommu_swmmu_free(destination);
+		nommu_swmmu_free(source);
+		return KSFT_FAIL;
+	}
+
+	value = nommu_swmmu_load_u64(
+		&destination->second, sizeof(destination->second));
+	if (value != 0x99aabbccddeeff00ULL) {
+		SWMMU_TEST_FAIL(
+			"second field mismatch: %#llx\n",
+			(unsigned long long)value);
+		nommu_swmmu_free(destination);
+		nommu_swmmu_free(source);
+		return KSFT_FAIL;
+	}
+
+	nommu_swmmu_free(destination);
+	nommu_swmmu_free(source);
+
+	SWMMU_TEST_PASS(
+		"compiler-generated SWMMU aggregate copy works\n");
+	return KSFT_PASS;
+}
+
 
 typedef int (*swmmu_test_fn)(void);
 static const swmmu_test_fn testcases[] = {
@@ -3881,6 +3957,7 @@ static const swmmu_test_fn testcases[] = {
 	test_dynamic_access,
 	test_allocator_basic,
 	test_allocator_domains,
+	test_struct_copy,
 
 	/*
 	 * Keep cleanup tests last.

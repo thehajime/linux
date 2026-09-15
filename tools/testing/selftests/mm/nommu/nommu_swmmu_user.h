@@ -36,5 +36,8 @@ int nommu_swmmu_load_dynamic_checked(const void *address, size_t size,
 				uint64_t *result);
 int nommu_swmmu_store_dynamic_checked(void *address, size_t size,
 				uint64_t value);
+void *nommu_swmmu_memcpy_dynamic(void *destination,
+				 const void *source,
+				 size_t size);
 
 #endif
