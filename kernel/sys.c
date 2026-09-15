@@ -65,6 +65,7 @@
 #include <linux/rcupdate.h>
 #include <linux/uidgid.h>
 #include <linux/cred.h>
+#include <linux/nommu_swmmu.h>
 
 #include <linux/nospec.h>
 
@@ -2906,6 +2907,21 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 			break;
 		if (arg3 & PR_CFI_LOCK && !(arg3 & PR_CFI_DISABLE))
 			error = arch_prctl_lock_branch_landing_pad_state(me);
+		break;
+	case PR_SET_SWMMU:
+		if (!IS_ENABLED(CONFIG_NOMMU_SWMMU))
+			return -EOPNOTSUPP;
+
+		if (arg2 != PR_SWMMU_OFF &&
+			arg2 != PR_SWMMU_ON)
+			return -EINVAL;
+
+		error = nommu_swmmu_set_mode(current->mm, arg2);
+		break;
+	case PR_GET_SWMMU:
+		if (!IS_ENABLED(CONFIG_NOMMU_SWMMU))
+			return -EOPNOTSUPP;
+		error = nommu_swmmu_get_mode(current->mm);
 		break;
 	default:
 		trace_task_prctl_unknown(option, arg2, arg3, arg4, arg5);

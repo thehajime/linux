@@ -113,6 +113,7 @@
 #include <linux/export.h>
 #include <linux/pgalloc.h>
 #include <linux/uaccess.h>
+#include <linux/nommu_swmmu.h>
 
 #include <asm/mmu_context.h>
 #include <asm/cacheflush.h>
@@ -740,6 +741,10 @@ void __mmdrop(struct mm_struct *mm)
 	mm_destroy_cid(mm);
 	percpu_counter_destroy_many(mm->rss_stat, NR_MM_COUNTERS);
 
+#ifdef CONFIG_NOMMU_SWMMU
+	nommu_swmmu_space_detach(mm);
+#endif
+
 	free_mm(mm);
 }
 EXPORT_SYMBOL_GPL(__mmdrop);
@@ -1144,6 +1149,21 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p)
 		goto fail_pcpu;
 
 	lru_gen_init_mm(mm);
+
+#ifdef CONFIG_NOMMU_SWMMU
+	struct nommu_swmmu_space *new_space;
+
+	mm->swmmu_mode = NOMMU_SWMMU_OFF;
+
+	new_space = nommu_swmmu_space_create();
+	if (!new_space)
+		goto fail_pcpu;
+
+	if (nommu_swmmu_space_attach(mm, new_space)) {
+		nommu_swmmu_space_put(new_space);
+		goto fail_pcpu;
+	}
+#endif
 	return mm;
 
 fail_pcpu:
@@ -1535,10 +1555,32 @@ static struct mm_struct *dup_mm(struct task_struct *tsk,
 	if (!mm)
 		goto fail_nomem;
 
+#ifdef CONFIG_NOMMU_SWMMU
+	enum nommu_swmmu_mode swmmu_mode;
+
+	swmmu_mode = oldmm->swmmu_mode;
+#endif
+
 	memcpy(mm, oldmm, sizeof(*mm));
+
+#ifdef CONFIG_NOMMU_SWMMU
+	/*
+	 * swmmu_space is per-mm state and must not be inherited
+	 * through the mm_struct memcpy.
+	 */
+	mm->swmmu_space = NULL;
+#endif
 
 	if (!mm_init(mm, tsk))
 		goto fail_nomem;
+
+#ifdef CONFIG_NOMMU_SWMMU
+	/*
+	 * mm_init() initializes a newly created mm to OFF. Restore
+	 * the parent's mode for the duplicated address space.
+	 */
+	mm->swmmu_mode = swmmu_mode;
+#endif
 
 	uprobe_start_dup_mmap();
 	err = dup_mmap(mm, oldmm);
@@ -2829,7 +2871,7 @@ EXPORT_SYMBOL_FOR_MODULES(user_mode_thread, "kunit-uapi");
 #ifdef __ARCH_WANT_SYS_FORK
 SYSCALL_DEFINE0(fork)
 {
-#ifdef CONFIG_MMU
+#if defined(CONFIG_MMU) || IS_ENABLED(CONFIG_NOMMU_SWMMU)
 	struct kernel_clone_args args = {
 		.exit_signal = SIGCHLD,
 	};
