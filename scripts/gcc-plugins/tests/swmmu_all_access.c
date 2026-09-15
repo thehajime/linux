@@ -12,6 +12,18 @@ extern uint64_t nommu_swmmu_load_dynamic(const void *address,
 extern long nommu_swmmu_store_dynamic(void *address,
 				      size_t size,
 				      uint64_t value);
+extern void *nommu_swmmu_memcpy(void *destination,
+				const void *source,
+				size_t size);
+
+extern void *nommu_swmmu_memmove(void *destination,
+				 const void *source,
+				 size_t size);
+
+extern void *nommu_swmmu_memset(void *destination,
+				int value,
+				size_t size);
+
 
 static uint64_t (* const __attribute__((used))
 keep_swmmu_load)(const void *, size_t) = nommu_swmmu_load_u64;
@@ -27,6 +39,17 @@ static long (* const __attribute__((used))
 keep_swmmu_store_dynamic)(void *, size_t, uint64_t) =
 	nommu_swmmu_store_dynamic;
 
+static void *(* const __attribute__((used))
+keep_swmmu_memcpy)(void *, const void *, size_t) =
+	nommu_swmmu_memcpy;
+
+static void *(* const __attribute__((used))
+keep_swmmu_memmove)(void *, const void *, size_t) =
+	nommu_swmmu_memmove;
+
+static void *(* const __attribute__((used))
+keep_swmmu_memset)(void *, int, size_t) =
+	nommu_swmmu_memset;
 
 
 __attribute__((noinline))
@@ -127,4 +150,43 @@ void
 swmmu_all_access_unknown_store(uint64_t value)
 {
 	*swmmu_all_access_unknown_pointer() = value;
+}
+
+extern void *memcpy(void *destination,
+		    const void *source,
+		    size_t size);
+
+extern void *memmove(void *destination,
+		     const void *source,
+		     size_t size);
+
+extern void *memset(void *destination,
+		    int value,
+		    size_t size);
+
+__attribute__((noinline, noipa, used))
+void
+swmmu_all_access_memcpy(void *destination,
+			const void *source,
+			size_t size)
+{
+	memcpy(destination, source, size);
+}
+
+__attribute__((noinline, noipa, used))
+void
+swmmu_all_access_memmove(void *destination,
+			 const void *source,
+			 size_t size)
+{
+	memmove(destination, source, size);
+}
+
+__attribute__((noinline, noipa, used))
+void
+swmmu_all_access_memset(void *destination,
+			int value,
+			size_t size)
+{
+	memset(destination, value, size);
 }

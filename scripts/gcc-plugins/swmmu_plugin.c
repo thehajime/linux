@@ -673,15 +673,52 @@ swmmu_record_pointer_assignment(
 }
 
 static enum swmmu_memop_kind
+swmmu_standard_memop_kind(tree fndecl)
+{
+	tree name;
+	const char *function_name;
+
+	if (!swmmu_all_access ||
+	    !fndecl ||
+	    TREE_CODE(fndecl) != FUNCTION_DECL)
+		return SWMMU_MEMOP_NONE;
+
+	name = DECL_NAME(fndecl);
+	if (!name)
+		return SWMMU_MEMOP_NONE;
+
+	function_name = IDENTIFIER_POINTER(name);
+
+	if (!strcmp(function_name, "memcpy") ||
+	    !strcmp(function_name, "__builtin_memcpy"))
+		return SWMMU_MEMOP_MEMCPY;
+
+	if (!strcmp(function_name, "memmove") ||
+	    !strcmp(function_name, "__builtin_memmove"))
+		return SWMMU_MEMOP_MEMMOVE;
+
+	if (!strcmp(function_name, "memset") ||
+	    !strcmp(function_name, "__builtin_memset"))
+		return SWMMU_MEMOP_MEMSET;
+
+	return SWMMU_MEMOP_NONE;
+}
+
+static enum swmmu_memop_kind
 swmmu_memop_kind_of(tree fndecl)
 {
 	tree attr;
 	tree args;
 	tree value;
 	const char *kind;
+	enum swmmu_memop_kind standard_kind;
 
 	if (!fndecl || TREE_CODE(fndecl) != FUNCTION_DECL)
 		return SWMMU_MEMOP_NONE;
+
+	standard_kind = swmmu_standard_memop_kind(fndecl);
+	if (standard_kind != SWMMU_MEMOP_NONE)
+		return standard_kind;
 
 	attr = lookup_attribute("swmmu_memop",
 				DECL_ATTRIBUTES(fndecl));
@@ -810,6 +847,7 @@ check_swmmu_call(
 	bool function_marked)
 {
 	tree fndecl = gimple_call_fndecl(call);
+	enum swmmu_memop_kind memop_kind;
 
 	if (is_swmmu_reallocator(fndecl)) {
 		tree pointer = gimple_call_num_args(call) ?
@@ -828,11 +866,11 @@ check_swmmu_call(
 		return true;
 	}
 
-	if (swmmu_memop_kind_of(fndecl) != SWMMU_MEMOP_NONE &&
-		swmmu_call_has_swmmu_argument(call))
-		return swmmu_lower_memop_call(
-			call,
-			swmmu_memop_kind_of(fndecl));
+	memop_kind = swmmu_memop_kind_of(fndecl);
+	if (memop_kind != SWMMU_MEMOP_NONE &&
+	    (function_marked ||
+	     swmmu_call_has_swmmu_argument(call)))
+		return swmmu_lower_memop_call(call, memop_kind);
 
 	if (function_marked)
 		return true;

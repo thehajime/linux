@@ -232,7 +232,7 @@ test-negative-realloc:
 
 $(ALL_ACCESS_ASM): $(ALL_ACCESS_SOURCE) $(PLUGIN)
 	@mkdir -p $(OUTPUT)
-	$(CC) $(CFLAGS) -fno-inline \
+	$(CC) $(CFLAGS) -fno-inline -fno-builtin \
 		-fplugin=$(PLUGIN) \
 		-fplugin-arg-swmmu_plugin-all-access=1 \
 		-S -c $(ALL_ACCESS_SOURCE) \
@@ -272,7 +272,41 @@ all-access: $(ALL_ACCESS_ASM)
 	@grep -A24 'swmmu_all_access_unknown_store:' $(ALL_ACCESS_ASM) \
 		| grep -q 'nommu_swmmu_store_dynamic' || \
 		{ echo "error: all-access unknown store was not lowered"; exit 1; }
+	@grep -A24 'swmmu_all_access_memcpy:' $(ALL_ACCESS_ASM) \
+		| grep -q 'nommu_swmmu_memcpy' || \
+		{ echo "error: all-access memcpy was not lowered"; exit 1; }
+	@grep -A24 'swmmu_all_access_memmove:' $(ALL_ACCESS_ASM) \
+		| grep -q 'nommu_swmmu_memmove' || \
+		{ echo "error: all-access memmove was not lowered"; exit 1; }
+	@grep -A24 'swmmu_all_access_memset:' $(ALL_ACCESS_ASM) \
+		| grep -q 'nommu_swmmu_memset' || \
+		{ echo "error: all-access memset was not lowered"; exit 1; }
 	@echo "ok: SWMMU all-access baseline lowering"
+
+ALL_ACCESS_BUILTIN_ASM := \
+	$(OUTPUT)/swmmu_all_access_builtin.s
+
+$(ALL_ACCESS_BUILTIN_ASM): $(ALL_ACCESS_SOURCE) $(PLUGIN)
+	@mkdir -p $(OUTPUT)
+	$(CC) $(CFLAGS) -fno-inline \
+		-fplugin=$(PLUGIN) \
+		-fplugin-arg-swmmu_plugin-all-access=1 \
+		-S -c $(ALL_ACCESS_SOURCE) \
+		-o $(ALL_ACCESS_BUILTIN_ASM)
+
+.PHONY: all-access-builtins
+
+all-access-builtins: $(ALL_ACCESS_BUILTIN_ASM)
+	@grep -q 'nommu_swmmu_memcpy' \
+		$(ALL_ACCESS_BUILTIN_ASM) || \
+		{ echo "error: builtin memcpy was not lowered"; exit 1; }
+	@grep -q 'nommu_swmmu_memmove' \
+		$(ALL_ACCESS_BUILTIN_ASM) || \
+		{ echo "error: builtin memmove was not lowered"; exit 1; }
+	@grep -q 'nommu_swmmu_memset' \
+		$(ALL_ACCESS_BUILTIN_ASM) || \
+		{ echo "error: builtin memset was not lowered"; exit 1; }
+	@echo "ok: SWMMU all-access builtin memory lowering"
 
 compile: $(TEST_ASM)
 
