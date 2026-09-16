@@ -266,3 +266,20 @@ swmmu_all_access_bitfield_load(
 		(bits->third << 6) |
 		(bits->fourth << 12);
 }
+
+struct swmmu_all_access_nested {
+	struct {
+		struct {
+			uint32_t address;
+		} sin;
+	} u;
+};
+
+__attribute__((noinline, noipa, used))
+void
+swmmu_all_access_nested_store(
+	struct swmmu_all_access_nested *record,
+	uint32_t value)
+{
+	record->u.sin.address = value;
+}

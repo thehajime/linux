@@ -1432,6 +1432,68 @@ rewrite_store(gimple_stmt_iterator *gsi,
 }
 
 static bool
+rewrite_aggregate_zero(gimple_stmt_iterator *gsi,
+		       gassign *stmt)
+{
+	tree lhs;
+	tree rhs;
+	tree type;
+	tree size_tree;
+	tree address;
+	tree size_arg;
+	tree zero_arg;
+	tree runtime_decl;
+	gcall *call;
+
+	if (!swmmu_all_access)
+		return false;
+
+	lhs = gimple_assign_lhs(stmt);
+	rhs = gimple_assign_rhs1(stmt);
+
+	if (!lhs || !rhs ||
+	    !TREE_TYPE(lhs) ||
+	    !AGGREGATE_TYPE_P(TREE_TYPE(lhs)))
+		return false;
+
+	if (TREE_CODE(rhs) != CONSTRUCTOR ||
+	    CONSTRUCTOR_ELTS(rhs) != NULL)
+		return false;
+
+	type = TREE_TYPE(lhs);
+	size_tree = TYPE_SIZE_UNIT(type);
+
+	if (!size_tree ||
+	    TREE_CODE(size_tree) != INTEGER_CST ||
+	    !tree_fits_uhwi_p(size_tree))
+		return false;
+
+	runtime_decl =
+		swmmu_memop_runtime_decl(
+			SWMMU_MEMOP_MEMSET, true);
+	if (!runtime_decl)
+		return false;
+
+	address = swmmu_lvalue_address(lhs);
+	address = force_swmmu_operand(gsi, address);
+
+	size_arg = build_int_cst(
+		size_type_node, tree_to_uhwi(size_tree));
+	zero_arg = build_int_cst(integer_type_node, 0);
+
+	call = gimple_build_call(runtime_decl,
+				 3,
+				 address,
+				 zero_arg,
+				 size_arg);
+
+	gimple_set_location(call, gimple_location(stmt));
+	gsi_replace(gsi, call, true);
+
+	return true;
+}
+
+static bool
 rewrite_aggregate_copy(
 	gimple_stmt_iterator *gsi,
 	gassign *stmt,
@@ -1440,44 +1502,55 @@ rewrite_aggregate_copy(
 	tree destination;
 	tree source;
 	tree type;
+	tree size_tree;
 	tree destination_address;
 	tree source_address;
-	tree size_tree;
-	unsigned HOST_WIDE_INT size;
+	tree size_arg;
 	gcall *call;
 
 	destination = gimple_assign_lhs(stmt);
 	source = gimple_assign_rhs1(stmt);
 	type = TREE_TYPE(destination);
 
-	if (!AGGREGATE_TYPE_P(type) ||
-	    !is_swmmu_lvalue(destination) ||
-	    !is_swmmu_lvalue(source))
+	if (!AGGREGATE_TYPE_P(type))
 		return false;
 
 	size_tree = TYPE_SIZE_UNIT(type);
-	if (!size_tree || !tree_fits_uhwi_p(size_tree))
-		return false;
-
-	size = tree_to_uhwi(size_tree);
-	if (!size)
+	if (!size_tree ||
+	    TREE_CODE(size_tree) != INTEGER_CST ||
+		!tree_fits_uhwi_p(size_tree))
 		return false;
 
 	destination_address =
 		build_fold_addr_expr(destination);
-	destination_address =
-		force_swmmu_operand(gsi, destination_address);
-
 	source_address =
 		build_fold_addr_expr(source);
+
+	if (!destination_address ||
+	    !source_address ||
+	    !TREE_TYPE(destination_address) ||
+		!TREE_TYPE(source_address))
+		return false;
+
+	destination_address =
+		fold_convert(ptr_type_node, destination_address);
+	source_address =
+		fold_convert(ptr_type_node, source_address);
+
+	destination_address =
+		force_swmmu_operand(gsi, destination_address);
 	source_address =
 		force_swmmu_operand(gsi, source_address);
+
+	size_arg = build_int_cst(
+		size_type_node,
+		tree_to_uhwi(size_tree));
 
 	call = gimple_build_call(runtime_decl,
 				 3,
 				 destination_address,
 				 source_address,
-				 build_int_cst(size_type_node, size));
+				 size_arg);
 
 	gimple_set_location(call, gimple_location(stmt));
 	gsi_replace(gsi, call, true);
@@ -1673,6 +1746,12 @@ swmmu_transform_function(function *fn)
 			tree rhs = gimple_assign_rhs1(stmt);
 			enum swmmu_pointer_state rhs_state;
 			enum swmmu_pointer_state lhs_state;
+
+			if (svm_function &&
+				rewrite_aggregate_zero(&gsi, stmt)) {
+				gsi_next(&gsi);
+				continue;
+			}
 
 			if (svm_function &&
 				TREE_TYPE(lhs) &&
