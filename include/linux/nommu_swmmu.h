@@ -154,6 +154,14 @@ long nommu_swmmu_store_u64(void *address,
 			size_t size,
 			uint64_t value);
 
+int nommu_swmmu_copy_to_user(void __user *address,
+			     const void *source,
+			     size_t size);
+
+int nommu_swmmu_copy_from_user(void *destination,
+			       const void __user *address,
+			       size_t size);
+
 /* mapping API */
 int nommu_swmmu_dup_mmap(struct mm_struct *dst,
 			struct mm_struct *src);

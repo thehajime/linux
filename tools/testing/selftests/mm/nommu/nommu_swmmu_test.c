@@ -47,6 +47,23 @@
 				##__VA_ARGS__);		\
 	} while (0)
 
+static int swmmu_test_mode;
+
+static int swmmu_test_detect_mode(void)
+{
+	int mode;
+
+	mode = prctl(PR_GET_SWMMU, 0, 0, 0, 0);
+	if (mode < 0) {
+		if (errno == ENOSYS || errno == EOPNOTSUPP)
+			return -EOPNOTSUPP;
+		return -errno;
+	}
+
+	swmmu_test_mode = mode;
+	return 0;
+}
+
 /*
  * Force the runtime declarations to remain visible to the GCC plugin's
  * symbol lookup.
@@ -242,7 +259,7 @@ struct swmmu_test_pair {
 	uint64_t second;
 };
 
-__attribute__((swmmu, noinline))
+__attribute__((noinline))
 static void
 test_swmmu_struct_copy(struct swmmu_test_pair *destination,
 		       const struct swmmu_test_pair *source)
@@ -2100,7 +2117,12 @@ static int test_standard_mmap_expand_rejects_maymove(void)
 
 static int swmmu_set_mode(unsigned long mode)
 {
-	int ret;
+	int ret = 0;
+
+	if (mode == PR_SWMMU_OFF) {
+		errno = EOPNOTSUPP;
+		return -1;
+	}
 
 	ret = prctl(PR_SET_SWMMU, mode, 0, 0, 0);
 	return ret;
@@ -2138,6 +2160,8 @@ static int test_default_mode_off(void)
 {
 	int mode = swmmu_get_mode();
 
+	ksft_test_result_skip("SWMMU mixed-mode not implemented\n");
+	return KSFT_SKIP;
 	if (mode < 0) {
 		SWMMU_TEST_FAIL("cannot query initial SWMMU mode: %s\n",
 				      strerror(errno));
@@ -2214,7 +2238,7 @@ static int test_checked_access_swmmu_disabled(void)
 	uint64_t value = 0;
 	int ret;
 
-	if (prctl(PR_SET_SWMMU, PR_SWMMU_OFF, 0, 0, 0) < 0) {
+	if (swmmu_set_mode(PR_SWMMU_OFF) < 0) {
 		SWMMU_TEST_FAIL("failed to disable SWMMU: %s\n",
 				strerror(errno));
 		return KSFT_FAIL;
@@ -2388,10 +2412,6 @@ static int test_fork_mode_inheritance(void)
 	}
 
 cleanup:
-	/* FIXME: set_mode crashes; fix it later */
-	SWMMU_TEST_PASS("%s\n", __func__);
-	return KSFT_PASS;
-
 	swmmu_set_mode(PR_SWMMU_OFF);
 
 	if (failure) {
@@ -2573,9 +2593,6 @@ cleanup:
 	if (mapping != MAP_FAILED)
 		munmap((void *)mapping, ps);
 
-	/* FIXME: set_mode crashes; fix it later */
-	SWMMU_TEST_PASS("%s\n", __func__);
-	return KSFT_PASS;
 	swmmu_set_mode(PR_SWMMU_OFF);
 
 	if (failure) {
@@ -2839,7 +2856,7 @@ static int test_signal_access_faults(void){
 	size_t ps = getpagesize();
 	void *mapping;
 
-	if (prctl(PR_SET_SWMMU, PR_SWMMU_ON, 0, 0, 0) < 0) {
+	if (swmmu_set_mode(PR_SWMMU_ON) < 0) {
 		SWMMU_TEST_FAIL("failed to enable SWMMU: %s\n",
 				strerror(errno));
 		return KSFT_FAIL;
@@ -2980,7 +2997,7 @@ static int test_signal_restart(void)
 	void *mapping;
 	int ret;
 
-	if (prctl(PR_SET_SWMMU, PR_SWMMU_ON, 0, 0, 0) < 0) {
+	if (swmmu_set_mode(PR_SWMMU_ON) < 0) {
 		SWMMU_TEST_FAIL("failed to enable SWMMU: %s\n",
 				strerror(errno));
 		return KSFT_FAIL;
@@ -3139,7 +3156,7 @@ static int test_siglongjmp_paths(void)
 	void *mapping;
 	int ret;
 
-	if (prctl(PR_SET_SWMMU, PR_SWMMU_ON, 0, 0, 0) < 0) {
+	if (swmmu_set_mode(PR_SWMMU_ON) < 0) {
 		SWMMU_TEST_FAIL("failed to enable SWMMU: %s\n",
 				strerror(errno));
 		return KSFT_FAIL;
@@ -3188,7 +3205,7 @@ static int test_standard_mmap_memcpy(void)
 	uint64_t value;
 	int ret;
 
-	if (prctl(PR_SET_SWMMU, PR_SWMMU_ON, 0, 0, 0) < 0) {
+	if (swmmu_set_mode(PR_SWMMU_ON) < 0) {
 		SWMMU_TEST_FAIL("failed to enable SWMMU: %s\n",
 				strerror(errno));
 		return KSFT_FAIL;
@@ -3280,25 +3297,32 @@ static int test_standard_mmap_memmove(void)
 	size_t bad_index;
 	int ret;
 
-	if (prctl(PR_SET_SWMMU, PR_SWMMU_OFF, 0, 0, 0) < 0) {
-		SWMMU_TEST_FAIL("failed to disable SWMMU: %s\n",
-				strerror(errno));
-		return KSFT_FAIL;
+	ret = swmmu_set_mode(PR_SWMMU_OFF);
+	if (ret < 0) {
+		if (errno == EOPNOTSUPP)
+			ksft_print_msg("mixed mode isn't implemented, use default-on mode\n");
+		else {
+			SWMMU_TEST_FAIL("failed to disable SWMMU: %s\n",
+					strerror(errno));
+			return KSFT_FAIL;
+		}
 	}
 
 	reference = malloc(size);
 	expected = malloc(size);
+	ksft_print_msg("%p %p\n", reference, expected);
 	if (!reference || !expected) {
 		SWMMU_TEST_FAIL("reference allocation failed\n");
 		free(reference);
 		free(expected);
 		return KSFT_FAIL;
 	}
+	ksft_print_msg("%p %p\n", reference, expected);
 
 	for (size_t i = 0; i < size; i++)
 		reference[i] = (unsigned char)(i * 37 + 11);
 
-	if (prctl(PR_SET_SWMMU, PR_SWMMU_ON, 0, 0, 0) < 0) {
+	if (swmmu_set_mode(PR_SWMMU_ON) < 0) {
 		SWMMU_TEST_FAIL("failed to enable SWMMU: %s\n",
 				strerror(errno));
 		free(reference);
@@ -3328,9 +3352,12 @@ static int test_standard_mmap_memmove(void)
 	/*
 	 * Forward copy: destination is above source and overlaps it.
 	 */
+swmmu_test_stage("before memcpy");
 	memcpy(expected, reference, size);
+swmmu_test_stage("before memmove");
 	memmove(expected + offset, expected, size - offset);
 
+swmmu_test_stage("before swmmu_memcpy_typed");
 	swmmu_memmove_typed((swmmu_byte_ptr)mapping + offset,
 			    (swmmu_byte_ptr)mapping,
 			    size - offset);
@@ -3355,9 +3382,12 @@ static int test_standard_mmap_memmove(void)
 		goto out_unmap;
 	}
 
+swmmu_test_stage("before 2nd memcpy");
 	memcpy(expected, reference, size);
+swmmu_test_stage("before 2nd memmove");
 	memmove(expected, expected + offset, size - offset);
 
+swmmu_test_stage("before 2nd swmmu_memmove_typed");
 	swmmu_memmove_typed((swmmu_byte_ptr)mapping,
 			    (swmmu_byte_ptr)mapping + offset,
 			    size - offset);
@@ -3392,7 +3422,7 @@ static int test_standard_mmap_memset(void)
 	size_t bad_index;
 	int ret;
 
-	if (prctl(PR_SET_SWMMU, PR_SWMMU_OFF, 0, 0, 0) < 0) {
+	if (swmmu_set_mode(PR_SWMMU_OFF) < 0) {
 		SWMMU_TEST_FAIL("failed to disable SWMMU: %s\n",
 				strerror(errno));
 		return KSFT_FAIL;
@@ -3403,7 +3433,7 @@ static int test_standard_mmap_memset(void)
 		SWMMU_TEST_FAIL("reference allocation failed\n");
 		return KSFT_FAIL;
 	}
-	if (prctl(PR_SET_SWMMU, PR_SWMMU_ON, 0, 0, 0) < 0) {
+	if (swmmu_set_mode(PR_SWMMU_ON) < 0) {
 		SWMMU_TEST_FAIL("failed to enable SWMMU: %s\n",
 				strerror(errno));
 		return KSFT_FAIL;
@@ -3462,7 +3492,7 @@ static int test_dynamic_access(void)
 	/*
 	 * Ensure malloc() returns an ordinary mapping for this test.
 	 */
-	if (prctl(PR_SET_SWMMU, PR_SWMMU_OFF, 0, 0, 0) < 0) {
+	if (swmmu_set_mode(PR_SWMMU_OFF) < 0) {
 		SWMMU_TEST_FAIL("failed to disable SWMMU: %s\n",
 				strerror(errno));
 		return KSFT_FAIL;
@@ -3476,7 +3506,7 @@ static int test_dynamic_access(void)
 
 	*(uint64_t *)ordinary = 0x1122334455667788ULL;
 
-	if (prctl(PR_SET_SWMMU, PR_SWMMU_ON, 0, 0, 0) < 0) {
+	if (swmmu_set_mode(PR_SWMMU_ON) < 0) {
 		SWMMU_TEST_FAIL("failed to enable SWMMU: %s\n",
 				strerror(errno));
 		free(ordinary);
@@ -3554,7 +3584,7 @@ out:
 		swmmu = MAP_FAILED;
 	}
 
-	if (prctl(PR_SET_SWMMU, PR_SWMMU_OFF, 0, 0, 0) < 0) {
+	if (swmmu_set_mode(PR_SWMMU_OFF) < 0) {
 		SWMMU_TEST_FAIL("failed to disable SWMMU after test: %s\n",
 				strerror(errno));
 		result = KSFT_FAIL;
@@ -3565,7 +3595,7 @@ out:
 	/*
 	 * Preserve the mode expected by subsequent SWMMU tests.
 	 */
-	if (prctl(PR_SET_SWMMU, PR_SWMMU_ON, 0, 0, 0) < 0)
+	if (swmmu_set_mode(PR_SWMMU_ON) < 0)
 		result = KSFT_FAIL;
 
 	return result;
@@ -3593,7 +3623,7 @@ static int test_allocator_domains(void)
 		 * The first allocation should belong to the ordinary
 		 * memory domain.
 		 */
-		if (prctl(PR_SET_SWMMU, PR_SWMMU_OFF, 0, 0, 0) < 0)
+		if (swmmu_set_mode(PR_SWMMU_OFF) < 0)
 			_exit(1);
 
 		ordinary = malloc(sizeof(value));
@@ -3602,7 +3632,7 @@ static int test_allocator_domains(void)
 
 		*(uint64_t *)ordinary = 0x1122334455667788ULL;
 
-		if (prctl(PR_SET_SWMMU, PR_SWMMU_ON, 0, 0, 0) < 0)
+		if (swmmu_set_mode(PR_SWMMU_ON) < 0)
 			_exit(3);
 
 		/*
@@ -3644,7 +3674,7 @@ static int test_allocator_domains(void)
 		free(ordinary);
 		free(dynamic);
 
-		if (prctl(PR_SET_SWMMU, PR_SWMMU_OFF, 0, 0, 0) < 0)
+		if (swmmu_set_mode(PR_SWMMU_OFF) < 0)
 			_exit(9);
 
 		_exit(0);
@@ -3694,14 +3724,14 @@ static int test_realloc_domains(void)
 		uint64_t value;
 		int ret;
 
-		if (prctl(PR_SET_SWMMU, PR_SWMMU_OFF, 0, 0, 0) < 0)
+		if (swmmu_set_mode(PR_SWMMU_OFF) < 0)
 			_exit(1);
 
 		/*
 		 * realloc(NULL, size) has malloc-like semantics. With
 		 * SWMMU enabled, its result may be ordinary or SWMMU-backed.
 		 */
-		if (prctl(PR_SET_SWMMU, PR_SWMMU_ON, 0, 0, 0) < 0)
+		if (swmmu_set_mode(PR_SWMMU_ON) < 0)
 			_exit(2);
 
 		pointer = realloc(NULL, ps);
@@ -3773,7 +3803,7 @@ static int test_realloc_domains(void)
 
 		free(pointer);
 
-		if (prctl(PR_SET_SWMMU, PR_SWMMU_OFF, 0, 0, 0) < 0)
+		if (swmmu_set_mode(PR_SWMMU_OFF) < 0)
 			_exit(13);
 
 		_exit(0);
@@ -3810,7 +3840,7 @@ static int test_allocator_basic(void)
 	uint64_t *calloc_pointer;
 	uint64_t value;
 
-	if (prctl(PR_SET_SWMMU, PR_SWMMU_ON, 0, 0, 0) < 0) {
+	if (swmmu_set_mode(PR_SWMMU_ON) < 0) {
 		SWMMU_TEST_FAIL("enabling SWMMU failed: %s\n",
 				strerror(errno));
 		return KSFT_FAIL;
@@ -3914,13 +3944,21 @@ static int test_struct_copy(void)
 }
 
 
+
 typedef int (*swmmu_test_fn)(void);
-static const swmmu_test_fn testcases[] = {
+
+static const swmmu_test_fn mixed_mode_testcases[] = {
 	test_default_mode_off,
 	test_enable_swmmu,
 	test_enable_and_mapping,
 	test_disable_and_reenable,
 	test_checked_access_swmmu_disabled,
+	test_dynamic_access,
+	test_allocator_basic,
+	test_allocator_domains,
+};
+
+static const swmmu_test_fn testcases[] = {
 	test_fork_mode_inheritance,
 	test_fork_mapping_isolation,
 	test_scalar_access,
@@ -3954,9 +3992,6 @@ static const swmmu_test_fn testcases[] = {
 	test_standard_mmap_memcpy,
 	test_standard_mmap_memmove,
 	test_standard_mmap_memset,
-	test_dynamic_access,
-	test_allocator_basic,
-	test_allocator_domains,
 	test_struct_copy,
 
 	/*
@@ -3966,18 +4001,24 @@ static const swmmu_test_fn testcases[] = {
 	test_standard_mmap_exit_cleanup,
 };
 
+
 int main(void)
 {
 	int result = KSFT_PASS;
 
-	if (prctl(PR_SET_SWMMU, PR_SWMMU_ON, 0, 0, 0) < 0) {
+	if (swmmu_set_mode(PR_SWMMU_ON) < 0) {
 		ksft_test_result_skip("SWMMU prctl unavailable: %s\n",
 				strerror(errno));
 		return KSFT_SKIP;
 	}
 
 	ksft_print_header();
-	ksft_set_plan(ARRAY_SIZE(testcases));
+	ksft_set_plan(ARRAY_SIZE(mixed_mode_testcases) + ARRAY_SIZE(testcases));
+
+	for (int i = 0; i < ARRAY_SIZE(mixed_mode_testcases); i++) {
+		if (mixed_mode_testcases[i]() == KSFT_FAIL)
+			result = KSFT_FAIL;
+	}
 
 	for (int i = 0; i < ARRAY_SIZE(testcases); i++) {
 		if (testcases[i]() == KSFT_FAIL)

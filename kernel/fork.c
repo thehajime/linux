@@ -1153,7 +1153,11 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p)
 #ifdef CONFIG_NOMMU_SWMMU
 	struct nommu_swmmu_space *new_space;
 
+#ifdef CONFIG_NOMMU_SWMMU_DEFAULT_ON
+	mm->swmmu_mode = NOMMU_SWMMU_ON;
+#else
 	mm->swmmu_mode = NOMMU_SWMMU_OFF;
+#endif
 
 	new_space = nommu_swmmu_space_create();
 	if (!new_space)

@@ -63,6 +63,66 @@ do {									\
 } while (0)
 #endif
 
+#ifdef CONFIG_NOMMU_SWMMU
+
+#define UM_NOMMU_SWMMU_VA_BASE	0x1000000000ULL
+
+extern int nommu_swmmu_copy_to_user(void __user *address,
+				    const void *source,
+				    size_t size);
+
+extern int nommu_swmmu_copy_from_user(void *destination,
+				      const void __user *address,
+				      size_t size);
+
+static inline bool
+um_nommu_swmmu_address(unsigned long address)
+{
+	return address >= UM_NOMMU_SWMMU_VA_BASE;
+}
+
+static inline __must_check unsigned long
+raw_copy_to_user(void __user *to,
+		 const void *from,
+		 unsigned long n)
+{
+	int ret;
+
+	if (!um_nommu_swmmu_address((unsigned long)to)) {
+		memcpy((void __force *)to, from, n);
+		return 0;
+	}
+
+	ret = nommu_swmmu_copy_to_user(to, from, n);
+	if (ret != -EOPNOTSUPP)
+		return ret ? n : 0;
+
+	memcpy((void __force *)to, from, n);
+	return 0;
+}
+
+static inline __must_check unsigned long
+raw_copy_from_user(void *to,
+		   const void __user *from,
+		   unsigned long n)
+{
+	int ret;
+
+	if (!um_nommu_swmmu_address((unsigned long)from)) {
+		memcpy(to, (const void __force *)from, n);
+		return 0;
+	}
+
+	ret = nommu_swmmu_copy_from_user(to, from, n);
+	if (ret != -EOPNOTSUPP)
+		return ret ? n : 0;
+
+	memcpy(to, (const void __force *)from, n);
+	return 0;
+}
+
+#endif /* CONFIG_NOMMU_SWMMU */
+
 #include <asm-generic/uaccess.h>
 
 #endif

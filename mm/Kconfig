@@ -1518,6 +1518,11 @@ config NOMMU_SWMMU
 	depends on !MMU
 	default y
 
+config NOMMU_SWMMU_DEFAULT_ON
+	bool "Start NOMMU processes with SWMMU enabled"
+	depends on NOMMU_SWMMU
+	default y
+
 config NOMMU_SWMMU_KUNIT_TEST
 	tristate "NOMMU SWMMU KUnit tests"
 	depends on NOMMU_SWMMU

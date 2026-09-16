@@ -894,9 +894,10 @@ out:
 }
 
 static int swmmu_dynamic_copy_from_mm(struct mm_struct *mm,
-				      unsigned long address,
-				      void *destination,
-				      size_t size)
+				unsigned long address,
+				void *destination,
+				size_t size,
+				bool *swmmu_seen)
 {
 	int ret = 0;
 
@@ -904,6 +905,9 @@ static int swmmu_dynamic_copy_from_mm(struct mm_struct *mm,
 		return -EINVAL;
 
 	mmap_read_lock(mm);
+
+	if (swmmu_seen)
+		*swmmu_seen = false;
 
 	while (size) {
 		struct vm_area_struct *vma;
@@ -918,17 +922,17 @@ static int swmmu_dynamic_copy_from_mm(struct mm_struct *mm,
 
 		vma = find_vma(mm, address);
 		if (vma && vma->vm_swmmu_pt_range) {
+			if (swmmu_seen)
+				*swmmu_seen = true;
+
 			source = __swmmu_translate_mm(mm, address, chunk,
 						      &ret, false);
 			if (!source)
 				break;
 
 			memcpy(destination, source, chunk);
-		} else if (copy_from_user(destination,
-					  (const void __user *)address,
-					  chunk)) {
-			ret = -EFAULT;
-			break;
+		} else {
+			memcpy(destination, (const void __user *)address, chunk);
 		}
 
 		address += chunk;
@@ -943,7 +947,8 @@ static int swmmu_dynamic_copy_from_mm(struct mm_struct *mm,
 static int swmmu_dynamic_copy_to_mm(struct mm_struct *mm,
 				    unsigned long address,
 				    const void *source,
-				    size_t size)
+				    size_t size,
+				    bool *swmmu_seen)
 {
 	int ret = 0;
 
@@ -951,6 +956,9 @@ static int swmmu_dynamic_copy_to_mm(struct mm_struct *mm,
 		return -EINVAL;
 
 	mmap_read_lock(mm);
+
+	if (swmmu_seen)
+		*swmmu_seen = false;
 
 	while (size) {
 		struct vm_area_struct *vma;
@@ -965,16 +973,17 @@ static int swmmu_dynamic_copy_to_mm(struct mm_struct *mm,
 
 		vma = find_vma(mm, address);
 		if (vma && vma->vm_swmmu_pt_range) {
+			if (swmmu_seen)
+				*swmmu_seen = true;
+
 			destination = __swmmu_translate_mm(mm, address, chunk,
 							  &ret, true);
 			if (!destination)
 				break;
 
 			memcpy(destination, source, chunk);
-		} else if (copy_to_user((void __user *)address,
-					source, chunk)) {
-			ret = -EFAULT;
-			break;
+		} else {
+			memcpy((void __user *)address, source, chunk);
 		}
 
 		address += chunk;
@@ -1152,6 +1161,94 @@ long nommu_swmmu_store_u64(void *address, size_t size, uint64_t value)
 
 	return ret;
 }
+
+static int swmmu_dynamic_cmpxchg_u32_mm(struct mm_struct *mm,
+					unsigned long address,
+					u32 expected,
+					u32 desired,
+					u32 *observed)
+{
+	struct vm_area_struct *vma;
+	void *destination;
+	int ret = 0;
+
+	if (!mm || !observed)
+		return -EINVAL;
+
+	if (address & (sizeof(u32) - 1))
+		return -EINVAL;
+
+	mmap_read_lock(mm);
+
+	vma = find_vma(mm, address);
+	if (!vma || !vma->vm_swmmu_pt_range) {
+		ret = -EOPNOTSUPP;
+		goto out_unlock;
+	}
+
+	destination = __swmmu_translate_mm(mm, address, sizeof(u32),
+					   &ret, true);
+	if (!destination)
+		goto out_unlock;
+
+	/*
+	 * The backing page is kernel-addressable. cmpxchg() preserves the
+	 * atomic operation that mallocng's a_cas() requires.
+	 */
+	*observed = cmpxchg((u32 *)destination, expected, desired);
+
+out_unlock:
+	mmap_read_unlock(mm);
+	return ret;
+}
+
+int nommu_swmmu_copy_to_user(void __user *address, const void *source,
+			size_t size)
+{
+	bool swmmu_seen = false;
+	int ret;
+
+	if (!current->mm)
+		return -EOPNOTSUPP;
+
+	ret = swmmu_dynamic_copy_to_mm(
+		current->mm,
+		(unsigned long)address,
+		source,
+		size,
+		&swmmu_seen);
+
+	if (!swmmu_seen && !ret)
+		return -EOPNOTSUPP;
+
+	return ret;
+}
+
+int nommu_swmmu_copy_from_user(void *destination, const void __user *address,
+			size_t size)
+{
+	bool swmmu_seen = false;
+	int ret;
+
+	if (!current->mm)
+		return -EOPNOTSUPP;
+
+	ret = swmmu_dynamic_copy_from_mm(
+		current->mm,
+		(unsigned long)address,
+		destination,
+		size,
+		&swmmu_seen);
+
+	if (!swmmu_seen && !ret)
+		return -EOPNOTSUPP;
+
+	return ret;
+}
+
+EXPORT_SYMBOL_GPL(nommu_swmmu_copy_to_user);
+EXPORT_SYMBOL_GPL(nommu_swmmu_copy_from_user);
+
 
 #if IS_ENABLED(CONFIG_NOMMU_SWMMU_KUNIT_TEST)
 int nommu_swmmu_kunit_load_mm(struct mm_struct *mm,
@@ -2564,6 +2661,18 @@ unsigned long do_mmap(struct file *file,
 	struct mm_struct *mm = current->mm;
 	int ret;
 
+	/* FIXME: temporary policy */
+	if (flags & MAP_GROWSDOWN) {
+		if (file || !(flags & MAP_ANONYMOUS) ||
+			!(flags & MAP_PRIVATE))
+			return -EOPNOTSUPP;
+
+		flags &= ~MAP_GROWSDOWN;
+		pr_info("NOMMU SWMMU: keeping MAP_GROWSDOWN mapping native\n");
+		return do_mmap_nommu(file, addr, len, prot, flags,
+				vma_flags, pgoff, populate, uf);
+	}
+
 	if (nommu_swmmu_get_mode(mm) == NOMMU_SWMMU_ON) {
 		ret = nommu_swmmu_validate_mmap_request(
 			file, addr, len, prot, flags,
@@ -2756,7 +2865,7 @@ SYSCALL_DEFINE4(nommu_swmmu_load,
 	if (flags & NOMMU_SWMMU_ACCESS_DYNAMIC) {
 		ret = swmmu_dynamic_copy_from_mm(
 			current->mm, (unsigned long)address,
-			&value, size);
+			&value, size, NULL);
 	} else {
 		ret = nommu_swmmu_load_u64_checked(
 			address, size, &value);
@@ -2788,11 +2897,69 @@ SYSCALL_DEFINE4(nommu_swmmu_store,
 	if (flags & NOMMU_SWMMU_ACCESS_DYNAMIC) {
 		ret = swmmu_dynamic_copy_to_mm(
 			current->mm, (unsigned long)address,
-			&value, size);
+			&value, size, NULL);
 	} else {
 		ret = nommu_swmmu_store_u64_checked(
 			address, size, value);
 	}
 
 	return swmmu_signal_access_error(address, ret, flags);
+}
+
+SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
+		unsigned long, prot)
+{
+	VMA_ITERATOR(vmi, current->mm, start);
+	struct vm_area_struct *vma;
+	unsigned long end;
+
+	len = PAGE_ALIGN(len);
+	if (len == 0)
+		return -EINVAL;
+
+	if (len > ULONG_MAX - start)
+		return -EINVAL;
+
+	mmap_read_lock(current->mm);
+	end = start + len;
+
+	vma = vma_find(&vmi, end);
+	if (vma && vma->vm_swmmu_pt_range) {
+		if (vma->vm_swmmu_pt_range)
+			vma->vm_swmmu_pt_range->prot = prot;
+	}
+
+	mmap_read_unlock(current->mm);
+	return 0;
+}
+
+SYSCALL_DEFINE5(nommu_swmmu_cmpxchg,
+		void __user *, address,
+		u32, expected,
+		u32, desired,
+		u32 __user *, observed,
+		unsigned int, flags)
+{
+	u32 old;
+	int ret;
+
+	if (flags & ~NOMMU_SWMMU_ACCESS_MASK)
+		return -EINVAL;
+
+	if (!(flags & NOMMU_SWMMU_ACCESS_DYNAMIC))
+		return -EOPNOTSUPP;
+
+	ret = swmmu_dynamic_cmpxchg_u32_mm(
+		current->mm,
+		(unsigned long)address,
+		expected,
+		desired,
+		&old);
+	if (ret)
+		return swmmu_signal_access_error(address, ret, flags);
+
+	if (copy_to_user(observed, &old, sizeof(old)))
+		return -EFAULT;
+
+	return 0;
 }

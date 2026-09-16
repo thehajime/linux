@@ -28,6 +28,12 @@ extern void *nommu_swmmu_memcpy_dynamic(
 	void *destination,
 	const void *source,
 	size_t size);
+void *nommu_swmmu_memset_dynamic(void *destination,
+				int value,
+				size_t size);
+void *nommu_swmmu_memmove_dynamic(void *destination,
+				const void *source,
+				size_t size);
 
 static uint64_t (* const __attribute__((used))
 keep_swmmu_load)(const void *, size_t) = nommu_swmmu_load_u64;
@@ -58,7 +64,12 @@ keep_swmmu_memset)(void *, int, size_t) =
 static void *(* const __attribute__((used))
 keep_swmmu_memcpy_dynamic)(void *, const void *, size_t) =
 	nommu_swmmu_memcpy_dynamic;
-
+static void *(* const __attribute__((used))
+keep_swmmu_memset_dynamic)(void *, int, size_t) =
+	nommu_swmmu_memset_dynamic;
+static void *(* const __attribute__((used))
+keep_swmmu_memmove_dynamic)(void *, const void *, size_t) =
+	nommu_swmmu_memmove_dynamic;
 
 __attribute__((noinline))
 uint64_t
@@ -221,4 +232,37 @@ swmmu_all_access_struct_field_copy(
 {
 	destination->first = source->first;
 	destination->second = source->second;
+}
+
+struct swmmu_all_access_bits {
+	uint64_t first:5;
+	uint64_t second:1;
+	uint64_t third:6;
+	uint64_t fourth:52;
+};
+
+__attribute__((noinline, noipa, used))
+void
+swmmu_all_access_bitfield_store(
+	struct swmmu_all_access_bits *bits,
+	uint64_t first,
+	uint64_t second,
+	uint64_t third,
+	uint64_t fourth)
+{
+	bits->first = first;
+	bits->second = second;
+	bits->third = third;
+	bits->fourth = fourth;
+}
+
+__attribute__((noinline, noipa, used))
+uint64_t
+swmmu_all_access_bitfield_load(
+	const struct swmmu_all_access_bits *bits)
+{
+	return bits->first |
+		(bits->second << 5) |
+		(bits->third << 6) |
+		(bits->fourth << 12);
 }

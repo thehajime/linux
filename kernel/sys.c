@@ -2912,6 +2912,10 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 		if (!IS_ENABLED(CONFIG_NOMMU_SWMMU))
 			return -EOPNOTSUPP;
 
+		if(IS_ENABLED(CONFIG_NOMMU_SWMMU_DEFAULT_ON))
+			if (arg2 == PR_SWMMU_OFF)
+				return -EOPNOTSUPP;
+
 		if (arg2 != PR_SWMMU_OFF &&
 			arg2 != PR_SWMMU_ON)
 			return -EINVAL;
