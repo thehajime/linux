@@ -21,10 +21,43 @@ Selective pointer-state analysis and native-access selection are postponed
 optimizations.  The current selective provenance implementation and the
 mallocng-specific propagation experiments are retained only as experiments.
 
+
+Current implementation checkpoint
+==================================
+
+The compiler-only all-access baseline now covers:
+
+* [x] scalar loads and stores;
+* [x] fields, arrays, aliases, and pointer arithmetic;
+* [x] cross-function and unknown-pointer accesses;
+* [x] builtin and explicit memory intrinsics;
+* [x] aggregate copies;
+* [x] SWMMU runtime tests for aggregate copies.
+
+Default-on UML bring-up has reached:
+
+* [x] native initial exec stack handling;
+* [x] SWMMU-aware ``mprotect()``;
+* [x] SWMMU-aware kernel user-copy paths;
+* [x] mallocng metadata atomics needed by startup;
+* [x] mallocng bitfield and aggregate access lowering;
+* [x] instrumented musl, loader, and BusyBox startup through ``rcS``.
+
+Current blocker:
+
+* [ ] define and implement ``setjmp()``/``longjmp()`` handling for SWMMU
+  buffers used by BusyBox;
+* [ ] complete remaining atomic and bitfield RMW coverage;
+* [ ] remove bring-up diagnostics and temporary all-access allocator
+  workarounds.
+
+The selective pointer-state and mallocng-specific work remains experimental
+and should not be extended as the correctness design.
+
 Immediate next milestone
 ========================
 
-Implement and validate the SVM compiler/runtime baseline before continuing
+Continue the default-on paged-SWMMU SVM bring-up before continuing broader
 mallocng, ``free()``, ``realloc()``, ``bash``, ``nginx``, or lmbench
 integration.
 
@@ -100,14 +133,16 @@ that are not yet covered by the baseline, including:
 * volatile accesses;
 * vector and floating-point accesses;
 * inline assembly;
-* structure copies and memory intrinsics.
+* remaining atomic operations;
+* ``setjmp()``/``longjmp()`` context buffers.
 
 These limitations must not be silently treated as instrumented.
 
 Postponed work
 ==============
 
-The following work must wait until the SVM baseline is validated:
+The following work remains postponed while the default-on SVM profile and
+its unsupported access boundaries are being stabilized:
 
 * selective pointer-state optimization;
 * native-access optimization;
