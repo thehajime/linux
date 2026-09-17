@@ -1,14 +1,11 @@
-==========================
-SWMMU Development Status
-==========================
+# SWMMU Development Status
 
 This document records the current development direction and milestone
 boundaries for the NOMMU software MMU work.  It is intentionally concise and
 should be updated at meaningful implementation milestones rather than during
 every debugging iteration.
 
-Current direction
-=================
+## Current direction
 
 The SVM-style all-access compiler model is the correctness baseline:
 
@@ -22,8 +19,7 @@ optimizations.  The current selective provenance implementation and the
 mallocng-specific propagation experiments are retained only as experiments.
 
 
-Current implementation checkpoint
-==================================
+## Current implementation checkpoint
 
 The compiler-only all-access baseline now covers:
 
@@ -54,8 +50,7 @@ Current blocker:
 The selective pointer-state and mallocng-specific work remains experimental
 and should not be extended as the correctness design.
 
-Current implementation checkpoint
-==================================
+## Current implementation checkpoint
 
 The compiler-only all-access baseline now covers:
 
@@ -77,8 +72,7 @@ Default-on UML bring-up has reached:
 * [x] instrumented musl, loader, and BusyBox startup through ``rcS``;
 * [x] profile-aware kselftest with default-on mode tests skipped.
 
-Current next milestone
-=====================
+## Current next milestone
 
 * [ ] rebuild coreutils with the all-access profile;
 * [ ] make ``setjmp()``/``longjmp()`` work for SWMMU-backed context buffers;
@@ -88,8 +82,7 @@ Current next milestone
 Mixed-mode transition tests remain intentionally skipped in the default-on
 profile.  They are retained as future legacy/mixed-mode coverage.
 
-Temporary runtime policy
-========================
+## Temporary runtime policy
 
 For the first SVM experiment, paged SWMMU may be enabled before userspace
 startup for a complete instrumented root filesystem.  This is an experimental
