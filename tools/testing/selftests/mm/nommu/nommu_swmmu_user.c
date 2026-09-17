@@ -14,7 +14,7 @@ uint64_t nommu_swmmu_load_u64(const void *address,
 	uint64_t result;
 	long ret;
 
-	ret = syscall(SYS_nommu_swmmu_load,
+	ret = syscall(__NR_nommu_swmmu_load,
 		(uintptr_t)address, size, &result, NOMMU_SWMMU_ACCESS_SIGNAL);
 	if (ret < 0)
 		abort();

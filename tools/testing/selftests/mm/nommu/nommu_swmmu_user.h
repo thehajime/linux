@@ -5,45 +5,49 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <linux/nommu_swmmu.h>
-
-#define SYS_nommu_swmmu_alloc 472
-#define SYS_nommu_swmmu_free 473
-#define SYS_nommu_swmmu_load 474
-#define SYS_nommu_swmmu_store 475
+#include <sys/syscall.h>
+#include <asm/unistd.h>
 
 void *nommu_swmmu_alloc(size_t size);
 int nommu_swmmu_free(void *address);
 
-uint64_t nommu_swmmu_load_u64(const void *address, size_t size);
+uint64_t nommu_swmmu_load_u64(const void *, size_t);
+long nommu_swmmu_store_u64(void *, size_t, uint64_t);
+int nommu_swmmu_load_u64_checked(const void *, size_t, uint64_t *);
+int nommu_swmmu_store_u64_checked(void *, size_t, uint64_t);
 
-long nommu_swmmu_store_u64(void *address,
-			   size_t size,
-			   uint64_t value);
-int nommu_swmmu_load_u64_checked(const void *address,
-				size_t size,
-				uint64_t *result);
-int nommu_swmmu_store_u64_checked(void *address,
-				size_t size,
-				uint64_t value);
+void *nommu_swmmu_memcpy(void *, const void *, size_t);
+void *nommu_swmmu_memmove(void *, const void *, size_t);
+void *nommu_swmmu_memset(void *, int, size_t);
 
-void *nommu_swmmu_memcpy(void *dst, const void *src, size_t size);
-void *nommu_swmmu_memmove(void *dst, const void *src, size_t size);
-void *nommu_swmmu_memset(void *dst, int b, size_t size);
+uint64_t nommu_swmmu_load_dynamic(const void *, size_t);
+long nommu_swmmu_store_dynamic(void *, size_t, uint64_t);
+int nommu_swmmu_load_dynamic_checked(const void *, size_t, uint64_t *);
+int nommu_swmmu_store_dynamic_checked(void *, size_t, uint64_t);
+void *nommu_swmmu_memcpy_dynamic(void *, const void *, size_t);
+void *nommu_swmmu_memmove_dynamic(void *, const void *, size_t);
+void *nommu_swmmu_memset_dynamic(void *, int, size_t);
+int nommu_swmmu_cmpxchg_u32(void *, uint32_t, uint32_t, uint32_t *);
 
-uint64_t nommu_swmmu_load_dynamic(const void *address, size_t size);
-long nommu_swmmu_store_dynamic(void *address, size_t size, uint64_t value);
-int nommu_swmmu_load_dynamic_checked(const void *address, size_t size,
-				uint64_t *result);
-int nommu_swmmu_store_dynamic_checked(void *address, size_t size,
-				uint64_t value);
-void *nommu_swmmu_memcpy_dynamic(void *destination,
-				 const void *source,
-				 size_t size);
-void *nommu_swmmu_memset_dynamic(void *destination,
-				int value,
-				size_t size);
-void *nommu_swmmu_memmove_dynamic(void *destination,
-				const void *source,
-				size_t size);
+#ifndef SYS_nommu_swmmu_alloc
+#define SYS_nommu_swmmu_alloc __NR_nommu_swmmu_alloc
+#endif
+
+#ifndef SYS_nommu_swmmu_free
+#define SYS_nommu_swmmu_free __NR_nommu_swmmu_free
+#endif
+
+#ifndef SYS_nommu_swmmu_load
+#define SYS_nommu_swmmu_load __NR_nommu_swmmu_load
+#endif
+
+#ifndef SYS_nommu_swmmu_store
+#define SYS_nommu_swmmu_store __NR_nommu_swmmu_store
+#endif
+
+#ifndef SYS_nommu_swmmu_cmpxchg
+#define SYS_nommu_swmmu_cmpxchg __NR_nommu_swmmu_cmpxchg
+#endif
+
 
 #endif

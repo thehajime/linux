@@ -2,32 +2,9 @@
 #include <stddef.h>
 #include <stdlib.h>
 
+#include "swmmu_test_runtime.h"
+
 typedef uint64_t * __attribute__((swmmu_ptr)) swmmu_u64_ptr;
-
-extern uint64_t nommu_swmmu_load_u64(const void *address, size_t size);
-extern long nommu_swmmu_store_u64(void *address,
-				size_t size,
-				uint64_t value);
-extern uint64_t nommu_swmmu_load_dynamic(const void *address,
-					 size_t size);
-
-extern long nommu_swmmu_store_dynamic(void *address,
-				      size_t size,
-				      uint64_t value);
-
-static uint64_t (* const __attribute__((used))
-keep_swmmu_load)(const void *, size_t) = nommu_swmmu_load_u64;
-
-static long (* const __attribute__((used))
-keep_swmmu_store)(void *, size_t, uint64_t) = nommu_swmmu_store_u64;
-
-static uint64_t (* const __attribute__((used))
-keep_swmmu_load_dynamic)(const void *, size_t) =
-	nommu_swmmu_load_dynamic;
-
-static long (* const __attribute__((used))
-keep_swmmu_store_dynamic)(void *, size_t, uint64_t) =
-	nommu_swmmu_store_dynamic;
 
 #if defined(SWMMU_TEST_UNKNOWN_BOUNDARY)
 
