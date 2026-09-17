@@ -245,3 +245,53 @@ void *nommu_swmmu_memcpy_dynamic(void *destination,
 
 	return result;
 }
+
+void *nommu_swmmu_memset_dynamic(void *destination,
+				 int value,
+				 size_t size)
+{
+	unsigned char *pointer = destination;
+	void *result = destination;
+
+	while (size--)
+		nommu_swmmu_store_dynamic(pointer++, 1,
+					  (unsigned char)value);
+
+	return result;
+}
+
+void *nommu_swmmu_memmove_dynamic(void *destination,
+				  const void *source,
+				  size_t size)
+{
+	uintptr_t dst_addr = (uintptr_t)destination;
+	uintptr_t src_addr = (uintptr_t)source;
+	size_t i;
+
+	if (!size || dst_addr == src_addr)
+		return destination;
+
+	if (dst_addr < src_addr ||
+	    dst_addr - src_addr >= size) {
+		for (i = 0; i < size; i++) {
+			uint64_t value;
+
+			value = nommu_swmmu_load_dynamic(
+				(const void *)(src_addr + i), 1);
+			nommu_swmmu_store_dynamic(
+				(void *)(dst_addr + i), 1, value);
+		}
+	} else {
+		for (i = size; i > 0; i--) {
+			size_t offset = i - 1;
+			uint64_t value;
+
+			value = nommu_swmmu_load_dynamic(
+				(const void *)(src_addr + offset), 1);
+			nommu_swmmu_store_dynamic(
+				(void *)(dst_addr + offset), 1, value);
+		}
+	}
+
+	return destination;
+}

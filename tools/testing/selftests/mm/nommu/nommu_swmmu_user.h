@@ -39,5 +39,11 @@ int nommu_swmmu_store_dynamic_checked(void *address, size_t size,
 void *nommu_swmmu_memcpy_dynamic(void *destination,
 				 const void *source,
 				 size_t size);
+void *nommu_swmmu_memset_dynamic(void *destination,
+				int value,
+				size_t size);
+void *nommu_swmmu_memmove_dynamic(void *destination,
+				const void *source,
+				size_t size);
 
 #endif
