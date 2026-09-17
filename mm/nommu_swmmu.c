@@ -2668,7 +2668,7 @@ unsigned long do_mmap(struct file *file,
 			return -EOPNOTSUPP;
 
 		flags &= ~MAP_GROWSDOWN;
-		pr_info_ratelimited("NOMMU SWMMU: keeping MAP_GROWSDOWN mapping native\n");
+		pr_debug_ratelimited("NOMMU SWMMU: keeping MAP_GROWSDOWN mapping native\n");
 		return do_mmap_nommu(file, addr, len, prot, flags,
 				vma_flags, pgoff, populate, uf);
 	}
