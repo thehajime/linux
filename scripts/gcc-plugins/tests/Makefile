@@ -285,6 +285,13 @@ all-access: $(ALL_ACCESS_ASM)
 		$(ALL_ACCESS_ASM) \
 		| grep -q 'nommu_swmmu_memcpy_dynamic' || \
 		{ echo "error: aggregate copy was not lowered"; exit 1; }
+	awk '\
+		/^swmmu_all_access_aggregate_call_argument:/{inside=1} \
+		inside{print} \
+		inside && /\.size[[:space:]]+swmmu_all_access_aggregate_call_argument,/{exit} \
+		' $(ALL_ACCESS_ASM) \
+		| grep -q 'nommu_swmmu_memcpy_dynamic' || \
+		{ echo "error: aggregate call argument was not lowered"; exit 1; }
 	@echo "ok: SWMMU all-access baseline lowering"
 
 ALL_ACCESS_BUILTIN_ASM := \

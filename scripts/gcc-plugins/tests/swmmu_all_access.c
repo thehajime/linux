@@ -215,3 +215,52 @@ swmmu_all_access_nested_store(
 {
 	record->u.sin.address = value;
 }
+
+typedef enum {
+	SWMMU_TEST_STREAM_FILE,
+	SWMMU_TEST_STREAM_STRING,
+	SWMMU_TEST_STREAM_BUFFERED,
+} swmmu_test_stream_type;
+
+typedef union {
+	void *file;
+	char *string;
+	int buffered_fd;
+} swmmu_test_input_stream;
+
+typedef int (*swmmu_test_getter)(void);
+typedef int (*swmmu_test_ungetter)(int);
+
+struct swmmu_all_access_input {
+	swmmu_test_stream_type type;
+	char *name;
+	swmmu_test_input_stream location;
+	swmmu_test_getter getter;
+	swmmu_test_ungetter ungetter;
+};
+
+struct swmmu_all_access_saver {
+	struct swmmu_all_access_saver *next;
+	struct swmmu_all_access_input input;
+};
+
+extern void
+swmmu_all_access_init_input(
+	swmmu_test_getter getter,
+	swmmu_test_ungetter ungetter,
+	swmmu_test_stream_type type,
+	char *name,
+	swmmu_test_input_stream location);
+
+__attribute__((noinline, noipa, used))
+void
+swmmu_all_access_aggregate_call_argument(
+	struct swmmu_all_access_saver *saver)
+{
+	swmmu_all_access_init_input(
+		saver->input.getter,
+		saver->input.ungetter,
+		saver->input.type,
+		saver->input.name,
+		saver->input.location);
+}

@@ -1317,6 +1317,126 @@ rewrite_bitfield_store(gimple_stmt_iterator *gsi,
 	return true;
 }
 
+static bool
+rewrite_dynamic_aggregate_call_argument(
+	gimple_stmt_iterator *gsi,
+	gcall *call,
+	unsigned int index)
+{
+	tree argument;
+	tree type;
+	tree size_tree;
+	tree destination;
+	tree source;
+	tree size_arg;
+	tree runtime_decl;
+	tree temporary;
+	gcall *copy_call;
+
+	argument = gimple_call_arg(call, index);
+	if (!argument || !TREE_TYPE(argument))
+		return false;
+
+	type = TREE_TYPE(argument);
+	if (!AGGREGATE_TYPE_P(type))
+		return false;
+
+	size_tree = TYPE_SIZE_UNIT(type);
+	if (!size_tree ||
+	    TREE_CODE(size_tree) != INTEGER_CST ||
+	    !tree_fits_uhwi_p(size_tree))
+		return false;
+
+	runtime_decl = swmmu_memcpy_dynamic_runtime_decl();
+	if (!runtime_decl)
+		return false;
+
+	temporary = create_tmp_var(type, "swmmu_call_arg");
+	TREE_ADDRESSABLE(temporary) = 1;
+
+	destination = build_fold_addr_expr(temporary);
+	source = build_fold_addr_expr(argument);
+
+	if (!destination || !source)
+		return false;
+
+	destination = fold_convert(ptr_type_node, destination);
+	source = fold_convert(ptr_type_node, source);
+
+	destination = force_swmmu_operand(gsi, destination);
+	source = force_swmmu_operand(gsi, source);
+	size_arg = build_int_cst(
+		size_type_node,
+		tree_to_uhwi(size_tree));
+
+	copy_call = gimple_build_call(runtime_decl,
+				      3,
+				      destination,
+				      source,
+				      size_arg);
+
+	gimple_set_location(copy_call, gimple_location(call));
+	gsi_insert_before(gsi, copy_call, GSI_SAME_STMT);
+
+	gimple_call_set_arg(call, index, temporary);
+	return true;
+}
+
+static bool
+rewrite_dynamic_call_argument(gimple_stmt_iterator *gsi,
+			      gcall *call,
+			      unsigned int index)
+{
+	tree argument;
+	tree type;
+	tree runtime_decl;
+	tree address;
+	tree size_arg;
+	tree loaded;
+	tree converted;
+	unsigned HOST_WIDE_INT size;
+	gcall *load_call;
+
+	argument = gimple_call_arg(call, index);
+	if (!argument || !TREE_TYPE(argument))
+		return false;
+
+	if (!is_swmmu_lvalue(argument))
+		return false;
+
+	type = TREE_TYPE(argument);
+	if (!supported_access_type(type, &size))
+		return false;
+
+	runtime_decl = swmmu_dynamic_runtime_decl(false);
+	if (!runtime_decl)
+		return false;
+
+	address = swmmu_lvalue_address(argument);
+	address = force_swmmu_operand(gsi, address);
+	size_arg = build_int_cst(size_type_node, size);
+
+	load_call = gimple_build_call(runtime_decl,
+				      2,
+				      address,
+				      size_arg);
+
+	loaded = make_temp_ssa_name(
+		uint64_type_node,
+		load_call,
+		"swmmu_call_arg");
+
+	gimple_call_set_lhs(load_call, loaded);
+	gimple_set_location(load_call, gimple_location(call));
+	gsi_insert_before(gsi, load_call, GSI_SAME_STMT);
+
+	converted = fold_convert(type, loaded);
+	converted = force_swmmu_operand(gsi, converted);
+
+	gimple_call_set_arg(call, index, converted);
+	return true;
+}
+
 /*
  * Rewrite:
  *
@@ -1728,6 +1848,25 @@ swmmu_transform_function(function *fn)
 
 			if (gimple_code(generic_stmt) == GIMPLE_CALL) {
 				gcall *call = as_a_gcall(generic_stmt);
+				unsigned int i;
+
+				for (i = 0; i < gimple_call_num_args(call); i++) {
+					tree arg = gimple_call_arg(call, i);
+
+					if (rewrite_dynamic_aggregate_call_argument(
+							&gsi, call, i))
+						continue;
+
+					rewrite_dynamic_call_argument(&gsi, call, i);
+
+					if (arg && is_swmmu_lvalue(arg)) {
+						fprintf(stderr,
+							"[swmmu] direct call memory argument "
+							"index=%u\n", i);
+						print_generic_expr(stderr, arg, TDF_SLIM);
+						fputc('\n', stderr);
+					}
+				}
 
 				check_swmmu_call(call, states, svm_function);
 				swmmu_record_pointer_call(call, swmmu_context, states);
