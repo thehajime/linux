@@ -7,10 +7,14 @@
 #ifndef __UM_PROCESSOR_X86_64_H
 #define __UM_PROCESSOR_X86_64_H
 
+struct uml_nommu_user_stack;
 struct arch_thread {
         unsigned long debugregs[8];
         int debugregs_seq;
         struct faultinfo faultinfo;
+#ifdef CONFIG_NOMMU_SWMMU
+	struct uml_nommu_user_stack *nommu_user_stack;
+#endif
 };
 
 #define INIT_ARCH_THREAD { .debugregs  		= { [ 0 ... 7 ] = 0 }, \

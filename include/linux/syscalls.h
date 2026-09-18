@@ -1328,4 +1328,11 @@ int __sys_getsockopt(int fd, int level, int optname, char __user *optval,
 		int __user *optlen);
 int __sys_setsockopt(int fd, int level, int optname, char __user *optval,
 		int optlen);
+
+asmlinkage long sys_nommu_swmmu_alloc(size_t size);
+asmlinkage long sys_nommu_swmmu_free(void __user *address);
+asmlinkage long sys_nommu_swmmu_load(void __user *address, size_t size,
+				     u64 __user *result, unsigned int flags);
+asmlinkage long sys_nommu_swmmu_store(void __user *address, size_t size,
+				      uint64_t value, unsigned int flags);
 #endif

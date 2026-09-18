@@ -34,11 +34,12 @@ KCOV_INSTRUMENT_failslab.o := n
 CFLAGS_init-mm.o += -Wno-override-init
 
 mmu-y			:= nommu.o
+mmu-$(CONFIG_NOMMU_SWMMU) += nommu_swmmu.o vma_range.o vma_validate.o mremap.o
 mmu-$(CONFIG_MMU)	:= highmem.o memory.o mincore.o \
 			   mlock.o mmap.o mmu_gather.o mprotect.o mremap.o \
 			   msync.o page_vma_mapped.o pagewalk.o \
-			   pgtable-generic.o rmap.o vmalloc.o vma.o vma_exec.o
-
+			   pgtable-generic.o rmap.o vmalloc.o vma.o vma_exec.o \
+			   vma_range.o vma_validate.o vma_mmu.o
 
 ifdef CONFIG_CROSS_MEMORY_ATTACH
 mmu-$(CONFIG_MMU)	+= process_vm_access.o
@@ -148,3 +149,6 @@ obj-$(CONFIG_EXECMEM) += execmem.o
 obj-$(CONFIG_TMPFS_QUOTA) += shmem_quota.o
 obj-$(CONFIG_LAZY_MMU_MODE_KUNIT_TEST) += tests/lazy_mmu_mode_kunit.o
 obj-$(CONFIG_MEM_ALLOC_PROFILING) += alloc_tag.o
+obj-$(CONFIG_NOMMU_SWMMU_KUNIT_TEST) += tests/nommu_swmmu_kunit.o
+
+CFLAGS_tests/nommu_swmmu_kunit.o += -fplugin=$(objtree)/scripts/gcc-plugins/swmmu_plugin.so

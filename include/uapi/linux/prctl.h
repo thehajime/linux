@@ -416,4 +416,10 @@ struct prctl_mm_map {
 # define PR_CFI_DISABLE		_BITUL(1)
 # define PR_CFI_LOCK		_BITUL(2)
 
+/* software MMU */
+#define PR_SET_SWMMU 82
+#define PR_GET_SWMMU 83
+#define PR_SWMMU_OFF 0
+#define PR_SWMMU_ON  1
+
 #endif /* _LINUX_PRCTL_H */
