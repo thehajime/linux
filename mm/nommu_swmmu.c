@@ -972,6 +972,15 @@ static int swmmu_dynamic_copy_to_mm(struct mm_struct *mm,
 			chunk = size;
 
 		vma = find_vma(mm, address);
+		if (!vma || address < vma->vm_start ||
+			chunk > vma->vm_end - address) {
+			/* XXX: tentative log */
+			pr_info_ratelimited("SWMMU missing-vma: pid=%d mm=%px "
+					    "address=%lx\n",
+					    cpu_tasks[0]->pid, mm, address);
+			ret = -EFAULT;
+			break;
+		}
 		if (vma && vma->vm_swmmu_pt_range) {
 			if (swmmu_seen)
 				*swmmu_seen = true;
