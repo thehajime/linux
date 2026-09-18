@@ -1,176 +1,178 @@
 # SWMMU Development Status
 
 This document records the current development direction and milestone
-boundaries for the NOMMU software MMU work.  It is intentionally concise and
-should be updated at meaningful implementation milestones rather than during
-every debugging iteration.
+boundaries for the NOMMU software MMU work. The active sections below are
+authoritative; the historical appendix is retained for context only.
 
 ## Current direction
 
-The SVM-style all-access compiler model is the correctness baseline:
+The SVM-style all-access compiler/runtime model is the correctness baseline:
 
-* pointers retain their normal raw representation;
-* supported source-level accesses are compiler-instrumented;
-* runtime helpers translate addresses dynamically;
-* pointer provenance is not required to decide whether an access is safe.
+- pointers retain their normal raw representation;
+- supported source-level accesses are compiler-instrumented;
+- runtime helpers translate addresses dynamically;
+- pointer provenance is not required for correctness;
+- selective pointer-state analysis and native-access selection are postponed
+  optimizations.
 
-Selective pointer-state analysis and native-access selection are postponed
-optimizations.  The current selective provenance implementation and the
-mallocng-specific propagation experiments are retained only as experiments.
-
-
-## Current implementation checkpoint
-
-The compiler-only all-access baseline now covers:
-
-* [x] scalar loads and stores;
-* [x] fields, arrays, aliases, and pointer arithmetic;
-* [x] cross-function and unknown-pointer accesses;
-* [x] builtin and explicit memory intrinsics;
-* [x] aggregate copies;
-* [x] SWMMU runtime tests for aggregate copies.
-
-Default-on UML bring-up has reached:
-
-* [x] native initial exec stack handling;
-* [x] SWMMU-aware ``mprotect()``;
-* [x] SWMMU-aware kernel user-copy paths;
-* [x] mallocng metadata atomics needed by startup;
-* [x] mallocng bitfield and aggregate access lowering;
-* [x] instrumented musl, loader, and BusyBox startup through ``rcS``.
-
-Current blocker:
-
-* [ ] define and implement ``setjmp()``/``longjmp()`` handling for SWMMU
-  buffers used by BusyBox;
-* [ ] complete remaining atomic and bitfield RMW coverage;
-* [ ] remove bring-up diagnostics and temporary all-access allocator
-  workarounds.
-
-The selective pointer-state and mallocng-specific work remains experimental
-and should not be extended as the correctness design.
+The existing selective provenance implementation, allocator-specific
+propagation, and free/realloc clone work are experimental and should not be
+extended as the correctness design.
 
 ## Current implementation checkpoint
 
-The compiler-only all-access baseline now covers:
+The compiler all-access baseline covers:
 
-* [x] scalar loads and stores;
-* [x] structure fields, arrays, aliases, and pointer arithmetic;
-* [x] pointer casts, PHI joins, and cross-function calls;
-* [x] unknown pointer returns in all-access functions;
-* [x] explicit and builtin memory intrinsics;
-* [x] aggregate copies;
-* [x] nested aggregate copies in instrumented BusyBox code.
+- [x] scalar loads and stores;
+- [x] structure fields;
+- [x] arrays and pointer arithmetic;
+- [x] aliases and casts;
+- [x] PHI joins;
+- [x] cross-function accesses;
+- [x] unknown pointer returns;
+- [x] explicit and builtin `memcpy()`, `memmove()`, and `memset()`;
+- [x] aggregate copies;
+- [x] nested aggregate stores;
+- [x] dynamic atomic compare-exchange needed by mallocng;
+- [x] initial bitfield metadata analysis and dynamic bitfield access lowering.
 
-Default-on UML bring-up has reached:
+The default-on UML bring-up has demonstrated:
 
-* [x] native initial exec stack handling;
-* [x] SWMMU-aware ``mprotect()``;
-* [x] SWMMU-aware kernel user-copy paths;
-* [x] dynamic 32-bit compare-exchange needed by mallocng;
-* [x] mallocng metadata, bitfield, and aggregate access lowering;
-* [x] instrumented musl, loader, and BusyBox startup through ``rcS``;
-* [x] profile-aware kselftest with default-on mode tests skipped.
+- [x] default-on paged SWMMU process startup;
+- [x] native initial-stack handling as a temporary bootstrap boundary;
+- [x] native executable mappings as a temporary instruction-fetch boundary;
+- [x] SWMMU-aware `mprotect()` for SWMMU mappings;
+- [x] SWMMU-aware kernel user-copy paths for relevant read/write paths;
+- [x] instrumented musl and dynamic loader startup;
+- [x] instrumented BusyBox startup through `rcS`;
+- [x] default-on kselftest profile with mixed-mode tests skipped;
+- [x] 37 passed and 7 skipped in the default-on kselftest profile.
 
-## Current next milestone
+## Current next milestone: pure paged SVM mode
 
-* [ ] rebuild coreutils with the all-access profile;
-* [ ] make ``setjmp()``/``longjmp()`` work for SWMMU-backed context buffers;
-* [ ] complete remaining atomic and bitfield read-modify-write coverage;
-* [ ] remove bring-up diagnostics and temporary allocator workarounds.
+The current temporary default-on profile still contains native VMAs for:
 
-Mixed-mode transition tests remain intentionally skipped in the default-on
-profile.  They are retained as future legacy/mixed-mode coverage.
+- the initial userspace stack;
+- executable mappings;
+- other bootstrap/runtime regions.
 
-## Temporary runtime policy
+This is a bring-up scaffold, not the desired final `NOMMU_PAGED` design.
 
-For the first SVM experiment, paged SWMMU may be enabled before userspace
-startup for a complete instrumented root filesystem.  This is an experimental
-deployment policy, not the final NOMMU ABI.
+The next major direction is to remove this dependency on native VMAs from the
+paged SVM process:
 
-In this mode, all userspace components that perform relevant accesses must be
-rebuilt with the SWMMU compiler/runtime profile, including:
+- [ ] provide SWMMU-backed initial exec-stack handling;
+- [ ] copy exec arguments and environment into the SWMMU stack;
+- [ ] define and implement instruction-fetch handling for executable mappings;
+- [ ] define signal-frame and `sigreturn()` handling for SWMMU-backed state;
+- [ ] define stack and compiler-generated spill/reload handling;
+- [ ] complete `setjmp()`/`longjmp()` and `sigsetjmp()`/`siglongjmp()` handling;
+- [ ] complete atomic access coverage;
+- [ ] complete TLS handling.
 
-* the dynamic loader;
-* musl;
-* statically linked musl applications;
-* dynamically linked applications;
-* libraries and utilities used during startup.
+Until these are implemented, native VMAs remain a temporary experimental
+bootstrap mechanism.
 
-Rebuilding only musl is not sufficient for dynamically linked applications:
-application code still contains its own source-level memory accesses.
+## Compatibility and mode policy
 
-Uninstrumented static or dynamic binaries are not generally supported in
-paged SWMMU mode.  ``vfork()`` is not a compatibility mechanism; it only
-supports the usual narrow vfork-then-exec usage pattern.
+Mixed native/SWMMU VMAs within one paged process are not a near-term target.
+The current temporary mixed-VMA behavior should not be expanded into a
+production-quality compatibility design.
 
-The eventual mode model is expected to distinguish:
+The intended future compatibility model is per-process mode selection:
 
-``NOMMU_LEGACY``
-  Existing native NOMMU behavior for legacy binaries.
+```text
+NOMMU_LEGACY
+    Existing native NOMMU behavior for legacy binaries.
 
-``NOMMU_PAGED``
-  SVM-instrumented userspace with software-paged SWMMU mappings.
+NOMMU_PAGED
+    Fully instrumented userspace with paged SWMMU mappings.
 
-``NOMMU_FLAT``
-  A future flat-memory compatibility or diagnostic mode.
+NOMMU_FLAT
+    Future flat-memory compatibility or diagnostic mode.
+```
 
-The current boolean SWMMU ON/OFF interface is provisional while this mode ABI
-is redesigned.
+This allows different processes to use different modes without requiring one
+paged process to maintain arbitrary native and SWMMU VMA domains.
 
-Runtime access contract
-=======================
+The current boolean `PR_SET_SWMMU`/`PR_GET_SWMMU` interface remains provisional.
+Runtime OFF/ON switching is postponed while the explicit mode ABI is designed.
 
-The generic dynamic access path must support:
+`vfork()` is not a compatibility mechanism. It only supports the usual
+narrow `vfork()`-then-`execve()` pattern and does not make an uninstrumented
+process safe in paged SWMMU mode.
 
-* SWMMU-managed virtual addresses;
-* ordinary native addresses where the runtime policy permits them;
-* checked error reporting;
-* signal-mode access reporting.
+## Userspace deployment profile
 
-The compiler/runtime design must explicitly define the treatment of accesses
-that are not yet covered by the baseline, including:
+For paged SVM mode, all relevant userspace code must be rebuilt with the
+SWMMU compiler/runtime profile:
 
-* stack accesses;
-* compiler-generated spills and reloads;
-* TLS;
-* signal frames;
-* atomics;
-* volatile accesses;
-* vector and floating-point accesses;
-* inline assembly;
-* remaining atomic operations;
-* ``setjmp()``/``longjmp()`` context buffers.
+- the dynamic loader;
+- musl;
+- statically linked applications;
+- dynamically linked applications;
+- libraries;
+- BusyBox and init;
+- coreutils and other startup utilities;
+- benchmark and application dependencies.
 
-These limitations must not be silently treated as instrumented.
+Rebuilding only musl is insufficient for dynamically linked applications,
+because application code still contains its own source-level memory accesses.
+Static binaries must also be rebuilt with both SWMMU-aware musl and the
+SWMMU compiler plugin.
 
-Postponed work
-==============
+Uninstrumented binaries are supported only in the future legacy/native mode,
+not generally in paged SVM mode.
 
-The following work remains postponed while the default-on SVM profile and
-its unsupported access boundaries are being stabilized:
+## Immediate validation order
 
-* selective pointer-state optimization;
-* native-access optimization;
-* mallocng-specific field propagation;
-* allocator-specific compiler contracts;
-* ``free()`` and ``realloc()`` specialization;
-* cgraph clone optimization for mixed pointer domains;
-* application-owned SWMMU annotations;
-* flat-memory compatibility implementation;
-* final ``PR_SET_SWMMU``/``PR_GET_SWMMU`` mode ABI;
-* broad application validation.
+The next userspace validation order is:
 
-Source-of-truth rules
-=====================
+1. stabilize the pure paged SVM kernel/runtime boundaries;
+2. rebuild the minimal instrumented startup environment;
+3. rebuild and test Bash;
+4. run fork, subshell, `execve()`, and wait tests;
+5. run lmbench process and fork tests;
+6. rebuild the coreutils dependency closure;
+7. validate `ls`, `readlink`, `id`, and `date`;
+8. continue later with broader applications such as nginx.
 
-* The current source tree and pushed PR tip are authoritative.
-* Older chat snippets and experimental userspace annotations are not
-  authoritative.
-* Experimental selective-provenance branches should remain available for
-  comparison but should not drive the correctness design.
-* Update this document together with meaningful implementation milestone
-  commits.
+The host-side KUnit parser and full `run_kselftest.sh` dependency closure are
+postponed until Python and the required coreutils packages are rebuilt with the
+same profile.
+
+## Explicitly postponed access classes
+
+The following must be explicitly handled before claiming a complete paged SVM
+userspace profile:
+
+- [ ] stack accesses;
+- [ ] compiler-generated spills and reloads;
+- [ ] TLS;
+- [ ] signal frames;
+- [ ] atomics beyond the current mallocng operation;
+- [ ] volatile accesses;
+- [ ] vector and floating-point accesses;
+- [ ] inline assembly;
+- [ ] `setjmp()`/`longjmp()` context buffers;
+- [ ] `sigsetjmp()`/`siglongjmp()` context buffers;
+- [ ] structure copies not covered by aggregate lowering;
+- [ ] uninstrumented library behavior;
+- [ ] prebuilt dependency behavior;
+- [ ] instruction fetch from SWMMU mappings.
+
+These limitations must not be silently treated as supported.
+
+## Source-of-truth rules
+
+- The current pushed PR source is authoritative.
+- Older chat snippets and experimental branches are not authoritative.
+- Selective provenance and allocator-specific changes remain experimental.
+- Do not add application-owned SWMMU annotations as a substitute for the SVM
+  baseline.
+- Update this document at meaningful implementation milestones.
+- Keep the historical appendix below this section unchanged unless correcting
+  historical facts.
 
 Appendix A: Detailed project history
 ====================================
