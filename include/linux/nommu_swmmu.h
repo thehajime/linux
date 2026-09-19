@@ -38,12 +38,20 @@ struct nommu_swmmu_mem_ops {
 			const struct page *src);
 };
 
+struct nommu_swmmu_host_ops {
+	int (*map_page)(unsigned long address, struct page *page,
+			unsigned int prot);
+	void (*unmap_page)(unsigned long address);
+};
+
 struct nommu_swmmu_space *nommu_swmmu_space_create(void);
 int nommu_swmmu_space_attach(struct mm_struct *mm,
 			struct nommu_swmmu_space *space);
 void nommu_swmmu_space_detach(struct mm_struct *mm);
 void nommu_swmmu_space_get(struct nommu_swmmu_space *space);
 void nommu_swmmu_space_put(struct nommu_swmmu_space *space);
+
+const struct nommu_swmmu_host_ops *nommu_swmmu_arch_host_ops(void);
 
 const struct nommu_swmmu_mem_ops *nommu_swmmu_arch_mem_ops(void);
 #if IS_ENABLED(CONFIG_NOMMU_SWMMU_KUNIT_TEST)

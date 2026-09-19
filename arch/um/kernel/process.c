@@ -447,7 +447,12 @@ int copy_thread(struct task_struct * p, const struct kernel_clone_args *args)
 		arch_copy_thread(&current->thread.arch, &p->thread.arch);
 
 #ifdef CONFIG_NOMMU_SWMMU
-		if (!(args->flags & CLONE_VM)) {
+		bool swmmu_enabled;
+
+		swmmu_enabled = current->mm &&
+			READ_ONCE(current->mm->swmmu_mode) == NOMMU_SWMMU_ON;
+
+		if (!(args->flags & CLONE_VM) && !swmmu_enabled) {
 			ret = uml_nommu_copy_user_stack(p);
 			if (ret)
 				return ret;

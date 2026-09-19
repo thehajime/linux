@@ -86,20 +86,38 @@ int os_getpid(void)
 	return syscall(__NR_getpid);
 }
 
-int os_map_memory(void *virt, int fd, unsigned long long off, unsigned long len,
-		  int r, int w, int x)
+static int __os_map_memory(void *virt, int fd, unsigned long long off,
+			unsigned long len, int r, int w, int x, int anon)
 {
 	void *loc;
 	int prot;
+	int flags;
 
 	prot = (r ? PROT_READ : 0) | (w ? PROT_WRITE : 0) |
 		(x ? PROT_EXEC : 0);
 
-	loc = mmap64((void *) virt, len, prot, MAP_SHARED | MAP_FIXED |
-		     (IS_ENABLED(CONFIG_UML_NOMMU_SAS) ? MAP_ANONYMOUS : 0), fd, off);
+	flags = MAP_SHARED | MAP_FIXED;
+	if (anon)
+		flags |= MAP_ANONYMOUS;
+
+	loc = mmap64(virt, len, prot, flags, fd, off);
 	if (loc == MAP_FAILED)
 		return -errno;
+
 	return 0;
+}
+
+int os_map_memory(void *virt, int fd, unsigned long long off, unsigned long len,
+		  int r, int w, int x)
+{
+	return __os_map_memory(virt, fd, off, len, r, w, x,
+			       IS_ENABLED(CONFIG_UML_NOMMU_SAS));
+}
+
+int os_map_memory_file(void *virt, int fd, unsigned long long off,
+		unsigned long len, int r, int w, int x)
+{
+	return __os_map_memory(virt, fd, off, len, r, w, x, 0);
 }
 
 int os_protect_memory(void *addr, unsigned long len, int r, int w, int x)

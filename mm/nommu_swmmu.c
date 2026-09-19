@@ -26,6 +26,9 @@ struct swmmu_pagetable_range {
 	unsigned long first;
 	unsigned long nr_ptes;
 	unsigned int prot;
+
+	unsigned long host_start;
+	bool host_mapped;
 };
 
 enum swmmu_pagetable_tx_kind {
@@ -82,6 +85,7 @@ struct nommu_swmmu_space {
 	struct mm_struct *mm;
 	refcount_t users;
 	const struct nommu_swmmu_mem_ops *ops;
+	const struct nommu_swmmu_host_ops *host_ops;
 };
 
 static inline void *default_kzalloc(size_t size, gfp_t gfp)
@@ -219,6 +223,71 @@ static void swmmu_pagetable_drop_entries(struct nommu_swmmu_space *space,
 	}
 }
 
+static int
+swmmu_host_map_range(struct nommu_swmmu_space *space,
+		     struct swmmu_pagetable_range *range,
+		     unsigned long start,
+		     unsigned int prot)
+{
+	const struct nommu_swmmu_host_ops *host_ops;
+	unsigned long i;
+	int ret;
+
+	host_ops = space->host_ops;
+	if (!host_ops || !host_ops->map_page ||
+	    !host_ops->unmap_page)
+		return -EOPNOTSUPP;
+
+	for (i = 0; i < range->nr_ptes; i++) {
+		struct page *page;
+
+		page = range->pagetable->ptes[range->first + i].page;
+		if (!page) {
+			ret = -EFAULT;
+			goto rollback;
+		}
+
+		ret = host_ops->map_page(
+			start + i * SWMMU_PAGE_SIZE,
+			page,
+			prot);
+		if (ret)
+			goto rollback;
+	}
+
+	range->host_start = start;
+	range->host_mapped = true;
+	range->prot = prot;
+	return 0;
+
+rollback:
+	while (i--)
+		host_ops->unmap_page(
+			start + i * SWMMU_PAGE_SIZE);
+
+	return ret;
+}
+
+static void
+swmmu_host_unmap_range(struct nommu_swmmu_space *space,
+			struct swmmu_pagetable_range *range)
+{
+	const struct nommu_swmmu_host_ops *host_ops;
+	unsigned long i;
+
+	host_ops = space->host_ops;
+	if (!range->host_mapped ||
+	    !host_ops || !host_ops->unmap_page)
+		return;
+
+	for (i = 0; i < range->nr_ptes; i++)
+		host_ops->unmap_page(
+			range->host_start + i * SWMMU_PAGE_SIZE);
+
+	range->host_start = 0;
+	range->host_mapped = false;
+}
+
 static struct swmmu_pagetable_range *swmmu_pagetable_range_create(
 	struct nommu_swmmu_space *space,
 	struct swmmu_pagetable *pt)
@@ -261,6 +330,8 @@ static void swmmu_pagetable_range_release_locked(struct nommu_swmmu_space *space
 
 	lockdep_assert_held_write(&space->lock);
 
+	swmmu_host_unmap_range(space, range);
+
 	pt = range->pagetable;
 	if (pt && range->nr_ptes)
 		swmmu_pagetable_drop_entries(
@@ -297,6 +368,7 @@ static void swmmu_pagetable_range_put_locked(struct nommu_swmmu_space *space,
 
 	lockdep_assert_held_write(&space->lock);
 
+	swmmu_host_unmap_range(space, range);
 	pt = range->pagetable;
 
 	range->pagetable = NULL;
@@ -473,6 +545,11 @@ static int swmmu_find_free_range(struct mm_struct *mm,
 	return 0;
 }
 
+const __weak struct nommu_swmmu_host_ops *nommu_swmmu_arch_host_ops(void)
+{
+	return NULL;
+}
+
 /*
  * Create a space using @mem_ops.
  * The operation table must remain alive for the lifetime of the space.
@@ -491,6 +568,7 @@ __nommu_swmmu_space_create(
 		return NULL;
 
 	space->ops = mem_ops;
+	space->host_ops = nommu_swmmu_arch_host_ops();
 	refcount_set(&space->users, 1);
 	init_rwsem(&space->lock);
 	space->mm = NULL;
@@ -2500,6 +2578,16 @@ __do_mmap_swmmu(struct mm_struct *mm,
 	swmmu_vma->prot = prot;
 	vma->vm_swmmu_pt_range = swmmu_vma;
 
+	ret = swmmu_host_map_range(mm->swmmu_space,
+				swmmu_vma, vma->vm_start, prot);
+	if (ret) {
+		vma->vm_swmmu_pt_range = NULL;
+		swmmu_pagetable_range_release(mm->swmmu_space, swmmu_vma);
+		vm_area_free(vma);
+		swmmu_pagetable_put(mm->swmmu_space, pt);
+		return ret;
+	}
+
 	vma_iter_config(&vmi, start, end);
 	ret = vma_iter_prealloc(&vmi, vma);
 	if (ret)
@@ -2676,10 +2764,33 @@ unsigned long do_mmap(struct file *file,
 			!(flags & MAP_PRIVATE))
 			return -EOPNOTSUPP;
 
+		/*
+		 * SWMMU does not implement automatic VMA growth yet.  The
+		 * initial exec stack is allocated eagerly for the complete
+		 * requested range, so MAP_GROWSDOWN is only a classification
+		 * hint here.
+		 */
 		flags &= ~MAP_GROWSDOWN;
-		pr_debug_ratelimited("NOMMU SWMMU: keeping MAP_GROWSDOWN mapping native\n");
-		return do_mmap_nommu(file, addr, len, prot, flags,
+
+		if (nommu_swmmu_get_mode(mm) == NOMMU_SWMMU_ON) {
+			ret = nommu_swmmu_validate_mmap_request(
+				file, addr, len, prot, flags,
 				vma_flags, pgoff, populate, uf);
+			if (ret)
+				return ret;
+
+			return do_mmap_swmmu(file, addr, len, prot, flags,
+					     vma_flags, pgoff, populate, uf);
+		}
+
+		/*
+		 * Preserve the existing native NOMMU behavior for legacy/off
+		 * mode processes.
+		 */
+		pr_debug_ratelimited(
+			"NOMMU SWMMU: keeping MAP_GROWSDOWN mapping native\n");
+		return do_mmap_nommu(file, addr, len, prot, flags,
+				     vma_flags, pgoff, populate, uf);
 	}
 
 	/* FIXME: temporary populate */
