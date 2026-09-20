@@ -86,6 +86,8 @@ struct nommu_swmmu_space {
 	refcount_t users;
 	const struct nommu_swmmu_mem_ops *ops;
 	const struct nommu_swmmu_host_ops *host_ops;
+
+	u64 host_generation;
 };
 
 static inline void *default_kzalloc(size_t size, gfp_t gfp)
@@ -287,6 +289,30 @@ static void swmmu_host_unmap_range(struct nommu_swmmu_space *space,
 }
 
 static struct mm_struct *swmmu_host_active_mm;
+static u64 swmmu_host_active_generation;
+
+void nommu_swmmu_host_alias_invalidate(struct mm_struct *mm)
+{
+	struct nommu_swmmu_space *space;
+
+	if (!mm)
+		return;
+
+	space = mm->swmmu_space;
+	if (space)
+		WRITE_ONCE(space->host_generation,
+			   READ_ONCE(space->host_generation) + 1);
+
+	if (READ_ONCE(swmmu_host_active_mm) != mm)
+		return;
+
+	/*
+	 * The VMA teardown path will unmap each range through
+	 * nommu_swmmu_vma_close(). Only invalidate the active-mm cache here.
+	 */
+	WRITE_ONCE(swmmu_host_active_mm, NULL);
+	WRITE_ONCE(swmmu_host_active_generation, 0);
+}
 
 static int swmmu_host_map_mm(struct mm_struct *mm)
 {
@@ -397,26 +423,42 @@ static int swmmu_host_protect_range(struct nommu_swmmu_space *space,
 
 int nommu_swmmu_activate_mm(struct mm_struct *mm)
 {
+	struct nommu_swmmu_space *space;
 	struct mm_struct *old_mm;
+	u64 generation;
 	int ret;
 
 	old_mm = READ_ONCE(swmmu_host_active_mm);
-	if (old_mm == mm)
+
+	if (!mm ||
+	    READ_ONCE(mm->swmmu_mode) != NOMMU_SWMMU_ON) {
+		if (old_mm)
+			swmmu_host_unmap_mm(old_mm);
+
+		WRITE_ONCE(swmmu_host_active_mm, NULL);
+		WRITE_ONCE(swmmu_host_active_generation, 0);
+		return 0;
+	}
+
+	space = mm->swmmu_space;
+	if (!space)
+		return -EINVAL;
+
+	generation = READ_ONCE(space->host_generation);
+
+	if (old_mm == mm &&
+	    READ_ONCE(swmmu_host_active_generation) == generation)
 		return 0;
 
 	if (old_mm)
 		swmmu_host_unmap_mm(old_mm);
 
 	WRITE_ONCE(swmmu_host_active_mm, NULL);
-
-	if (!mm ||
-	    READ_ONCE(mm->swmmu_mode) != NOMMU_SWMMU_ON)
-		return 0;
+	WRITE_ONCE(swmmu_host_active_generation, 0);
 
 	/*
-	 * A range may have been mapped while this mm was inactive,
-	 * for example during exec setup. Rebuild the aliases so the
-	 * host address space definitely corresponds to this mm.
+	 * This also clears aliases that may have been created during
+	 * exec setup while the mm was not marked active.
 	 */
 	swmmu_host_unmap_mm(mm);
 
@@ -425,6 +467,8 @@ int nommu_swmmu_activate_mm(struct mm_struct *mm)
 		return ret;
 
 	WRITE_ONCE(swmmu_host_active_mm, mm);
+	WRITE_ONCE(swmmu_host_active_generation, generation);
+
 	return 0;
 }
 
@@ -2087,6 +2131,16 @@ static void swmmu_split_commit(struct vm_area_struct *vma,
 		tx->source->nr_ptes = tx->split_nr_ptes;
 	}
 
+	/*
+	 * The host mapping already covers both resulting ranges. It is
+	 * only the per-range metadata that needs to be split.
+	 */
+	if (tx->source->host_mapped) {
+		tx->source->host_start = vma->vm_start;
+		tx->new_range->host_start = new->vm_start;
+		tx->new_range->host_mapped = true;
+	}
+
 	new->vm_swmmu_pt_range = tx->new_range;
 	tx->new_range = NULL;
 
@@ -3170,6 +3224,44 @@ SYSCALL_DEFINE4(nommu_swmmu_store,
 	return swmmu_signal_access_error(address, ret, flags);
 }
 
+static int swmmu_prepare_mprotect_range(struct mm_struct *mm,
+					unsigned long start,
+					unsigned long end,
+					unsigned long prot)
+{
+	VMA_ITERATOR(vmi, mm, start);
+	struct vm_area_struct *vma;
+	int ret;
+
+	vma = vma_find(&vmi, end);
+	if (!vma || !vma->vm_swmmu_pt_range)
+		return -EOPNOTSUPP;
+
+	if (start < vma->vm_start || end > vma->vm_end)
+		return -EINVAL;
+
+	if (start > vma->vm_start) {
+		ret = vma_split_backend(&vmi, vma, start, false,
+					&swmmu_vma_mapping_ops);
+		if (ret)
+			return ret;
+	}
+
+	vma_iter_set(&vmi, start);
+	vma = vma_find(&vmi, end);
+	if (!vma)
+		return -EINVAL;
+
+	if (end < vma->vm_end) {
+		ret = vma_split_backend(&vmi, vma, end, true,
+					&swmmu_vma_mapping_ops);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
 SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
 		unsigned long, prot)
 {
@@ -3178,15 +3270,12 @@ SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
 	struct swmmu_pagetable_range *range;
 	VMA_ITERATOR(vmi, mm, start);
 	unsigned long end;
-	int ret = 0;
+	int ret;
 
 	if (prot & ~(PROT_READ | PROT_WRITE | PROT_EXEC))
 		return -EINVAL;
 
-	if (!len)
-		return -EINVAL;
-
-	if (len > ULONG_MAX - start)
+	if (!len || len > ULONG_MAX - start)
 		return -EINVAL;
 
 	len = PAGE_ALIGN(len);
@@ -3194,9 +3283,16 @@ SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
 
 	mmap_write_lock(mm);
 
+	ret = swmmu_prepare_mprotect_range(mm, start, end, prot);
+	if (ret)
+		goto out_unlock;
+
+	vma_iter_set(&vmi, start);
 	vma = vma_find(&vmi, end);
-	if (!vma || vma->vm_start != start || vma->vm_end != end) {
-		ret = -EOPNOTSUPP;
+	if (!vma ||
+	    vma->vm_start != start ||
+	    vma->vm_end != end) {
+		ret = -EINVAL;
 		goto out_unlock;
 	}
 
@@ -3210,10 +3306,6 @@ SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
 	if (ret)
 		goto out_unlock;
 
-	/*
-	 * Publish the SWMMU protection only after the active host alias
-	 * has been updated successfully.
-	 */
 	range->prot = prot;
 
 out_unlock:

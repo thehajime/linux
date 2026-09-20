@@ -176,6 +176,7 @@ int nommu_swmmu_copy_from_user(void *destination,
 int nommu_swmmu_dup_mmap(struct mm_struct *dst,
 			struct mm_struct *src);
 int nommu_swmmu_activate_mm(struct mm_struct *mm);
+void nommu_swmmu_host_alias_invalidate(struct mm_struct *mm);
 
 struct vm_area_struct;
 void nommu_swmmu_vma_close(struct mm_struct *mm,

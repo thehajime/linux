@@ -1696,6 +1696,9 @@ void exit_mmap(struct mm_struct *mm)
 	VMA_ITERATOR(vmi, mm, 0);
 	struct vm_area_struct *vma;
 
+#ifdef CONFIG_NOMMU_SWMMU
+	nommu_swmmu_host_alias_invalidate(mm);
+#endif
 	if (!mm)
 		return;
 
