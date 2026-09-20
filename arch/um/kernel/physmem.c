@@ -76,7 +76,7 @@ void __init setup_physmem(unsigned long start, unsigned long reserve_end,
 
 	physmem_fd = create_mem_file(len);
 
-	err = os_map_memory((void *) reserve_end, physmem_fd, reserve,
+	err = os_map_memory_file((void *) reserve_end, physmem_fd, reserve,
 			    map_size, 1, 1, 1);
 	if (err < 0) {
 		os_warn("setup_physmem - mapping %lu bytes of memory at 0x%p "
@@ -148,19 +148,11 @@ static int uml_nommu_swmmu_host_map_page(unsigned long address,
 	fd = phys_mapping(phys, &offset);
 	if (fd < 0)
 		return -EOPNOTSUPP;
-pr_info("SWMMU host map: va=%lx page=%px phys=%lx\n",
-	address, page, phys);
 
-pr_info("SWMMU physical map: phys=%lx fd=%d offset=%llx\n",
-	phys, fd, offset);
-	return os_map_memory_file(
-		(void *)address,
-		fd,
-		offset,
-		PAGE_SIZE,
-		prot & PROT_READ,
-		prot & PROT_WRITE,
-		prot & PROT_EXEC);
+	return os_map_memory_file((void *)address, fd, offset, PAGE_SIZE,
+				prot & PROT_READ,
+				prot & PROT_WRITE,
+				prot & PROT_EXEC);
 }
 
 static void uml_nommu_swmmu_host_unmap_page(unsigned long address)
@@ -173,9 +165,20 @@ static void uml_nommu_swmmu_host_unmap_page(unsigned long address)
 			address, ret);
 }
 
+static int uml_nommu_swmmu_host_protect_range(unsigned long address,
+					unsigned long length,
+					unsigned int prot)
+{
+	return os_protect_memory((void *)address, length,
+				prot & PROT_READ,
+				prot & PROT_WRITE,
+				prot & PROT_EXEC);
+}
+
 static const struct nommu_swmmu_host_ops uml_nommu_swmmu_host_ops = {
 	.map_page = uml_nommu_swmmu_host_map_page,
 	.unmap_page = uml_nommu_swmmu_host_unmap_page,
+	.protect_range = uml_nommu_swmmu_host_protect_range,
 };
 
 const struct nommu_swmmu_host_ops *nommu_swmmu_arch_host_ops(void)

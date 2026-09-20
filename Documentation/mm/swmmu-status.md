@@ -41,14 +41,25 @@ The compiler all-access baseline covers:
 The default-on UML bring-up has reached:
 
 - [x] default-on paged SWMMU process startup;
-- [x] native initial exec-stack handling as a temporary boundary;
-- [x] native executable mappings as a temporary instruction-fetch boundary;
-- [x] SWMMU-aware `mprotect()` for SWMMU mappings;
+- [x] SWMMU-backed initial exec-stack allocation for SAS UML;
+- [x] exec argument, environment, and auxiliary-vector setup on the
+  SWMMU-backed stack;
+- [x] FDPIC exec-stack setup and relocation using SWMMU virtual addresses;
+- [x] host-visible aliases for SAS SWMMU stack and data mappings;
+- [x] CPU-generated stack accesses including `push`, `pop`, `call`, and `ret`;
+- [x] SAS active-`mm_struct` host-alias switching;
+- [x] SAS parent/child host-alias switching after `fork()`;
+- [x] SAS private-page behavior across `fork()`;
 - [x] SWMMU-aware kernel-to-userspace copy-to paths;
+- [x] SWMMU-aware host-alias permission updates for full-VMA `mprotect()`;
+- [x] private-copy FDPIC executable mappings through the SWMMU backend;
+- [x] instruction fetch from SAS SWMMU executable mappings;
 - [x] dynamic atomic compare-exchange needed by mallocng;
 - [x] mallocng metadata, bitfield, aggregate, and atomic access lowering;
-- [x] instrumented musl and dynamic loader startup;
-- [x] instrumented BusyBox startup through `rcS`;
+- [x] instrumented musl and dynamic loader startup under the previous native
+  executable boundary;
+- [x] instrumented BusyBox startup through `rcS` under the previous native
+  executable boundary;
 - [x] default-on kselftest profile with mixed-mode tests skipped;
 - [x] default-on kselftest: 37 passed, 7 intentionally skipped;
 - [x] basic instrumented Bash startup;
@@ -61,8 +72,8 @@ The current Bash profile that works for basic non-fork activity is:
 /root/bash --noprofile --norc
 ```
 
-Bash forked subshells remain blocked by the temporary native-stack/native-VMA
-boundary.
+Bash forked subshells remain blocked until the SWMMU signal, fork, and complete
+userspace runtime boundaries are finished.
 
 ## Immediate next userspace validation
 
@@ -90,11 +101,20 @@ the plugin or forced C runtime headers.
 
 The current default-on kernel profile is an experimental paged-SWMMU profile.
 
-Temporary bootstrap boundaries:
+The current SAS bring-up model uses:
 
-- the initial userspace stack remains a native VMA;
-- executable mappings remain native because instruction-fetch translation is
-  not implemented;
+- SWMMU-backed initial exec-stack mappings;
+- host-visible aliases for active SAS SWMMU ranges;
+- private-copy FDPIC executable mappings;
+- executable host aliases for instruction fetch;
+- active host-alias replacement when the current `mm_struct` changes.
+
+Temporary and deferred boundaries:
+
+- executable direct file-backed mappings remain native;
+- `MAP_SHARED`, device, and general file-backed SWMMU mappings remain
+  unsupported;
+- non-SAS NOMMU UML runner integration is deferred;
 - mixed native/SWMMU VMA fork support is not a target;
 - the copy-to-user SWMMU bridge is retained for relevant destinations;
 - raw copy-from-user handling remains limited because raw uaccess is also used
@@ -102,23 +122,51 @@ Temporary bootstrap boundaries:
 
 These are bring-up exceptions, not the final `NOMMU_PAGED` design.
 
+### SAS host-memory model
+
+In SAS mode, the UML kernel and guest userspace execute in one UML host process
+and therefore share one host address space.
+
+SWMMU virtual addresses are represented by VMA ranges in `mm->mm_mt`, while
+their backing pages are held by the SWMMU page tables. The active SWMMU
+`mm_struct` additionally has host aliases installed at the same virtual
+addresses so CPU-generated accesses such as `push`, `call`, `ret`, and
+instruction fetch can execute directly.
+
+The host aliases are active mappings for the currently running `mm_struct`;
+they are not permanent mappings for every guest address space. Parent and child
+SWMMU spaces therefore reuse the same host virtual addresses, with the active
+aliases replaced during task or `mm_struct` activation.
+
+The SAS physical-memory mapping must use the same file-backed storage as the
+SWMMU host aliases. Anonymous host mappings are insufficient because kernel
+SWMMU helpers would update `page_address(page)` while CPU accesses would
+observe a different anonymous mapping.
+
+The non-SAS NOMMU UML configuration uses a separate userspace runner and
+requires a different host-alias synchronization path.
+
 ### Next kernel milestone: pure paged startup
 
-Remove the temporary native-stack and native-executable exceptions:
+Remove the remaining temporary native-stack and native-executable
+exceptions:
 
-- [ ] allocate the initial exec stack through the SWMMU backend;
-- [ ] copy exec arguments and environment into the SWMMU-backed stack;
-- [ ] update FDPIC exec-stack setup and relocation;
-- [ ] implement instruction-fetch support for executable SWMMU mappings;
-- [ ] update executable mapping permissions and `mprotect()` handling;
+- [x] allocate the initial exec stack through the SWMMU backend;
+- [x] copy exec arguments and environment into the SWMMU-backed stack;
+- [x] update FDPIC exec-stack setup and relocation;
+- [x] implement instruction-fetch support for private-copy executable SWMMU
+  mappings in SAS UML;
+- [ ] complete executable mapping permissions and `mprotect()` handling;
 - [ ] define signal-frame and `sigreturn()` handling for SWMMU-backed state;
 - [ ] define stack and compiler-generated spill/reload handling;
-- [ ] complete `setjmp()`/`longjmp()` and `sigsetjmp()`/`siglongjmp()` handling;
 - [ ] complete remaining atomic access coverage;
-- [ ] define TLS handling.
+- [ ] define TLS handling;
+- [ ] validate the instrumented musl loader, libc, and BusyBox startup with
+  both SWMMU-backed stack and executable mappings;
+- [ ] replace the minimal probe with `init=/sbin/init`.
 
-Until this milestone is complete, the native stack and executable mappings are
-temporary bring-up exceptions.
+Until this milestone is complete, direct file-backed executable mappings and
+signal/runtime boundaries remain temporary bring-up exceptions.
 
 ## Compatibility and mode policy
 
@@ -154,7 +202,7 @@ For paged SVM mode, all relevant userspace code must be rebuilt with the
 SWMMU compiler/runtime profile:
 
 - the dynamic loader;
-- musl;
+- musl/libc;
 - statically linked applications;
 - dynamically linked applications;
 - libraries;
@@ -165,6 +213,7 @@ SWMMU compiler/runtime profile:
 
 Rebuilding only musl is insufficient for dynamically linked applications,
 because application code still contains its own source-level memory accesses.
+
 Static binaries must also be rebuilt with both SWMMU-aware musl and the SWMMU
 compiler plugin.
 
@@ -175,21 +224,24 @@ not generally in paged SVM mode.
 
 The following areas remain incomplete or explicitly experimental:
 
-- [ ] SWMMU-backed initial exec stack;
-- [ ] instruction-fetch support for executable mappings;
-- [ ] signal-frame and `sigreturn()` handling;
-- [ ] stack access policy;
-- [ ] compiler-generated spills and reloads;
-- [ ] TLS;
-- [ ] `setjmp()`/`longjmp()` integration;
-- [ ] `sigsetjmp()`/`siglongjmp()` integration;
+- [ ] signal-frame construction for SWMMU-backed user stacks;
+- [ ] `sigreturn()` restoration of SWMMU-backed register and stack state;
+- [ ] signal restart and delivery behavior with SWMMU-backed state;
+- [ ] TLS setup and context switching for the instrumented musl loader, libc,
+  and init;
+- [ ] compiler-generated spills and reloads across loader, libc, and BusyBox
+  startup;
 - [ ] complete atomic access support;
 - [ ] volatile access support;
 - [ ] vector and floating-point access support;
 - [ ] inline-assembly access contracts;
 - [ ] uninstrumented library behavior;
 - [ ] final kernel user-copy architecture;
-- [ ] remaining aggregate and bitfield read-modify-write cases.
+- [ ] remaining aggregate and bitfield read-modify-write cases;
+- [ ] complete executable permission propagation through all VMA operations;
+- [ ] partial-range `mprotect()` support;
+- [ ] executable direct file-backed mappings;
+- [ ] non-SAS NOMMU UML runner alias synchronization.
 
 The x86_64 `setjmp()`/`longjmp()` implementation has an experimental
 SWMMU-aware assembly version, but its musl add-CFI integration and complete
@@ -202,33 +254,92 @@ The current validation order is:
 1. KUnit SWMMU suites;
 2. selective compiler regression suite;
 3. all-access compiler regression suite;
-4. default-on UML kselftest with mixed-mode tests skipped;
+4. SAS default-on UML kselftest with mixed-mode tests skipped;
 5. minimal instrumented musl, loader, and BusyBox startup;
-6. non-fork Bash startup and loop tests;
-7. vfork/exec-oriented lmbench smoke tests;
-8. rebuilt coreutils package closure;
-9. coreutils command validation;
-10. pure paged exec-stack and instruction-fetch work;
-11. broader Bash, lmbench, and application validation.
+6. SAS host-alias stack probe;
+7. SAS host-alias syscall probe;
+8. SAS host-alias mmap, mprotect, fork, and munmap lifecycle probe;
+9. SAS executable SWMMU instruction-fetch probe;
+10. SWMMU signal-frame and `sigreturn()` tests;
+11. TLS and dynamic-loader validation;
+12. non-fork Bash startup and loop tests;
+13. vfork/exec-oriented lmbench smoke tests;
+14. rebuilt coreutils package closure;
+15. coreutils command validation;
+16. `init=/sbin/init`;
+17. non-SAS NOMMU UML runner validation;
+18. broader Bash, lmbench, and application validation.
 
 The host-side KUnit parser and full `run_kselftest.sh` dependency closure are
 postponed until Python and required coreutils binaries are rebuilt with the
 same all-access profile.
 
-## Explicitly postponed work
+## Postponed work
 
-- selective pointer-state optimization;
-- native-access optimization;
-- mallocng-specific propagation heuristics;
-- allocator-specific compiler contracts;
-- global `free()`/`realloc()` specialization;
-- mixed native/SWMMU VMA fork support;
-- legacy/flat compatibility implementation;
-- final `PR_NOMMU_*` ABI;
-- `brk()` integration for the final paged mode;
-- broad application validation;
-- architecture-independent setjmp/longjmp support;
-- ARM and ARM64 support.
+The following items are intentionally outside the current SAS host-alias and
+private-copy executable-mapping work.
+
+### Bring-up gates before `/sbin/init`
+
+These are required before replacing the minimal probe with
+`init=/sbin/init`:
+
+- [ ] signal-frame construction for SWMMU-backed user stacks;
+- [ ] `sigreturn()` restoration of SWMMU-backed register and stack state;
+- [ ] signal restart behavior with the new executable and stack mappings;
+- [ ] TLS setup and context switching for the instrumented musl loader, libc,
+  and init;
+- [ ] validation of compiler-generated stack spills and reloads across loader,
+  libc, and BusyBox startup;
+- [ ] completion of atomic paths used during init and libc startup;
+- [ ] re-run instrumented musl, dynamic-loader, and BusyBox startup with
+  SWMMU-backed executable mappings;
+- [ ] verify whether the current musl profile requires `brk()` and either
+  implement paged-mode `brk()` support or keep the affected allocator
+  configuration disabled;
+- [ ] validate `vfork()`/`execve()` and child cleanup with active-`mm` host
+  alias switching;
+- [ ] validate the `/sbin/init` process lifecycle, including signal handling,
+  child reaping, and termination/restart behavior.
+
+### Deferred after initial `/sbin/init` bring-up
+
+- [ ] non-SAS NOMMU UML runner integration:
+  `CONFIG_MMU=n` and `CONFIG_UML_NOMMU_SAS=n`;
+- [ ] direct file-backed and `MAP_SHARED` SWMMU mappings;
+- [ ] device mappings;
+- [ ] final executable-permission and instruction-fetch ABI;
+- [ ] complete `setjmp()`/`longjmp()` integration;
+- [ ] complete `sigsetjmp()`/`siglongjmp()` integration;
+- [ ] volatile access coverage;
+- [ ] vector and floating-point access coverage;
+- [ ] inline-assembly access contracts;
+- [ ] final SWMMU mode ABI;
+- [ ] `brk()` integration if not required by the initial musl profile;
+- [ ] flat-memory compatibility mode;
+- [ ] mixed native/SWMMU VMA fork support;
+- [ ] selective pointer-state optimization;
+- [ ] native-access optimization;
+- [ ] mallocng-specific propagation heuristics;
+- [ ] allocator-specific compiler contracts;
+- [ ] global `free()`/`realloc()` specialization;
+- [ ] broad application validation;
+- [ ] architecture-independent `setjmp()`/`longjmp()` support;
+- [ ] ARM and ARM64 support.
+
+### SAS memory-model documentation
+
+- [ ] document the relationship between UML physical memory,
+  `physmem_fd`, and `page_address(page)`;
+- [ ] document the difference between anonymous and file-backed host mappings;
+- [ ] document how SWMMU virtual addresses are represented in `mm->mm_mt`;
+- [ ] document how SWMMU page backing is shared with host aliases;
+- [ ] document active host-alias switching across parent and child
+  `mm_struct` instances;
+- [ ] document why host aliases do not imply guest `MAP_SHARED` semantics;
+- [ ] document the distinction between SAS and the non-SAS UML runner model;
+- [ ] document which UML host-memory APIs may be used during kernel-to-host
+  mappings and which are unsafe during userspace-entry transitions.
 
 ## Source-of-truth rules
 

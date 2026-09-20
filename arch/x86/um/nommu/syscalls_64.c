@@ -10,6 +10,7 @@
 #include <linux/sched/mm.h>
 #include <linux/syscalls.h>
 #include <linux/uaccess.h>
+#include <linux/nommu_swmmu.h>
 #include <asm/fsgsbase.h>
 #include <asm/prctl.h> /* XXX This should get the constants from libc */
 #include <registers.h>
@@ -56,6 +57,11 @@ void arch_set_stack_to_current(void)
 {
 	current_top_of_stack = task_top_of_stack(current);
 	current_ptregs = (long)task_pt_regs(current);
+
+#if IS_ENABLED(CONFIG_NOMMU_SWMMU)
+	if (nommu_swmmu_activate_mm(current->mm))
+		panic("NOMMU SWMMU: failed to activate host aliases\n");
+#endif
 }
 
 void arch_switch_to(struct task_struct *to)

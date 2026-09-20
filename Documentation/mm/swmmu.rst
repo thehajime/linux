@@ -66,3 +66,38 @@ When a signal handler returns, the faulting access is retried. The default
 
 Kernel mapping inconsistencies are internal errors and are not user-visible
 SWMMU access faults.
+
+UML configuration scope
+-----------------------
+
+The current SWMMU host-alias implementation targets the SAS UML
+configuration:
+
+.. code-block:: text
+
+   CONFIG_MMU=n
+   CONFIG_UML_NOMMU_SAS=y
+   CONFIG_NOMMU_SWMMU=y
+
+SWMMU itself is only available when ``CONFIG_MMU=n``. The combination of
+``CONFIG_MMU=y`` and ``CONFIG_NOMMU_SWMMU=y`` is therefore not supported by
+Kconfig and is not a target configuration.
+
+The non-SAS NOMMU UML configuration is deferred:
+
+.. code-block:: text
+
+   CONFIG_MMU=n
+   CONFIG_UML_NOMMU_SAS=n
+   CONFIG_NOMMU_SWMMU=y
+
+In non-SAS mode, userspace executes in a separate UML runner process. Host
+aliases for SWMMU ranges must therefore be synchronized into that runner
+through the existing ``current_mm_sync()`` and userspace-runner mapping path.
+The current Option-A implementation maps aliases in the SAS host address
+space only.
+
+For SAS mode, host aliases are active mappings for the currently running
+``mm_struct``. They are not permanent mappings for every SWMMU address space.
+When the current task changes, the active host aliases must be replaced with
+the aliases belonging to the new ``mm_struct``.

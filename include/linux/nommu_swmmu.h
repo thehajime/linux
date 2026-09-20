@@ -42,6 +42,8 @@ struct nommu_swmmu_host_ops {
 	int (*map_page)(unsigned long address, struct page *page,
 			unsigned int prot);
 	void (*unmap_page)(unsigned long address);
+	int (*protect_range)(unsigned long address, unsigned long length,
+			unsigned int prot);
 };
 
 struct nommu_swmmu_space *nommu_swmmu_space_create(void);
@@ -173,6 +175,7 @@ int nommu_swmmu_copy_from_user(void *destination,
 /* mapping API */
 int nommu_swmmu_dup_mmap(struct mm_struct *dst,
 			struct mm_struct *src);
+int nommu_swmmu_activate_mm(struct mm_struct *mm);
 
 struct vm_area_struct;
 void nommu_swmmu_vma_close(struct mm_struct *mm,

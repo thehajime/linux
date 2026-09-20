@@ -223,11 +223,10 @@ static void swmmu_pagetable_drop_entries(struct nommu_swmmu_space *space,
 	}
 }
 
-static int
-swmmu_host_map_range(struct nommu_swmmu_space *space,
-		     struct swmmu_pagetable_range *range,
-		     unsigned long start,
-		     unsigned int prot)
+static int swmmu_host_map_range(struct nommu_swmmu_space *space,
+				struct swmmu_pagetable_range *range,
+				unsigned long start,
+				unsigned int prot)
 {
 	const struct nommu_swmmu_host_ops *host_ops;
 	unsigned long i;
@@ -268,9 +267,8 @@ rollback:
 	return ret;
 }
 
-static void
-swmmu_host_unmap_range(struct nommu_swmmu_space *space,
-			struct swmmu_pagetable_range *range)
+static void swmmu_host_unmap_range(struct nommu_swmmu_space *space,
+				struct swmmu_pagetable_range *range)
 {
 	const struct nommu_swmmu_host_ops *host_ops;
 	unsigned long i;
@@ -286,6 +284,148 @@ swmmu_host_unmap_range(struct nommu_swmmu_space *space,
 
 	range->host_start = 0;
 	range->host_mapped = false;
+}
+
+static struct mm_struct *swmmu_host_active_mm;
+
+static int swmmu_host_map_mm(struct mm_struct *mm)
+{
+	struct nommu_swmmu_space *space;
+	VMA_ITERATOR(vmi, mm, 0);
+	VMA_ITERATOR(rollback_vmi, mm, 0);
+	struct vm_area_struct *vma;
+	int ret = 0;
+
+	if (!mm)
+		return 0;
+
+	if (READ_ONCE(mm->swmmu_mode) != NOMMU_SWMMU_ON)
+		return 0;
+
+	space = mm->swmmu_space;
+	if (!space || !space->host_ops)
+		return -EOPNOTSUPP;
+
+	mmap_read_lock(mm);
+	down_write(&space->lock);
+
+	for_each_vma(vmi, vma) {
+		struct swmmu_pagetable_range *range;
+
+		range = vma->vm_swmmu_pt_range;
+		if (!range)
+			continue;
+
+		ret = swmmu_host_map_range(space, range,
+					   vma->vm_start,
+					   range->prot);
+		if (ret)
+			goto rollback;
+	}
+
+	goto out_unlock;
+
+rollback:
+	for_each_vma(rollback_vmi, vma) {
+		struct swmmu_pagetable_range *range;
+
+		range = vma->vm_swmmu_pt_range;
+		if (!range)
+			continue;
+
+		swmmu_host_unmap_range(space, range);
+	}
+
+out_unlock:
+	up_write(&space->lock);
+	mmap_read_unlock(mm);
+
+	return ret;
+}
+
+static void swmmu_host_unmap_mm(struct mm_struct *mm)
+{
+	struct nommu_swmmu_space *space;
+	VMA_ITERATOR(vmi, mm, 0);
+	struct vm_area_struct *vma;
+
+	if (!mm)
+		return;
+
+	space = mm->swmmu_space;
+	if (!space)
+		return;
+
+	mmap_read_lock(mm);
+	down_write(&space->lock);
+
+	for_each_vma(vmi, vma) {
+		struct swmmu_pagetable_range *range;
+
+		range = vma->vm_swmmu_pt_range;
+		if (!range)
+			continue;
+
+		swmmu_host_unmap_range(space, range);
+	}
+
+	up_write(&space->lock);
+	mmap_read_unlock(mm);
+}
+
+static int swmmu_host_protect_range(struct nommu_swmmu_space *space,
+				struct swmmu_pagetable_range *range,
+				unsigned int prot)
+{
+	const struct nommu_swmmu_host_ops *host_ops;
+	unsigned long length;
+
+	if (!range->host_mapped)
+		return 0;
+
+	host_ops = space->host_ops;
+	if (!host_ops || !host_ops->protect_range)
+		return -EOPNOTSUPP;
+
+	length = range->nr_ptes * SWMMU_PAGE_SIZE;
+
+	return host_ops->protect_range(
+		range->host_start,
+		length,
+		prot);
+}
+
+int nommu_swmmu_activate_mm(struct mm_struct *mm)
+{
+	struct mm_struct *old_mm;
+	int ret;
+
+	old_mm = READ_ONCE(swmmu_host_active_mm);
+	if (old_mm == mm)
+		return 0;
+
+	if (old_mm)
+		swmmu_host_unmap_mm(old_mm);
+
+	WRITE_ONCE(swmmu_host_active_mm, NULL);
+
+	if (!mm ||
+	    READ_ONCE(mm->swmmu_mode) != NOMMU_SWMMU_ON)
+		return 0;
+
+	/*
+	 * A range may have been mapped while this mm was inactive,
+	 * for example during exec setup. Rebuild the aliases so the
+	 * host address space definitely corresponds to this mm.
+	 */
+	swmmu_host_unmap_mm(mm);
+
+	ret = swmmu_host_map_mm(mm);
+	if (ret)
+		return ret;
+
+	WRITE_ONCE(swmmu_host_active_mm, mm);
+	return 0;
 }
 
 static struct swmmu_pagetable_range *swmmu_pagetable_range_create(
@@ -2793,15 +2933,9 @@ unsigned long do_mmap(struct file *file,
 				     vma_flags, pgoff, populate, uf);
 	}
 
-	/* FIXME: temporary populate */
-	if (prot & PROT_EXEC) {
-		/*
-		 * Instruction-fetch translation is not implemented yet.
-		 * Keep executable mappings native during default-on bring-up.
-		 */
+	if ((prot & PROT_EXEC) && nommu_swmmu_get_mode(mm) != NOMMU_SWMMU_ON)
 		return do_mmap_nommu(file, addr, len, prot, flags,
 				vma_flags, pgoff, populate, uf);
-	}
 
 	if (nommu_swmmu_get_mode(mm) == NOMMU_SWMMU_ON) {
 		ret = nommu_swmmu_validate_mmap_request(
@@ -3039,28 +3173,52 @@ SYSCALL_DEFINE4(nommu_swmmu_store,
 SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
 		unsigned long, prot)
 {
-	VMA_ITERATOR(vmi, current->mm, start);
+	struct mm_struct *mm = current->mm;
 	struct vm_area_struct *vma;
+	struct swmmu_pagetable_range *range;
+	VMA_ITERATOR(vmi, mm, start);
 	unsigned long end;
+	int ret = 0;
 
-	len = PAGE_ALIGN(len);
-	if (len == 0)
+	if (prot & ~(PROT_READ | PROT_WRITE | PROT_EXEC))
+		return -EINVAL;
+
+	if (!len)
 		return -EINVAL;
 
 	if (len > ULONG_MAX - start)
 		return -EINVAL;
 
-	mmap_read_lock(current->mm);
+	len = PAGE_ALIGN(len);
 	end = start + len;
 
+	mmap_write_lock(mm);
+
 	vma = vma_find(&vmi, end);
-	if (vma && vma->vm_swmmu_pt_range) {
-		if (vma->vm_swmmu_pt_range)
-			vma->vm_swmmu_pt_range->prot = prot;
+	if (!vma || vma->vm_start != start || vma->vm_end != end) {
+		ret = -EOPNOTSUPP;
+		goto out_unlock;
 	}
 
-	mmap_read_unlock(current->mm);
-	return 0;
+	range = vma->vm_swmmu_pt_range;
+	if (!range) {
+		ret = -EOPNOTSUPP;
+		goto out_unlock;
+	}
+
+	ret = swmmu_host_protect_range(mm->swmmu_space, range, prot);
+	if (ret)
+		goto out_unlock;
+
+	/*
+	 * Publish the SWMMU protection only after the active host alias
+	 * has been updated successfully.
+	 */
+	range->prot = prot;
+
+out_unlock:
+	mmap_write_unlock(mm);
+	return ret;
 }
 
 SYSCALL_DEFINE5(nommu_swmmu_cmpxchg,
