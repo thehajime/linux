@@ -9,6 +9,7 @@
 #include <linux/module.h>
 #include <linux/sched.h>
 #include <linux/elf-fdpic.h>
+#include <linux/nommu_swmmu.h>
 #include <asm/unistd.h>
 #include <asm/insn.h>
 #include <asm/syscall.h>
@@ -116,6 +117,11 @@ int elf_arch_finalize_exec(struct elf_fdpic_params *exec_params,
 	if (!um_zpoline_enabled)
 		return 0;
 
+#ifdef CONFIG_NOMMU_SWMMU
+	err = nommu_swmmu_activate_mm(current->mm);
+	if (err)
+		return -1;
+#endif
 	if (down_write_killable(&mm->mmap_lock))
 		return -EINTR;
 

@@ -35,6 +35,7 @@
 struct address_space;
 struct futex_private_hash;
 struct mem_cgroup;
+struct swmmu_pagetable_range;
 
 typedef struct {
 	unsigned long f;
@@ -1075,6 +1076,9 @@ struct vm_area_struct {
 #ifdef __HAVE_PFNMAP_TRACKING
 	struct pfnmap_track_ctx *pfnmap_track_ctx;
 #endif
+#ifdef CONFIG_NOMMU_SWMMU
+	struct swmmu_pagetable_range *vm_swmmu_pt_range;
+#endif
 } __randomize_layout;
 
 /* Clears all bits in the VMA flags bitmap, non-atomically. */
@@ -1170,8 +1174,16 @@ typedef struct {
 	DECLARE_BITMAP(__mm_flags, NUM_MM_FLAG_BITS);
 } __private mm_flags_t;
 
+#ifdef CONFIG_NOMMU_SWMMU
+enum nommu_swmmu_mode {
+	NOMMU_SWMMU_OFF = 0,
+	NOMMU_SWMMU_ON,
+};
+#endif /* CONFIG_NOMMU_SWMMU */
+
 struct kioctx_table;
 struct iommu_mm_data;
+struct nommu_swmmu_space;
 struct mm_struct {
 	struct {
 		/*
@@ -1421,6 +1433,11 @@ struct mm_struct {
 #endif /* CONFIG_MM_ID */
 	} __randomize_layout;
 
+
+#ifdef CONFIG_NOMMU_SWMMU
+	enum nommu_swmmu_mode swmmu_mode;
+	struct nommu_swmmu_space *swmmu_space;
+#endif
 	/*
 	 * The mm_cpumask needs to be at the end of mm_struct, because it
 	 * is dynamically sized based on nr_cpu_ids.
