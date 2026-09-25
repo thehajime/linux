@@ -16,6 +16,8 @@
 #include "hash-map.h"
 
 #include <cstring>
+#include <string>
+#include <vector>
 
 #define SWMMU_LOAD_NAME  "nommu_swmmu_load_u64"
 #define SWMMU_STORE_NAME "nommu_swmmu_store_u64"
@@ -55,6 +57,7 @@ static tree swmmu_bitfield_store_dynamic_decl;
 int plugin_is_GPL_compatible;
 
 static bool swmmu_all_access;
+static std::vector<std::string> swmmu_excluded_functions;
 
 enum swmmu_pointer_state {
 	SWMMU_POINTER_ORDINARY,
@@ -1803,6 +1806,27 @@ swmmu_store_runtime_for_state(enum swmmu_pointer_state state)
 	return swmmu_store_decl;
 }
 
+static bool
+swmmu_function_is_excluded(tree fndecl)
+{
+	const char *name;
+
+	if (!fndecl || TREE_CODE(fndecl) != FUNCTION_DECL)
+		return false;
+
+	if (!DECL_NAME(fndecl))
+		return false;
+
+	name = IDENTIFIER_POINTER(DECL_NAME(fndecl));
+
+	for (const std::string &excluded : swmmu_excluded_functions) {
+		if (excluded == name)
+			return true;
+	}
+
+	return false;
+}
+
 static unsigned int
 swmmu_transform_function(function *fn)
 {
@@ -1811,6 +1835,9 @@ swmmu_transform_function(function *fn)
 	bool svm_function = function_marked || swmmu_all_access;
 	bool swmmu_context;
 	hash_map<tree, enum swmmu_pointer_state> states;
+
+	if (swmmu_function_is_excluded(fn->decl))
+		return 0;
 
 	if (swmmu_all_access &&
 		is_swmmu_runtime_function(fn->decl))
@@ -2096,8 +2123,28 @@ plugin_init(struct plugin_name_args *plugin_info,
 			NULL);
 
 	for (int i = 0; i < plugin_info->argc; i++) {
-		if (!strcmp(plugin_info->argv[i].key, "all-access"))
+		const char *key = plugin_info->argv[i].key;
+		const char *value = plugin_info->argv[i].value;
+
+		if (!strcmp(key, "all-access")) {
 			swmmu_all_access = true;
+			continue;
+		}
+
+		if (!strcmp(key, "exclude-function")) {
+			if (!value || !*value) {
+				error_at(UNKNOWN_LOCATION,
+					"swmmu exclude-function requires a value");
+				return 1;
+			}
+
+			swmmu_excluded_functions.emplace_back(value);
+			continue;
+		}
+
+		error_at(UNKNOWN_LOCATION,
+			"unknown swmmu plugin argument '%s'", key);
+		return 1;
 	}
 
 	if (!swmmu_all_access) {

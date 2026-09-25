@@ -90,6 +90,9 @@ struct nommu_swmmu_space {
 	u64 host_generation;
 };
 
+static struct mm_struct *swmmu_host_active_mm;
+static u64 swmmu_host_active_generation;
+
 static inline void *default_kzalloc(size_t size, gfp_t gfp)
 {
 	return kzalloc(size, gfp);
@@ -287,9 +290,6 @@ static void swmmu_host_unmap_range(struct nommu_swmmu_space *space,
 	range->host_start = 0;
 	range->host_mapped = false;
 }
-
-static struct mm_struct *swmmu_host_active_mm;
-static u64 swmmu_host_active_generation;
 
 void nommu_swmmu_host_alias_invalidate(struct mm_struct *mm)
 {
@@ -1155,6 +1155,8 @@ out:
 	return ret;
 }
 
+static int __swmmu_check_access_mm(struct mm_struct *, unsigned long, size_t, int);
+
 static int swmmu_dynamic_copy_from_mm(struct mm_struct *mm,
 				unsigned long address,
 				void *destination,
@@ -1166,7 +1168,14 @@ static int swmmu_dynamic_copy_from_mm(struct mm_struct *mm,
 	if (!mm || !size)
 		return -EINVAL;
 
+	if (unlikely(!address || address < SWMMU_PAGE_SIZE))
+		return -EFAULT;
+
 	mmap_read_lock(mm);
+
+	ret = __swmmu_check_access_mm(mm, address, size, false);
+	if (ret)
+		goto out_unlock;
 
 	if (swmmu_seen)
 		*swmmu_seen = false;
@@ -1202,6 +1211,7 @@ static int swmmu_dynamic_copy_from_mm(struct mm_struct *mm,
 		size -= chunk;
 	}
 
+out_unlock:
 	mmap_read_unlock(mm);
 	return ret;
 }
@@ -1218,6 +1228,10 @@ static int swmmu_dynamic_copy_to_mm(struct mm_struct *mm,
 		return -EINVAL;
 
 	mmap_read_lock(mm);
+
+	ret = __swmmu_check_access_mm(mm, address, size, true);
+	if (ret)
+		goto out_unlock;
 
 	if (swmmu_seen)
 		*swmmu_seen = false;
@@ -1262,6 +1276,7 @@ static int swmmu_dynamic_copy_to_mm(struct mm_struct *mm,
 		size -= chunk;
 	}
 
+out_unlock:
 	mmap_read_unlock(mm);
 	return ret;
 }
@@ -1272,22 +1287,30 @@ static int __swmmu_check_access_mm(struct mm_struct *mm,
 				   int write)
 {
 	int ret = 0;
+	unsigned long end;
 
 	mmap_assert_locked(mm);
 
-	while (size) {
+	if (!size)
+		return -EINVAL;
+
+	if (address > ULONG_MAX - size)
+		return -EOVERFLOW;
+
+	end = address + size;
+
+	while (address < end) {
 		size_t offset = address & (SWMMU_PAGE_SIZE - 1);
 		size_t chunk = SWMMU_PAGE_SIZE - offset;
 
-		if (chunk > size)
-			chunk = size;
+		if (chunk > end - address)
+			chunk = end - address;
 
 		if (!__swmmu_translate_mm(mm, address, chunk,
 					  &ret, write))
-			return ret;
+			return ret ? ret : -EFAULT;
 
 		address += chunk;
-		size -= chunk;
 	}
 
 	return 0;

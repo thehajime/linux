@@ -210,10 +210,15 @@ static void (*handlers[_NSIG])(int sig, struct siginfo *si, mcontext_t *mc) = {
 	[SIGUSR1] = sigusr1_handler,
 };
 
+extern void os_x86_set_hostfs(void);
+
 static void hard_handler(int sig, siginfo_t *si, void *p)
 {
 	ucontext_t *uc = p;
 	mcontext_t *mc = &uc->uc_mcontext;
+
+	os_x86_set_hostfs();
+
 	int save_errno = errno;
 
 	(*handlers[sig])(sig, (struct siginfo *)si, mc);

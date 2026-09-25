@@ -1536,6 +1536,9 @@ void exit_mm_release(struct task_struct *tsk, struct mm_struct *mm)
 void exec_mm_release(struct task_struct *tsk, struct mm_struct *mm)
 {
 	futex_exec_release(tsk);
+#ifdef CONFIG_NOMMU_SWMMU
+	nommu_swmmu_host_alias_invalidate(mm);
+#endif
 	mm_release(tsk, mm);
 }
 
