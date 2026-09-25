@@ -55,6 +55,7 @@ void current_mm_sync(void)
 {
 }
 
+#ifndef CONFIG_UML_NOMMU_SAS
 static int __init nommu_start_runners(void)
 {
 	unsigned long long offset;
@@ -89,3 +90,4 @@ static int __init nommu_start_runners(void)
 	return 0;
 }
 arch_initcall(nommu_start_runners);
+#endif

@@ -96,6 +96,7 @@ ENTRY(userspace)
 	/* Handle any immediate reschedules or signals */
 	call	interrupt_end
 
+	call	arch_set_stack_to_current
 	call	arch_restore_guest_fs
 
 	movq	current_ptregs, %rsp

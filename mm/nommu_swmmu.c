@@ -231,7 +231,8 @@ static void swmmu_pagetable_drop_entries(struct nommu_swmmu_space *space,
 static int swmmu_host_map_range(struct nommu_swmmu_space *space,
 				struct swmmu_pagetable_range *range,
 				unsigned long start,
-				unsigned int prot)
+				unsigned int prot,
+				bool force_alias)
 {
 	const struct nommu_swmmu_host_ops *host_ops;
 	unsigned long i;
@@ -242,19 +243,31 @@ static int swmmu_host_map_range(struct nommu_swmmu_space *space,
 	    !host_ops->unmap_page)
 		return -EOPNOTSUPP;
 
+	/*
+	 * VMA changes can prepare an inactive mm. Do not install its
+	 * fixed-address host aliases over those of the active mm.
+	 * nommu_swmmu_activate_mm() will map it when it becomes active.
+	 */
+	if (!force_alias &&
+	    READ_ONCE(swmmu_host_active_mm) != space->mm) {
+		range->host_start = start;
+		range->host_mapped = false;
+		range->prot = prot;
+		return 0;
+	}
+
 	for (i = 0; i < range->nr_ptes; i++) {
 		struct page *page;
+		unsigned long address;
 
+		address = start + i * SWMMU_PAGE_SIZE;
 		page = range->pagetable->ptes[range->first + i].page;
 		if (!page) {
 			ret = -EFAULT;
 			goto rollback;
 		}
 
-		ret = host_ops->map_page(
-			start + i * SWMMU_PAGE_SIZE,
-			page,
-			prot);
+		ret = host_ops->map_page(address, page, prot);
 		if (ret)
 			goto rollback;
 	}
@@ -266,9 +279,9 @@ static int swmmu_host_map_range(struct nommu_swmmu_space *space,
 
 rollback:
 	while (i--)
-		host_ops->unmap_page(
-			start + i * SWMMU_PAGE_SIZE);
+		host_ops->unmap_page(start + i * SWMMU_PAGE_SIZE);
 
+	range->host_mapped = false;
 	return ret;
 }
 
@@ -283,9 +296,10 @@ static void swmmu_host_unmap_range(struct nommu_swmmu_space *space,
 	    !host_ops || !host_ops->unmap_page)
 		return;
 
-	for (i = 0; i < range->nr_ptes; i++)
+	for (i = 0; i < range->nr_ptes; i++) {
 		host_ops->unmap_page(
 			range->host_start + i * SWMMU_PAGE_SIZE);
+	}
 
 	range->host_start = 0;
 	range->host_mapped = false;
@@ -342,9 +356,8 @@ static int swmmu_host_map_mm(struct mm_struct *mm)
 		if (!range)
 			continue;
 
-		ret = swmmu_host_map_range(space, range,
-					   vma->vm_start,
-					   range->prot);
+		ret = swmmu_host_map_range(space, range, vma->vm_start,
+					range->prot, true);
 		if (ret)
 			goto rollback;
 	}
@@ -2795,8 +2808,8 @@ __do_mmap_swmmu(struct mm_struct *mm,
 	swmmu_vma->prot = prot;
 	vma->vm_swmmu_pt_range = swmmu_vma;
 
-	ret = swmmu_host_map_range(mm->swmmu_space,
-				swmmu_vma, vma->vm_start, prot);
+	ret = swmmu_host_map_range(mm->swmmu_space, swmmu_vma, vma->vm_start,
+				prot, false);
 	if (ret) {
 		vma->vm_swmmu_pt_range = NULL;
 		swmmu_pagetable_range_release(mm->swmmu_space, swmmu_vma);

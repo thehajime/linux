@@ -16,9 +16,13 @@
 int __init os_setup_seccomp(void)
 {
 	int err;
+#ifndef CONFIG_UML_NOMMU_SAS
 	unsigned long __userspace_start = uml_reserved,
 		__userspace_end = high_physmem;
-
+#else
+	unsigned long __userspace_start = 0x1000000000ULL,
+		__userspace_end = 0x1000000000ULL + 1024 * 4096;
+#endif
 	struct sock_filter filter[] = {
 		/* if (IP_high > __userspace_end) allow; */
 		BPF_STMT(BPF_LD + BPF_W + BPF_ABS,
@@ -84,4 +88,3 @@ int __init os_setup_seccomp(void)
 
 	return 0;
 }
-

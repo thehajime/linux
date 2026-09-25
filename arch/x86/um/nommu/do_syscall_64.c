@@ -12,6 +12,8 @@ __visible void do_syscall_64(struct pt_regs *regs)
 {
 	int syscall;
 
+	regs->regs.is_user = 1;
+
 	syscall = PT_SYSCALL_NR(regs->regs.gp);
 	UPT_SYSCALL_NR(&regs->regs) = syscall;
 

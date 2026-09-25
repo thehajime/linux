@@ -121,6 +121,38 @@ raw_copy_from_user(void *to,
 	return 0;
 }
 
+static inline unsigned long
+um_nommu_swmmu_clear_user(void __user *to, unsigned long n)
+{
+	static const unsigned char zeroes[PAGE_SIZE];
+	unsigned long address = (unsigned long)to;
+	unsigned long done = 0;
+
+	while (done < n) {
+		unsigned long cur = address + done;
+		unsigned long offset = cur & (PAGE_SIZE - 1);
+		unsigned long chunk = PAGE_SIZE - offset;
+		int ret;
+
+		if (chunk > n - done)
+			chunk = n - done;
+
+		ret = nommu_swmmu_copy_to_user((void __user *)cur, zeroes, chunk);
+		if (ret)
+			return n - done;
+
+		done += chunk;
+	}
+
+	return 0;
+}
+
+/*
+ * asm-generic/uaccess.h defines its direct-memset fallback only if this
+ * macro isn't defined. Do this before including that header.
+ */
+#define __clear_user um_nommu_swmmu_clear_user
+
 #endif /* CONFIG_NOMMU_SWMMU */
 
 #include <asm-generic/uaccess.h>
