@@ -33,6 +33,18 @@ ALL_ACCESS_ASM := $(OUTPUT)/swmmu_all_access.s
 .PHONY: all test compile dump dump-unknown-boundary clean all-access
 .PHONY: $(filter test-negative%,$(MAKECMDGOALS))
 
+define check_swmmu_asm
+	@awk -v symbol="$(1)" -v needle="$(2)" '\
+		$$0 ~ "^" symbol ":" { in_function = 1; found = 0 } \
+		in_function && index($$0, needle) { found = 1 } \
+		in_function && $$0 ~ "\\.size[[:space:]]+" symbol { \
+			if (!found) exit 1; \
+			exit 0; \
+		} \
+		END { if (!found) exit 1 }' \
+		"$(ALL_ACCESS_ASM)" || { echo "error: $(3)"; exit 1; }
+endef
+
 all: test
 
 test: $(TEST_ASM)
@@ -285,13 +297,22 @@ all-access: $(ALL_ACCESS_ASM)
 		$(ALL_ACCESS_ASM) \
 		| grep -q 'nommu_swmmu_memcpy_dynamic' || \
 		{ echo "error: aggregate copy was not lowered"; exit 1; }
-	awk '\
+	@awk '\
 		/^swmmu_all_access_aggregate_call_argument:/{inside=1} \
 		inside{print} \
 		inside && /\.size[[:space:]]+swmmu_all_access_aggregate_call_argument,/{exit} \
 		' $(ALL_ACCESS_ASM) \
 		| grep -q 'nommu_swmmu_memcpy_dynamic' || \
 		{ echo "error: aggregate call argument was not lowered"; exit 1; }
+	$(call check_swmmu_asm,swmmu_global_store,nommu_swmmu_store_dynamic,global store was not lowered)
+	$(call check_swmmu_asm,swmmu_global_load,nommu_swmmu_load_dynamic,global load was not lowered)
+	$(call check_swmmu_asm,swmmu_global_pointer_store,nommu_swmmu_store_dynamic,global pointer store was not lowered)
+	$(call check_swmmu_asm,swmmu_global_pointer_load,nommu_swmmu_load_dynamic,global pointer load was not lowered)
+	$(call check_swmmu_asm,swmmu_const_hack_store,nommu_swmmu_store_dynamic,const-hack store was not lowered)
+	$(call check_swmmu_asm,swmmu_const_hack_load,nommu_swmmu_load_dynamic,const-hack load was not lowered)
+	$(call check_swmmu_asm,swmmu_const_hack_asm_store,nommu_swmmu_store_dynamic,const-hack asm store was not lowered)
+	$(call check_swmmu_asm,swmmu_set_global_pointer,nommu_swmmu_store_dynamic,global pointer initialization was not lowered)
+	$(call check_swmmu_asm,swmmu_load_global_pointer_value,nommu_swmmu_load_dynamic,global pointer dereference was not lowered)
 	@echo "ok: SWMMU all-access baseline lowering"
 
 ALL_ACCESS_BUILTIN_ASM := \

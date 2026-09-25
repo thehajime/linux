@@ -64,6 +64,7 @@ enum swmmu_pointer_state {
 	SWMMU_POINTER_SWMMU,
 	SWMMU_POINTER_DYNAMIC,
 	SWMMU_POINTER_UNKNOWN,
+	SWMMU_POINTER_TLS,
 };
 
 enum swmmu_memop_kind {
@@ -549,6 +550,22 @@ swmmu_pointer_state_join(enum swmmu_pointer_state first,
 	if (first == second)
 		return first;
 
+	if ((first == SWMMU_POINTER_TLS && second == SWMMU_POINTER_DYNAMIC) ||
+		(first == SWMMU_POINTER_DYNAMIC && second == SWMMU_POINTER_TLS))
+		return SWMMU_POINTER_DYNAMIC;
+
+	if (first == SWMMU_POINTER_TLS &&
+	    second == SWMMU_POINTER_TLS)
+		return SWMMU_POINTER_TLS;
+
+	if (first == SWMMU_POINTER_TLS)
+		return second == SWMMU_POINTER_SWMMU ?
+			SWMMU_POINTER_TLS : SWMMU_POINTER_UNKNOWN;
+
+	if (second == SWMMU_POINTER_TLS)
+		return first == SWMMU_POINTER_SWMMU ?
+			SWMMU_POINTER_TLS : SWMMU_POINTER_UNKNOWN;
+
 	if (first == SWMMU_POINTER_UNKNOWN ||
 	    second == SWMMU_POINTER_UNKNOWN)
 		return SWMMU_POINTER_UNKNOWN;
@@ -654,6 +671,14 @@ swmmu_lvalue_state(
 	case INDIRECT_REF:
 		address = TREE_OPERAND(expr, 0);
 		return swmmu_pointer_state_of(address, states);
+
+	case COMPONENT_REF:
+		return swmmu_lvalue_state(TREE_OPERAND(expr, 0),
+					  states);
+
+	case ARRAY_REF:
+		return swmmu_pointer_state_of(TREE_OPERAND(expr, 0),
+					      states);
 
 	default:
 		if (is_swmmu_provenance_lvalue(expr))
@@ -1440,6 +1465,237 @@ rewrite_dynamic_call_argument(gimple_stmt_iterator *gsi,
 	return true;
 }
 
+static bool
+swmmu_global_var_decl(tree decl)
+{
+	if (!decl || TREE_CODE(decl) != VAR_DECL)
+		return false;
+
+	/*
+	 * Do not treat automatic locals as direct global accesses.
+	 * DECL_EXTERNAL covers declarations defined in another object.
+	 */
+	return TREE_STATIC(decl) || DECL_EXTERNAL(decl);
+}
+
+static bool
+swmmu_supported_global_type(tree type)
+{
+	tree size;
+
+	if (!type)
+		return false;
+
+	if (!INTEGRAL_TYPE_P(type) && !POINTER_TYPE_P(type))
+		return false;
+
+	size = TYPE_SIZE_UNIT(type);
+	if (!size || !tree_fits_uhwi_p(size))
+		return false;
+
+	switch (tree_to_uhwi(size)) {
+	case 1:
+	case 2:
+	case 4:
+	case 8:
+		return true;
+	default:
+		return false;
+	}
+}
+
+static tree
+swmmu_global_address(tree decl)
+{
+	return build_fold_addr_expr(decl);
+}
+
+static tree
+swmmu_global_size(tree decl)
+{
+	return build_int_cst(size_type_node,
+			     tree_to_uhwi(TYPE_SIZE_UNIT(TREE_TYPE(decl))));
+}
+
+static bool
+swmmu_rewrite_global_load(
+	gimple_stmt_iterator *gsi,
+	gassign *assign,
+	hash_map<tree, enum swmmu_pointer_state> &states)
+{
+	tree decl;
+	tree lhs;
+	tree lhs_type;
+	tree type;
+	tree runtime;
+	tree runtime_type;
+	tree address;
+	tree size;
+	tree raw_type;
+	tree raw;
+	tree converted;
+	gcall *call;
+	gassign *replacement;
+	location_t loc;
+
+	if (gimple_assign_rhs_code(assign) != VAR_DECL)
+		return false;
+
+	decl = gimple_assign_rhs1(assign);
+	if (!swmmu_global_var_decl(decl))
+		return false;
+
+	type = TREE_TYPE(decl);
+	if (!swmmu_supported_global_type(type))
+		return false;
+
+	lhs = gimple_assign_lhs(assign);
+	if (!lhs)
+		return false;
+
+	lhs_type = TREE_TYPE(lhs);
+	loc = gimple_location(assign);
+
+	runtime = swmmu_dynamic_runtime_decl(false);
+	if (!runtime)
+		return false;
+
+	runtime_type = TREE_TYPE(runtime);
+	if (TREE_CODE(runtime_type) != FUNCTION_TYPE)
+		return false;
+
+	/*
+	 * For:
+	 *
+	 *   uint64_t nommu_swmmu_load_dynamic(const void *, size_t);
+	 *
+	 * this is the return type, normally uint64_t.
+	 */
+	raw_type = TREE_TYPE(runtime_type);
+
+	address = swmmu_global_address(decl);
+	size = swmmu_global_size(decl);
+	raw = make_ssa_name(raw_type);
+
+	call = gimple_build_call(runtime, 2, address, size);
+	gimple_call_set_lhs(call, raw);
+	gimple_set_location(call, loc);
+
+	gsi_insert_before(gsi, call, GSI_SAME_STMT);
+
+	converted = fold_convert(lhs_type, raw);
+
+	replacement = gimple_build_assign(lhs, converted);
+	gimple_set_location(replacement, loc);
+	gsi_replace(gsi, replacement, true);
+
+	/*
+	 * A global pointer load produces a guest pointer. Preserve that
+	 * state for later dereferences such as G.top_var or *global_ptr.
+	 */
+	if (POINTER_TYPE_P(lhs_type))
+		swmmu_pointer_state_put(lhs,
+					SWMMU_POINTER_DYNAMIC,
+					states);
+
+	if (DECL_NAME(decl))
+		debug_print(stderr,
+			    "[swmmu] global load %s\n",
+			    IDENTIFIER_POINTER(DECL_NAME(decl)));
+
+	return true;
+}
+
+static bool
+swmmu_rewrite_global_store(gimple_stmt_iterator *gsi,
+			   gassign *assign)
+{
+	tree lhs;
+	tree decl;
+	tree type;
+	tree value;
+	tree runtime;
+	tree runtime_type;
+	tree address;
+	tree size;
+	tree converted;
+	gcall *call;
+	location_t loc;
+
+	lhs = gimple_assign_lhs(assign);
+	if (!lhs || TREE_CODE(lhs) != VAR_DECL)
+		return false;
+
+	decl = lhs;
+	if (!swmmu_global_var_decl(decl))
+		return false;
+
+	type = TREE_TYPE(decl);
+	if (!swmmu_supported_global_type(type))
+		return false;
+
+	/*
+	 * First implementation: scalar assignments only.
+	 */
+	switch (gimple_assign_rhs_code(assign)) {
+	case SSA_NAME:
+	case VAR_DECL:
+	case INTEGER_CST:
+	case POINTER_PLUS_EXPR:
+	case ADDR_EXPR:
+	case NOP_EXPR:
+	case CONVERT_EXPR:
+	case VIEW_CONVERT_EXPR:
+		break;
+	default:
+		return false;
+	}
+
+	runtime = swmmu_dynamic_runtime_decl(true);
+	if (!runtime)
+		return false;
+
+	runtime_type = TREE_TYPE(runtime);
+	if (TREE_CODE(runtime_type) != FUNCTION_TYPE)
+		return false;
+
+	value = gimple_assign_rhs1(assign);
+
+	address = swmmu_global_address(decl);
+	address = force_gimple_operand_gsi(gsi, address,
+					   true, NULL_TREE,
+					   true, GSI_SAME_STMT);
+
+	size = swmmu_global_size(decl);
+	size = force_gimple_operand_gsi(gsi, size,
+					true, NULL_TREE,
+					true, GSI_SAME_STMT);
+
+	converted = fold_convert(long_long_unsigned_type_node, value);
+	converted = force_gimple_operand_gsi(gsi, converted,
+					     true, NULL_TREE,
+					     true, GSI_SAME_STMT);
+
+	loc = gimple_location(assign);
+
+	call = gimple_build_call(runtime, 3,
+				 address,
+				 size,
+				 converted);
+	gimple_set_location(call, loc);
+
+	gsi_replace(gsi, call, true);
+
+	if (DECL_NAME(decl))
+		debug_print(stderr,
+			    "[swmmu] global store: %s\n",
+			    IDENTIFIER_POINTER(DECL_NAME(decl)));
+
+	return true;
+}
+
+
+
 /*
  * Rewrite:
  *
@@ -1791,7 +2047,8 @@ swmmu_record_pointer_phi(
 static tree
 swmmu_load_runtime_for_state(enum swmmu_pointer_state state)
 {
-	if (state == SWMMU_POINTER_DYNAMIC)
+	if (state == SWMMU_POINTER_DYNAMIC ||
+	    state == SWMMU_POINTER_TLS)
 		return swmmu_dynamic_runtime_decl(false);
 
 	return swmmu_load_decl;
@@ -1800,7 +2057,8 @@ swmmu_load_runtime_for_state(enum swmmu_pointer_state state)
 static tree
 swmmu_store_runtime_for_state(enum swmmu_pointer_state state)
 {
-	if (state == SWMMU_POINTER_DYNAMIC)
+	if (state == SWMMU_POINTER_DYNAMIC ||
+	    state == SWMMU_POINTER_TLS)
 		return swmmu_dynamic_runtime_decl(true);
 
 	return swmmu_store_decl;
@@ -1825,6 +2083,19 @@ swmmu_function_is_excluded(tree fndecl)
 	}
 
 	return false;
+}
+
+static bool
+swmmu_asm_reads_fs0(gasm *stmt)
+{
+	const char *text = gimple_asm_string(stmt);
+
+	if (!text)
+		return false;
+
+	return strstr(text, "%fs:0") ||
+	       strstr(text, "%%fs:0") ||
+	       strstr(text, "fs:0");
 }
 
 static unsigned int
@@ -1913,6 +2184,16 @@ swmmu_transform_function(function *fn)
 			enum swmmu_pointer_state rhs_state;
 			enum swmmu_pointer_state lhs_state;
 
+			if (gimple_code(stmt) == GIMPLE_ASSIGN) {
+				gassign *assign = as_a<gassign *>(stmt);
+
+				if (swmmu_rewrite_global_load(&gsi, assign, states))
+					continue;
+
+				if (swmmu_rewrite_global_store(&gsi, assign))
+					continue;
+			}
+
 			if (svm_function &&
 				rewrite_aggregate_zero(&gsi, stmt)) {
 				gsi_next(&gsi);
@@ -1947,6 +2228,28 @@ swmmu_transform_function(function *fn)
 				rewrite_bitfield_store(&gsi, stmt)) {
 				gsi_next(&gsi);
 				continue;
+			}
+
+			if (gimple_code(stmt) == GIMPLE_ASM) {
+				gasm *asm_stmt = (gasm *)stmt;
+				unsigned int i;
+
+				if (swmmu_asm_reads_fs0(asm_stmt)) {
+					for (i = 0;
+					     i < gimple_asm_noutputs(asm_stmt);
+					     i++) {
+						tree output;
+
+						output = gimple_asm_output_op(asm_stmt, i);
+						if (output)
+							swmmu_pointer_state_put(
+								output,
+								SWMMU_POINTER_TLS,
+								states);
+					}
+
+					continue;
+				}
 			}
 
 			rhs_state = swmmu_lvalue_state(rhs, states);

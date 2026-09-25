@@ -264,3 +264,94 @@ swmmu_all_access_aggregate_call_argument(
 		saver->input.name,
 		saver->input.location);
 }
+
+static uint64_t swmmu_global_value;
+
+__attribute__((noinline, noipa, used))
+void swmmu_global_store(uint64_t value)
+{
+	swmmu_global_value = value;
+}
+
+__attribute__((noinline, noipa, used))
+uint64_t swmmu_global_load(void)
+{
+	return swmmu_global_value;
+}
+
+static uint64_t *swmmu_global_pointer;
+
+__attribute__((noinline, noipa, used))
+void swmmu_global_pointer_store(uint64_t *pointer)
+{
+	swmmu_global_pointer = pointer;
+}
+
+__attribute__((noinline, noipa, used))
+uint64_t swmmu_global_pointer_load(void)
+{
+	return *swmmu_global_pointer;
+}
+
+
+static uint64_t swmmu_const_hack_value;
+
+static inline void *
+swmmu_not_const_ptr(const void *pointer)
+{
+	return (void *)pointer;
+}
+
+__attribute__((noinline, noipa, used))
+void swmmu_const_hack_store(uint64_t value)
+{
+	*(uint64_t *)swmmu_not_const_ptr(&swmmu_const_hack_value) =
+		value;
+}
+
+__attribute__((noinline, noipa, used))
+uint64_t swmmu_const_hack_load(void)
+{
+	return *(uint64_t *)
+		swmmu_not_const_ptr(&swmmu_const_hack_value);
+}
+
+static inline void *
+swmmu_not_const_ptr_asm(const void *pointer)
+{
+	void *result;
+
+	asm volatile("# swmmu tied pointer"
+		     : "=r"(result)
+		     : "0"(pointer));
+
+	return result;
+}
+
+__attribute__((noinline, noipa, used))
+void swmmu_const_hack_asm_store(uint64_t value)
+{
+	*(uint64_t *)
+		swmmu_not_const_ptr_asm(&swmmu_const_hack_value) = value;
+}
+
+struct swmmu_test_globals {
+	uint64_t value;
+};
+
+static struct swmmu_test_globals swmmu_test_globals;
+static struct swmmu_test_globals *swmmu_test_global_ptr;
+
+__attribute__((noinline, noipa, used))
+void swmmu_set_global_pointer(void)
+{
+	*(struct swmmu_test_globals **)
+		swmmu_not_const_ptr(&swmmu_test_global_ptr) =
+			&swmmu_test_globals;
+}
+
+__attribute__((noinline, noipa, used))
+uint64_t swmmu_load_global_pointer_value(void)
+{
+	return swmmu_test_global_ptr->value;
+}
