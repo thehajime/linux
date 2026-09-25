@@ -36,7 +36,11 @@ The compiler all-access baseline covers:
 - [x] dynamic 32-bit compare-exchange needed by mallocng;
 - [x] mallocng metadata bitfield analysis;
 - [x] dynamic bitfield loads and stores;
-- [x] compiler-generated mallocng metadata access lowering.
+- [x] compiler-generated mallocng metadata access lowering;
+- [x] tested direct global loads and stores;
+- [x] tested global pointer loads and stores;
+- [x] tested const-hack-shaped pointer accesses;
+- [x] TLS `%fs:0` pointer-state handling in the focused compiler/runtime test.
 
 The default-on UML bring-up has reached:
 
@@ -51,51 +55,65 @@ The default-on UML bring-up has reached:
 - [x] SAS parent/child host-alias switching after `fork()`;
 - [x] SAS private-page behavior across `fork()`;
 - [x] SWMMU-aware kernel-to-userspace copy-to paths;
+- [x] SWMMU-aware `clear_user()` for SWMMU-backed destinations;
 - [x] SWMMU-aware host-alias permission updates for full-VMA `mprotect()`;
 - [x] private-copy FDPIC executable mappings through the SWMMU backend;
 - [x] instruction fetch from SAS SWMMU executable mappings;
 - [x] dynamic atomic compare-exchange needed by mallocng;
 - [x] mallocng metadata, bitfield, aggregate, and atomic access lowering;
-- [x] instrumented musl and dynamic loader startup under the previous native
-  executable boundary;
-- [x] instrumented BusyBox startup through `rcS` under the previous native
-  executable boundary;
-- [x] default-on kselftest profile with mixed-mode tests skipped;
-- [x] default-on kselftest: 37 passed, 7 intentionally skipped;
-- [x] basic instrumented Bash startup;
-- [x] basic Bash loops and string/malloc activity;
-- [x] vfork/exec-oriented lmbench smoke tests.
+- [x] instrumented musl and dynamic loader startup under the current
+  bring-up profile;
+- [x] instrumented BusyBox startup through `rcS` under the current
+  bring-up profile;
+- [x] focused vfork/exec/waitpid probe;
+- [x] focused TLS and signal-return probe;
+- [x] default-on KUnit SWMMU suites.
 
-The current Bash profile that works for basic non-fork activity is:
+Current validation and limitations:
 
-```text
-/root/bash --noprofile --norc
-```
+- KUnit currently passes in the reported configuration.
+- The GCC plugin’s all-access and builtin-memory compiler tests pass.
+- kselftest is currently broken and must be restored to a stable baseline
+  before using it as a reliable regression signal.
+- `/sbin/init` has reached a usable shell in zpoline mode after the recent
+  alias and `clear_user()` changes.
+- Intermittent all-access faults remain. They are not yet cleanly
+  reproducible and must not be considered fixed based on one successful run.
+- The `/usr/bin/id` symlink currently refers to an uninstrumented coreutils
+  binary; this binary is not a valid paged-SWMMU test until its package
+  closure is rebuilt with the SWMMU profile.
+- The temporary tracing and diagnostic changes are still present in some
+  local builds. Remove them before clean performance or stability runs.
 
-Bash forked subshells remain blocked until the SWMMU signal, fork, and complete
-userspace runtime boundaries are finished.
+The focused probes establish only their individual paths. In particular,
+passing the TLS/signal probe does not establish that shell signal handling,
+pipelines, and full `/sbin/init` startup are correct.
 
-## Immediate next userspace validation
+## Immediate next validation
 
-Rebuild the coreutils package closure with the all-access profile and validate
-the commands used by the default-on root filesystem:
+Restore a dependable baseline before doing more broad debugging:
 
-- [ ] rebuild coreutils with the SWMMU plugin;
-- [ ] rebuild all required coreutils dependencies with the same userspace
-  profile;
-- [ ] validate `/bin/ls`;
-- [ ] validate `readlink`;
-- [ ] validate `id`;
-- [ ] validate `date`;
-- [ ] remove uninstrumented coreutils binaries from the default-on rootfs.
+1. Remove or disable temporary `printk()` calls, trace dumps, and GDB
+   breakpoint scripts.
+2. Run the KUnit SWMMU suites.
+3. Run the compiler plugin regression suite:
+   ```text
+   make -B -C scripts/gcc-plugins/tests all-access all-access-builtins
+   ```
+4. Repair the currently broken kselftest and record a stable passing result.
+5. Boot the same rebuilt rootfs without GDB and run zpoline mode.
+6. Keep the uninstrumented `id` limitation explicit; do not treat its
+   behavior as evidence about the instrumented runtime.
+7. Record each intermittent failure separately, with its faulting task,
+   `mm`, fault address/IP, and mode. Do not merge distinct failures into one
+   diagnosis.
 
-The current `/bin/ls` is a symlink to the external coreutils package, not a
-BusyBox applet. BusyBox `ls` works; the uninstrumented coreutils binary is not a
-valid default-on test.
-
-The build environment is Alpine Linux with musl. The SWMMU profile must be
-applied to C and C++ compilation only; hand-written assembly must not receive
-the plugin or forced C runtime headers.
+The latest zpoline/SAS alias investigation found that inactive-mm mappings
+could map fixed host aliases while another mm was recorded as active. The
+current implementation defers host-alias installation for inactive VMA
+updates and force-maps aliases during explicit mm activation. The latest
+successful `/sbin/init` run is encouraging, but intermittent faults mean
+this alias-policy change still needs repeatable validation.
 
 ## Default-on paged SVM policy
 
@@ -107,7 +125,9 @@ The current SAS bring-up model uses:
 - host-visible aliases for active SAS SWMMU ranges;
 - private-copy FDPIC executable mappings;
 - executable host aliases for instruction fetch;
-- active host-alias replacement when the current `mm_struct` changes.
+- active host-alias replacement when the current `mm_struct` changes;
+- deferred host-alias mapping for inactive-mm VMA updates;
+- forced host-alias installation when an mm is explicitly activated.
 
 Temporary and deferred boundaries:
 
@@ -118,7 +138,8 @@ Temporary and deferred boundaries:
 - mixed native/SWMMU VMA fork support is not a target;
 - the copy-to-user SWMMU bridge is retained for relevant destinations;
 - raw copy-from-user handling remains limited because raw uaccess is also used
-  by kernel-internal nofault helpers.
+  by kernel-internal nofault helpers;
+- `AT_SYSINFO_EHDR` is omitted for SWMMU because the VDSO has no SWMMU mapping.
 
 These are bring-up exceptions, not the final `NOMMU_PAGED` design.
 
@@ -136,7 +157,8 @@ instruction fetch can execute directly.
 The host aliases are active mappings for the currently running `mm_struct`;
 they are not permanent mappings for every guest address space. Parent and child
 SWMMU spaces therefore reuse the same host virtual addresses, with the active
-aliases replaced during task or `mm_struct` activation.
+aliases replaced during task or `mm_struct` activation. Inactive-mm VMA
+updates must not install or remove aliases in this shared host address window.
 
 The SAS physical-memory mapping must use the same file-backed storage as the
 SWMMU host aliases. Anonymous host mappings are insufficient because kernel
@@ -145,6 +167,23 @@ observe a different anonymous mapping.
 
 The non-SAS NOMMU UML configuration uses a separate userspace runner and
 requires a different host-alias synchronization path.
+
+The relevant address domains remain distinct:
+
+```text
+UML kernel/native memory:
+    uml_physmem, uml_reserved, high_physmem, page_address()
+
+SWMMU backing:
+    SWMMU page tables and struct page backing
+
+SWMMU host aliases:
+    fixed host virtual addresses for the currently active SWMMU mm
+```
+
+The UML kernel physical-memory variables and `uml_to_phys()`/`uml_to_virt()`
+continue to describe native UML kernel memory; they are not SWMMU guest
+address-space bounds.
 
 ### Next kernel milestone: pure paged startup
 
@@ -164,6 +203,10 @@ exceptions:
 - [ ] validate the instrumented musl loader, libc, and BusyBox startup with
   both SWMMU-backed stack and executable mappings;
 - [ ] replace the minimal probe with `init=/sbin/init`.
+
+The vfork/exec/waitpid and TLS/signal probes pass in their tested
+configurations, but they do not establish that the full signal, restart,
+pipeline, and init paths are complete.
 
 Until this milestone is complete, direct file-backed executable mappings and
 signal/runtime boundaries remain temporary bring-up exceptions.
@@ -220,6 +263,11 @@ compiler plugin.
 Uninstrumented binaries are supported only in the future legacy/native mode,
 not generally in paged SVM mode.
 
+The current BusyBox `ptr_to_globals` access has been verified through the
+SWMMU syscall path: its initialization store and subsequent loads return the
+same nonzero guest pointer for the shell mm. This rules out that particular
+global slot as the explanation for the current intermittent faults.
+
 ## Current runtime boundaries
 
 The following areas remain incomplete or explicitly experimental:
@@ -232,7 +280,7 @@ The following areas remain incomplete or explicitly experimental:
 - [ ] compiler-generated spills and reloads across loader, libc, and BusyBox
   startup;
 - [ ] complete atomic access support;
-- [ ] volatile access support;
+- [ ] volatile access coverage;
 - [ ] vector and floating-point access support;
 - [ ] inline-assembly access contracts;
 - [ ] uninstrumented library behavior;
@@ -242,6 +290,11 @@ The following areas remain incomplete or explicitly experimental:
 - [ ] partial-range `mprotect()` support;
 - [ ] executable direct file-backed mappings;
 - [ ] non-SAS NOMMU UML runner alias synchronization.
+
+The focused TLS/signal test passes, but full shell pipeline and init signal
+behavior remains unvalidated. UML/NOMMU signal handling remains a separate
+TODO; the sampled seccomp SIGSYS context rewrite preserved the expected
+register values, but other signal/restart paths are still under investigation.
 
 The x86_64 `setjmp()`/`longjmp()` implementation has an experimental
 SWMMU-aware assembly version, but its musl add-CFI integration and complete
@@ -270,6 +323,10 @@ The current validation order is:
 17. non-SAS NOMMU UML runner validation;
 18. broader Bash, lmbench, and application validation.
 
+KUnit currently works in the reported setup. The kselftest suite is currently
+broken; restore it to a stable, repeatable baseline before relying on it as a
+regression signal.
+
 The host-side KUnit parser and full `run_kselftest.sh` dependency closure are
 postponed until Python and required coreutils binaries are rebuilt with the
 same all-access profile.
@@ -281,8 +338,7 @@ private-copy executable-mapping work.
 
 ### Bring-up gates before `/sbin/init`
 
-These are required before replacing the minimal probe with
-`init=/sbin/init`:
+These are required before treating `init=/sbin/init` as a validated baseline:
 
 - [ ] signal-frame construction for SWMMU-backed user stacks;
 - [ ] `sigreturn()` restoration of SWMMU-backed register and stack state;
@@ -300,7 +356,9 @@ These are required before replacing the minimal probe with
 - [ ] validate `vfork()`/`execve()` and child cleanup with active-`mm` host
   alias switching;
 - [ ] validate the `/sbin/init` process lifecycle, including signal handling,
-  child reaping, and termination/restart behavior.
+  child reaping, and termination/restart behavior;
+- [ ] restore a stable kselftest baseline and use it to verify the alias
+  activation/defer policy.
 
 ### Deferred after initial `/sbin/init` bring-up
 
@@ -327,6 +385,12 @@ These are required before replacing the minimal probe with
 - [ ] architecture-independent `setjmp()`/`longjmp()` support;
 - [ ] ARM and ARM64 support.
 
+The seccomp-mode slowdown is currently postponed. Outside GDB, the measured
+`true | true` case was approximately 2.06 seconds under SAS-seccomp and 0.49
+seconds under zpoline. Under GDB, seccomp showed much larger slowdown; this has
+not yet been demonstrated outside GDB and is not the current correctness
+blocker.
+
 ### SAS memory-model documentation
 
 - [ ] document the relationship between UML physical memory,
@@ -339,7 +403,9 @@ These are required before replacing the minimal probe with
 - [ ] document why host aliases do not imply guest `MAP_SHARED` semantics;
 - [ ] document the distinction between SAS and the non-SAS UML runner model;
 - [ ] document which UML host-memory APIs may be used during kernel-to-host
-  mappings and which are unsafe during userspace-entry transitions.
+  mappings and which are unsafe during userspace-entry transitions;
+- [ ] document that inactive-mm VMA updates defer fixed host-alias operations,
+  while explicit mm activation force-installs aliases.
 
 ## Source-of-truth rules
 
