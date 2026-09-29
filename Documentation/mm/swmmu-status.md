@@ -75,6 +75,17 @@ Current validation and limitations:
 - The GCC plugin’s all-access and builtin-memory compiler tests pass.
 - kselftest is currently broken and must be restored to a stable baseline
   before using it as a reliable regression signal.
+- A local experimental save/restore change in the host signal handler has
+  stopped the previously intermittent stack-canary failure in
+  `test_repeated_standard_mmap_fork` for the reported 100-run test, and it
+  was not reproduced with the prior GDB breakpoint setup. This is encouraging
+  but is not yet a confirmed fix or a stable kselftest baseline.
+- Other kselftest crashes remain to be investigated.
+- The post-`ARCH_SET_FS` `ARCH_GET_FS` readback and related panic checks were
+  removed: they added work after switching to guest FS and could perturb the
+  transition being tested.
+- The FS save/restore refactor is postponed. Keep the current local logic
+  while investigating the remaining kselftest failures.
 - `/sbin/init` has reached a usable shell in zpoline mode after the recent
   alias and `clear_user()` changes.
 - Intermittent all-access faults remain. They are not yet cleanly
@@ -100,11 +111,16 @@ Restore a dependable baseline before doing more broad debugging:
    ```text
    make -B -C scripts/gcc-plugins/tests all-access all-access-builtins
    ```
-4. Repair the currently broken kselftest and record a stable passing result.
-5. Boot the same rebuilt rootfs without GDB and run zpoline mode.
-6. Keep the uninstrumented `id` limitation explicit; do not treat its
+4. Continue investigating the other kselftest crashes. Re-run the
+   `test_repeated_standard_mmap_fork` canary case with the local signal
+   save/restore change, but do not treat its 100-run pass as proof that the
+   full suite is stable.
+5. Record a stable passing kselftest result before relying on it as a
+   regression signal.
+6. Boot the same rebuilt rootfs without GDB and run zpoline mode.
+7. Keep the uninstrumented `id` limitation explicit; do not treat its
    behavior as evidence about the instrumented runtime.
-7. Record each intermittent failure separately, with its faulting task,
+8. Record each intermittent failure separately, with its faulting task,
    `mm`, fault address/IP, and mode. Do not merge distinct failures into one
    diagnosis.
 
@@ -372,6 +388,7 @@ These are required before treating `init=/sbin/init` as a validated baseline:
 - [ ] volatile access coverage;
 - [ ] vector and floating-point access coverage;
 - [ ] inline-assembly access contracts;
+- [ ] uninstrumented library behavior;
 - [ ] final SWMMU mode ABI;
 - [ ] `brk()` integration if not required by the initial musl profile;
 - [ ] flat-memory compatibility mode;
@@ -414,6 +431,8 @@ blocker.
 - Selective provenance and allocator-specific changes remain experimental.
 - Do not add application-owned SWMMU annotations as a substitute for the SVM
   baseline.
+- When exact current branch source is not visible, request the relevant source
+  or diff; do not substitute a similar or older public codebase.
 - Update this document at meaningful implementation milestones.
 - Keep the historical appendix below this section unchanged unless correcting
   historical facts.
