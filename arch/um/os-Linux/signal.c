@@ -210,13 +210,18 @@ static void (*handlers[_NSIG])(int sig, struct siginfo *si, mcontext_t *mc) = {
 	[SIGUSR1] = sigusr1_handler,
 };
 
-extern void os_x86_set_hostfs(void);
+void os_x86_set_hostfs(void);
+int os_x86_arch_prctl(int pid, int option, unsigned long *arg2);
+#include <asm/prctl.h>
 
-static void hard_handler(int sig, siginfo_t *si, void *p)
+static void __attribute__((no_stack_protector))
+hard_handler(int sig, siginfo_t *si, void *p)
 {
 	ucontext_t *uc = p;
 	mcontext_t *mc = &uc->uc_mcontext;
+	unsigned long interrupted_fs;
 
+	os_x86_arch_prctl(0, ARCH_GET_FS, (void *)&interrupted_fs);
 	os_x86_set_hostfs();
 
 	int save_errno = errno;
@@ -224,6 +229,8 @@ static void hard_handler(int sig, siginfo_t *si, void *p)
 	(*handlers[sig])(sig, (struct siginfo *)si, mc);
 
 	errno = save_errno;
+
+	os_x86_arch_prctl(0, ARCH_SET_FS, (void *)interrupted_fs);
 }
 
 void set_handler(int sig)
