@@ -73,38 +73,43 @@ Current validation and limitations:
 
 - KUnit currently passes in the reported configuration.
 - The GCC plugin’s all-access and builtin-memory compiler tests pass.
-- The `test_signal_restart` failure was caused by the NOMMU SAS
-  `UPT_RESTART_SYSCALL` no-op. Reverting that override restored the expected
-  two-byte syscall-instruction rewind, and test 34 passes.
-- Repeated full kselftest runs have been performed with the current local
-  lazy-SIGSYS zpoline prototype. The latest reported runs did not reproduce
-  the earlier signal-restart failure or the eager zpoline exec-time crash.
-  Record the exact TAP totals when updating this status next.
+- The `test_signal_restart` failure was fixed by reverting the NOMMU SAS
+  `UPT_RESTART_SYSCALL` no-op override. The normal x86 two-byte rewind is
+  required for this syscall-restart path, and test 34 passes with the revert.
+- The complete kselftest suite has been run repeatedly without GDB with the
+  current local lazy-SIGSYS zpoline prototype. The previously reported
+  restart-test failure and eager zpoline exec-time crash have not recurred in
+  the latest reported runs. Record exact TAP totals when updating this status
+  next.
 - The eager zpoline executable-segment scan is disabled in the current local
   prototype. It directly read guest executable addresses through host aliases;
   the aliases could be switched away before the scan read them.
-- The current lazy-SIGSYS prototype patches the syscall site on the first
-  SIGSYS and leaves the existing `set_mc_sigsys_hook()` path to handle that
-  first invocation. Later executions of the patched site are intended to
-  bypass SIGSYS and use the zpoline call trampoline directly.
-- In the observed x86-64 host seccomp path, `si_call_addr` was the continuation
-  after the two-byte syscall instruction. The patched instruction address was
-  therefore `si_call_addr - 2`; the bytes at that address were verified in
-  GDB.
+- The current lazy-SIGSYS prototype patches a syscall site on the first SIGSYS.
+  The current invocation continues through the existing
+  `set_mc_sigsys_hook()` path; later executions of the patched site are
+  intended to bypass SIGSYS and use the zpoline call trampoline directly.
+- In the observed host seccomp path, `si_call_addr` contains the continuation
+  after the two-byte syscall instruction. The patch site is therefore
+  `si_call_addr - 2`, verified against the instruction bytes.
 - The lazy two-byte code patch is not safe for concurrent execution by
-  multiple threads sharing an mm. Do not treat this prototype as
-  multi-thread-safe.
-- The local hard-handler FS save/restore experiment stopped reproducing the
-  intermittent stack-canary failure in the reported repeated runs. It remains
-  a bring-up change; the broader FS/host-alias refactor is postponed.
-- `/sbin/init` has reached a usable shell in zpoline mode after the recent
-  alias and `clear_user()` changes.
-- The `/usr/bin/id` symlink currently refers to an uninstrumented coreutils
-  binary; this binary is not a valid paged-SWMMU test until its package
-  closure is rebuilt with the SWMMU profile.
-- Temporary zpoline, alias, and FS diagnostics remain in some local builds.
-  Remove them before clean performance runs and remove test-only instrumentation
-  before considering the lazy patcher production-ready.
+  multiple threads sharing an mm. Keep the current prototype explicitly
+  single-thread-only; multi-thread-safe patching is deferred.
+- The `/bin/sh` POSIX-mode smoke passed with `/bin/sh` resolving to the
+  instrumented `/bin/bash.instrumented`. The `--noprofile --norc` Bash smoke
+  also passed for loops, functions, command substitution, and a pipeline.
+- A short lmbench smoke run completed `lat_select`, syscall/file-operation,
+  `lat_proc shell`, and `lat_proc exec` tests. The reported `lat_proc shell`
+  latency is known to have been high before SWMMU work; defer investigating
+  that performance result.
+- An uninstrumented coreutils `id` command has worked in an observed run.
+  Treat this as incidental compatibility only, not evidence that uninstrumented
+  applications are supported in paged SWMMU mode.
+- The plan is to extend the Alpine `aports` fork on its `nommu-uml` branch to
+  build a broader instrumented rootfs, starting with coreutils and later nginx:
+  <https://gitlab.alpinelinux.org/thehajime/aports/-/tree/nommu-uml?ref_type=heads>
+- Temporary alias tracing and other diagnostic changes may still exist in
+  local working trees. Remove them before clean performance runs or treating
+  the implementation as production-ready.
 
 The focused probes establish only their individual paths. In particular,
 passing the TLS/signal probe does not establish that shell signal handling,
@@ -112,28 +117,25 @@ pipelines, and full `/sbin/init` startup are correct.
 
 ## Immediate next validation
 
-Continue from the current lazy-SIGSYS prototype without reopening the
-completed test 34 or eager-scan investigations:
+Completed KUnit, compiler-plugin, kselftest, Bash smoke, and initial lmbench
+smoke runs do not need to be repeated unless the code changes.
 
-1. Preserve the `UPT_RESTART_SYSCALL` revert and its test 34 coverage.
-2. Remove temporary GDB breakpoint scripts and high-volume tracing once their
-   findings have been recorded.
-3. Run the KUnit SWMMU suites.
-4. Run the compiler plugin regression suite:
-   ```text
-   make -B -C scripts/gcc-plugins/tests all-access all-access-builtins
-   ```
-5. Continue with any remaining kselftest failures as separate issues; do not
-   repeat the already-completed full-suite runs unless code changes warrant it.
-6. Boot the same rebuilt rootfs without GDB and run zpoline mode.
-7. Keep the uninstrumented `id` limitation explicit; do not treat its
-   behavior as evidence about the instrumented runtime.
-8. Record each new intermittent failure separately, with its faulting task,
-   `mm`, fault address/IP, and mode.
+1. Remove temporary GDB scripts and alias-trace instrumentation when their
+   current findings have been recorded.
+2. Keep the `UPT_RESTART_SYSCALL` revert and test 34 regression coverage.
+3. Continue Bash and shell startup validation using the instrumented Bash and
+   its instrumented dependency closure. Do not treat the uninstrumented `id`
+   result as a general compatibility guarantee.
+4. Extend the instrumented Alpine package/rootfs profile through the `aports`
+   `nommu-uml` branch; coreutils is the next planned package, with nginx later.
+5. Defer lmbench performance analysis, including `lat_proc shell`, until the
+   functional rootfs validation is further along.
+6. Record any new crash separately with its task, `mm`, fault address/IP, and
+   execution mode.
 
-The lazy-SIGSYS prototype closes the current eager-scanner crash for the
-reported test scope; it does not establish that eager scanning is fixed or
-that lazy patching is safe with multiple threads.
+The lazy-SIGSYS prototype closes the eager zpoline scan crash for the current
+reported test scope. It does not establish that eager scanning is fixed or
+that lazy patching is safe for multi-threaded processes.
 
 ## Default-on paged SVM policy
 
@@ -288,6 +290,10 @@ SWMMU syscall path: its initialization store and subsequent loads return the
 same nonzero guest pointer for the shell mm. This rules out that particular
 global slot as the explanation for the current intermittent faults.
 
+The `aports` `nommu-uml` branch is the planned place to maintain the
+instrumented Alpine package profile and build rootfs images for broader use.
+Coreutils is the next intended package target; nginx is planned later.
+
 ## Current runtime boundaries
 
 The following areas remain incomplete or explicitly experimental:
@@ -319,8 +325,8 @@ register values, but other signal/restart paths are still under investigation.
 
 The current lazy zpoline patcher is a single-threaded prototype. Its two-byte
 instruction rewrite is not safe if another thread sharing the mm can execute
-the site concurrently. Until a text-patching synchronization mechanism is
-implemented, do not claim lazy patching is safe for multi-threaded applications.
+the site concurrently. Until a thread-safe patching mechanism is implemented,
+do not claim lazy patching is safe for multi-threaded applications.
 
 The x86_64 `setjmp()`/`longjmp()` implementation has an experimental
 SWMMU-aware assembly version, but its musl add-CFI integration and complete
@@ -341,7 +347,7 @@ The current validation order is:
 9. SAS executable SWMMU instruction-fetch probe;
 10. SWMMU signal-frame and `sigreturn()` tests;
 11. TLS and dynamic-loader validation;
-12. non-fork Bash startup and loop tests;
+12. Bash startup, loop, POSIX-mode, and pipeline smoke tests;
 13. vfork/exec-oriented lmbench smoke tests;
 14. rebuilt coreutils package closure;
 15. coreutils command validation;
@@ -353,6 +359,10 @@ KUnit currently works in the reported setup. The signal-restart test passes
 with the normal two-byte syscall restart adjustment. Repeated full kselftest
 runs have been completed with the current lazy-SIGSYS prototype; retain the
 reported result, but do not infer multi-thread safety from those runs.
+
+The short lmbench smoke script completes in the reported environment. The
+`lat_proc shell` latency is known to have been high before SWMMU work; defer
+investigating it rather than treating it as a current correctness blocker.
 
 The host-side KUnit parser and full `run_kselftest.sh` dependency closure are
 postponed until Python and required coreutils binaries are rebuilt with the
@@ -384,8 +394,8 @@ These are required before treating `init=/sbin/init` as a validated baseline:
   alias switching;
 - [ ] validate the `/sbin/init` process lifecycle, including signal handling,
   child reaping, and termination/restart behavior;
-- [x] restore a repeatable kselftest result for the current single-threaded
-  lazy-SIGSYS prototype; continue to report any other failures separately.
+- [x] restore repeatable kselftest results for the reported current
+  single-threaded profile; record exact TAP totals at the next update.
 
 ### Deferred after initial `/sbin/init` bring-up
 
@@ -414,10 +424,11 @@ These are required before treating `init=/sbin/init` as a validated baseline:
 - [ ] ARM and ARM64 support;
 - [ ] safe multi-threaded lazy zpoline patching, including synchronization
   against concurrent instruction fetch;
-- [ ] determine whether a fallback to unpatched SIGSYS handling is required
-  for shared/multi-threaded mm instances;
-- [ ] revisit eager zpoline segment scanning only if needed; the previous scan
-  depended on active host aliases and is disabled in the current prototype.
+- [ ] determine whether multi-threaded processes should fall back to
+  unpatched SIGSYS handling until safe lazy patching is available;
+- [ ] revisit eager zpoline segment scanning only if needed; it remains
+  disabled in the current prototype because it depended on mutable active
+  host aliases.
 
 The seccomp-mode slowdown is currently postponed. Outside GDB, the measured
 `true | true` case was approximately 2.06 seconds under SAS-seccomp and 0.49
