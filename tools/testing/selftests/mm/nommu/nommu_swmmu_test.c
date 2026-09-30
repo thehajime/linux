@@ -2806,7 +2806,7 @@ static int swmmu_expect_signal_child(void *address,
 		sigemptyset(&action.sa_mask);
 
 		if (sigaction(SIGSEGV, &action, NULL) < 0)
-			_exit(125);
+			_exit(129);
 
 		if (write_access) {
 			(void)syscall(SYS_nommu_swmmu_store,
@@ -2968,7 +2968,7 @@ static int swmmu_expect_signal_restart_child(void *address)
 			_exit(125);
 
 		if (signal(SIGALRM, swmmu_sigalrm_exit) == SIG_ERR)
-			_exit(125);
+			_exit(126);
 
 		alarm(2);
 
@@ -2983,7 +2983,7 @@ static int swmmu_expect_signal_restart_child(void *address)
 		 * the fault did not recur.
 		 */
 		(void)ret;
-		_exit(126);
+		_exit(127);
 	}
 
 	if (waitpid(pid, &status, 0) < 0) {
