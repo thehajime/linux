@@ -73,28 +73,38 @@ Current validation and limitations:
 
 - KUnit currently passes in the reported configuration.
 - The GCC plugin’s all-access and builtin-memory compiler tests pass.
-- kselftest is currently broken and must be restored to a stable baseline
-  before using it as a reliable regression signal.
-- A local experimental save/restore change in the host signal handler has
-  stopped the previously intermittent stack-canary failure in
-  `test_repeated_standard_mmap_fork` for the reported 100-run test, and it
-  was not reproduced with the prior GDB breakpoint setup. This is encouraging
-  but is not yet a confirmed fix or a stable kselftest baseline.
-- Other kselftest crashes remain to be investigated.
-- The post-`ARCH_SET_FS` `ARCH_GET_FS` readback and related panic checks were
-  removed: they added work after switching to guest FS and could perturb the
-  transition being tested.
-- The FS save/restore refactor is postponed. Keep the current local logic
-  while investigating the remaining kselftest failures.
+- The `test_signal_restart` failure was caused by the NOMMU SAS
+  `UPT_RESTART_SYSCALL` no-op. Reverting that override restored the expected
+  two-byte syscall-instruction rewind, and test 34 passes.
+- Repeated full kselftest runs have been performed with the current local
+  lazy-SIGSYS zpoline prototype. The latest reported runs did not reproduce
+  the earlier signal-restart failure or the eager zpoline exec-time crash.
+  Record the exact TAP totals when updating this status next.
+- The eager zpoline executable-segment scan is disabled in the current local
+  prototype. It directly read guest executable addresses through host aliases;
+  the aliases could be switched away before the scan read them.
+- The current lazy-SIGSYS prototype patches the syscall site on the first
+  SIGSYS and leaves the existing `set_mc_sigsys_hook()` path to handle that
+  first invocation. Later executions of the patched site are intended to
+  bypass SIGSYS and use the zpoline call trampoline directly.
+- In the observed x86-64 host seccomp path, `si_call_addr` was the continuation
+  after the two-byte syscall instruction. The patched instruction address was
+  therefore `si_call_addr - 2`; the bytes at that address were verified in
+  GDB.
+- The lazy two-byte code patch is not safe for concurrent execution by
+  multiple threads sharing an mm. Do not treat this prototype as
+  multi-thread-safe.
+- The local hard-handler FS save/restore experiment stopped reproducing the
+  intermittent stack-canary failure in the reported repeated runs. It remains
+  a bring-up change; the broader FS/host-alias refactor is postponed.
 - `/sbin/init` has reached a usable shell in zpoline mode after the recent
   alias and `clear_user()` changes.
-- Intermittent all-access faults remain. They are not yet cleanly
-  reproducible and must not be considered fixed based on one successful run.
 - The `/usr/bin/id` symlink currently refers to an uninstrumented coreutils
   binary; this binary is not a valid paged-SWMMU test until its package
   closure is rebuilt with the SWMMU profile.
-- The temporary tracing and diagnostic changes are still present in some
-  local builds. Remove them before clean performance or stability runs.
+- Temporary zpoline, alias, and FS diagnostics remain in some local builds.
+  Remove them before clean performance runs and remove test-only instrumentation
+  before considering the lazy patcher production-ready.
 
 The focused probes establish only their individual paths. In particular,
 passing the TLS/signal probe does not establish that shell signal handling,
@@ -102,34 +112,28 @@ pipelines, and full `/sbin/init` startup are correct.
 
 ## Immediate next validation
 
-Restore a dependable baseline before doing more broad debugging:
+Continue from the current lazy-SIGSYS prototype without reopening the
+completed test 34 or eager-scan investigations:
 
-1. Remove or disable temporary `printk()` calls, trace dumps, and GDB
-   breakpoint scripts.
-2. Run the KUnit SWMMU suites.
-3. Run the compiler plugin regression suite:
+1. Preserve the `UPT_RESTART_SYSCALL` revert and its test 34 coverage.
+2. Remove temporary GDB breakpoint scripts and high-volume tracing once their
+   findings have been recorded.
+3. Run the KUnit SWMMU suites.
+4. Run the compiler plugin regression suite:
    ```text
    make -B -C scripts/gcc-plugins/tests all-access all-access-builtins
    ```
-4. Continue investigating the other kselftest crashes. Re-run the
-   `test_repeated_standard_mmap_fork` canary case with the local signal
-   save/restore change, but do not treat its 100-run pass as proof that the
-   full suite is stable.
-5. Record a stable passing kselftest result before relying on it as a
-   regression signal.
+5. Continue with any remaining kselftest failures as separate issues; do not
+   repeat the already-completed full-suite runs unless code changes warrant it.
 6. Boot the same rebuilt rootfs without GDB and run zpoline mode.
 7. Keep the uninstrumented `id` limitation explicit; do not treat its
    behavior as evidence about the instrumented runtime.
-8. Record each intermittent failure separately, with its faulting task,
-   `mm`, fault address/IP, and mode. Do not merge distinct failures into one
-   diagnosis.
+8. Record each new intermittent failure separately, with its faulting task,
+   `mm`, fault address/IP, and mode.
 
-The latest zpoline/SAS alias investigation found that inactive-mm mappings
-could map fixed host aliases while another mm was recorded as active. The
-current implementation defers host-alias installation for inactive VMA
-updates and force-maps aliases during explicit mm activation. The latest
-successful `/sbin/init` run is encouraging, but intermittent faults mean
-this alias-policy change still needs repeatable validation.
+The lazy-SIGSYS prototype closes the current eager-scanner crash for the
+reported test scope; it does not establish that eager scanning is fixed or
+that lazy patching is safe with multiple threads.
 
 ## Default-on paged SVM policy
 
@@ -305,12 +309,18 @@ The following areas remain incomplete or explicitly experimental:
 - [ ] complete executable permission propagation through all VMA operations;
 - [ ] partial-range `mprotect()` support;
 - [ ] executable direct file-backed mappings;
-- [ ] non-SAS NOMMU UML runner alias synchronization.
+- [ ] non-SAS NOMMU UML runner alias synchronization;
+- [ ] safe multi-threaded lazy SIGSYS code patching.
 
 The focused TLS/signal test passes, but full shell pipeline and init signal
 behavior remains unvalidated. UML/NOMMU signal handling remains a separate
 TODO; the sampled seccomp SIGSYS context rewrite preserved the expected
 register values, but other signal/restart paths are still under investigation.
+
+The current lazy zpoline patcher is a single-threaded prototype. Its two-byte
+instruction rewrite is not safe if another thread sharing the mm can execute
+the site concurrently. Until a text-patching synchronization mechanism is
+implemented, do not claim lazy patching is safe for multi-threaded applications.
 
 The x86_64 `setjmp()`/`longjmp()` implementation has an experimental
 SWMMU-aware assembly version, but its musl add-CFI integration and complete
@@ -339,9 +349,10 @@ The current validation order is:
 17. non-SAS NOMMU UML runner validation;
 18. broader Bash, lmbench, and application validation.
 
-KUnit currently works in the reported setup. The kselftest suite is currently
-broken; restore it to a stable, repeatable baseline before relying on it as a
-regression signal.
+KUnit currently works in the reported setup. The signal-restart test passes
+with the normal two-byte syscall restart adjustment. Repeated full kselftest
+runs have been completed with the current lazy-SIGSYS prototype; retain the
+reported result, but do not infer multi-thread safety from those runs.
 
 The host-side KUnit parser and full `run_kselftest.sh` dependency closure are
 postponed until Python and required coreutils binaries are rebuilt with the
@@ -373,8 +384,8 @@ These are required before treating `init=/sbin/init` as a validated baseline:
   alias switching;
 - [ ] validate the `/sbin/init` process lifecycle, including signal handling,
   child reaping, and termination/restart behavior;
-- [ ] restore a stable kselftest baseline and use it to verify the alias
-  activation/defer policy.
+- [x] restore a repeatable kselftest result for the current single-threaded
+  lazy-SIGSYS prototype; continue to report any other failures separately.
 
 ### Deferred after initial `/sbin/init` bring-up
 
@@ -400,7 +411,13 @@ These are required before treating `init=/sbin/init` as a validated baseline:
 - [ ] global `free()`/`realloc()` specialization;
 - [ ] broad application validation;
 - [ ] architecture-independent `setjmp()`/`longjmp()` support;
-- [ ] ARM and ARM64 support.
+- [ ] ARM and ARM64 support;
+- [ ] safe multi-threaded lazy zpoline patching, including synchronization
+  against concurrent instruction fetch;
+- [ ] determine whether a fallback to unpatched SIGSYS handling is required
+  for shared/multi-threaded mm instances;
+- [ ] revisit eager zpoline segment scanning only if needed; the previous scan
+  depended on active host aliases and is disabled in the current prototype.
 
 The seccomp-mode slowdown is currently postponed. Outside GDB, the measured
 `true | true` case was approximately 2.06 seconds under SAS-seccomp and 0.49
