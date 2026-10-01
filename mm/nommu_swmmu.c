@@ -717,6 +717,52 @@ static void nommu_swmmu_clone_item_abort(struct mm_struct *dst,
 	vm_area_free(item->dst_vma);
 }
 
+/* Prepare one child VMA and its SWMMU metadata without publishing either. */
+static int nommu_swmmu_clone_item_prepare(
+		struct mm_struct *dst,
+		struct nommu_swmmu_space *dst_space,
+		struct vm_area_struct *src_vma,
+		struct nommu_swmmu_clone_item **result)
+{
+	struct swmmu_pagetable_range *src_data = src_vma->vm_swmmu_pt_range;
+	struct nommu_swmmu_clone_item *item;
+
+	if (!src_data || !src_data->pagetable ||
+	    src_data->first > src_data->pagetable->nr_ptes ||
+	    src_data->nr_ptes >
+	    src_data->pagetable->nr_ptes - src_data->first)
+		return -EINVAL;
+
+	item = dst_space->ops->zalloc(sizeof(*item), GFP_KERNEL);
+	if (!item)
+		return -ENOMEM;
+
+	item->src_vma = src_vma;
+	item->dst_vma = vm_area_dup(src_vma);
+	if (!item->dst_vma) {
+		dst_space->ops->dealloc(item);
+		return -ENOMEM;
+	}
+
+	item->dst_vma->vm_mm = dst;
+	item->dst_vma->vm_swmmu_pt_range = NULL;
+	if (item->dst_vma->vm_region) {
+		vm_area_free(item->dst_vma);
+		dst_space->ops->dealloc(item);
+		return -EOPNOTSUPP;
+	}
+
+	item->new_data = swmmu_pagetable_range_clone(dst_space, src_data);
+	if (!item->new_data) {
+		vm_area_free(item->dst_vma);
+		dst_space->ops->dealloc(item);
+		return -ENOMEM;
+	}
+
+	*result = item;
+	return 0;
+}
+
 static int swmmu_find_free_range(struct mm_struct *mm,
 				unsigned long min,
 				size_t length,
@@ -1681,52 +1727,13 @@ int nommu_swmmu_dup_mmap(struct mm_struct *dst,
 	nommu_swmmu_clear_child_vmas(dst);
 
 	for_each_vma(src_vmi, src_vma) {
-		struct swmmu_pagetable_range *src_data;
-
-		src_data = src_vma->vm_swmmu_pt_range;
-		if (!src_data)
+		if (!src_vma->vm_swmmu_pt_range)
 			continue;
 
-		if (!src_data->pagetable ||
-			src_data->first > src_data->pagetable->nr_ptes ||
-			src_data->nr_ptes >
-			src_data->pagetable->nr_ptes - src_data->first) {
-			ret = -EINVAL;
+		ret = nommu_swmmu_clone_item_prepare(dst, dst_space, src_vma,
+						     &item);
+		if (ret)
 			goto rollback;
-		}
-
-		item = dst_space->ops->zalloc(sizeof(*item), GFP_KERNEL);
-		if (!item) {
-			ret = -ENOMEM;
-			goto rollback;
-		}
-
-		item->src_vma = src_vma;
-		item->dst_vma = vm_area_dup(src_vma);
-		if (!item->dst_vma) {
-			dst_space->ops->dealloc(item);
-			ret = -ENOMEM;
-			goto rollback;
-		}
-
-		item->dst_vma->vm_mm = dst;
-		item->dst_vma->vm_swmmu_pt_range = NULL;
-
-		/* exclude generic-nommu region */
-		if (item->dst_vma->vm_region) {
-			vm_area_free(item->dst_vma);
-			dst_space->ops->dealloc(item);
-			ret = -EOPNOTSUPP;
-			goto rollback;
-		}
-
-		item->new_data = swmmu_pagetable_range_clone(dst_space, src_data);
-		if (!item->new_data) {
-			vm_area_free(item->dst_vma);
-			dst_space->ops->dealloc(item);
-			ret = -ENOMEM;
-			goto rollback;
-		}
 
 		list_add_tail(&item->node, &prepared);
 	}
