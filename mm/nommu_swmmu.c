@@ -34,7 +34,6 @@ struct swmmu_pagetable_range {
 enum swmmu_pagetable_tx_kind {
 	SWMMU_TX_RESIZE,
 	SWMMU_TX_SPLIT,
-	SWMMU_TX_FIXED_REPLACE,
 	SWMMU_TX_DROP_RANGE,
 	SWMMU_TX_MOVE,
 };
@@ -49,19 +48,11 @@ enum swmmu_pagetable_replace_kind {
 
 struct swmmu_pagetable_tx {
 	enum swmmu_pagetable_tx_kind kind;
-	enum swmmu_pagetable_replace_kind replace_kind;
 
-	struct vm_area_struct *old_vma;
 	struct vm_area_struct *new_vma;
 
 	struct swmmu_pagetable_range *source;
 	struct swmmu_pagetable_range *new_range;
-	struct swmmu_pagetable_range *left_range;
-	struct swmmu_pagetable_range *right_range;
-	struct swmmu_pagetable_range *replacement_range;
-
-	unsigned long replace_start;
-	unsigned long replace_end;
 	unsigned int replacement_prot;
 	unsigned long split_nr_ptes;
 	struct swmmu_pagetable_range *drop_range;
@@ -2070,9 +2061,6 @@ static void swmmu_expand_abort(struct vm_area_struct *vma,
 	up_write(&space->lock);
 }
 
-/* old helpers */
-
-
 static int swmmu_split_prepare(struct vm_area_struct *vma,
 			struct vm_area_struct *new,
 			unsigned long addr,
@@ -2131,9 +2119,6 @@ static int swmmu_split_prepare(struct vm_area_struct *vma,
 	tx->kind = SWMMU_TX_SPLIT;
 	tx->source = old_pt_range;
 	tx->new_range = new_pt_range;
-	tx->source->pagetable = old_pt_range->pagetable;
-	tx->source->nr_ptes = old_pt_range->nr_ptes;
-	tx->source->first = old_pt_range->first;
 	tx->split_nr_ptes = split_pages;
 
 	/*
