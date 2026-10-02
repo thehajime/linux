@@ -162,22 +162,6 @@ swmmu_dynamic_runtime_decl(bool store)
 }
 
 static tree
-swmmu_memcpy_dynamic_runtime_decl(void)
-{
-	if (!swmmu_memcpy_dynamic_decl) {
-		swmmu_memcpy_dynamic_decl =
-			find_function_decl(
-				SWMMU_MEMCPY_DYNAMIC_NAME);
-
-		if (swmmu_memcpy_dynamic_decl)
-			protect_runtime_decl(
-				swmmu_memcpy_dynamic_decl);
-	}
-
-	return swmmu_memcpy_dynamic_decl;
-}
-
-static tree
 swmmu_bitfield_runtime_decl(bool store)
 {
 	tree *decl;
@@ -1375,7 +1359,8 @@ rewrite_dynamic_aggregate_call_argument(
 	    !tree_fits_uhwi_p(size_tree))
 		return false;
 
-	runtime_decl = swmmu_memcpy_dynamic_runtime_decl();
+	runtime_decl = swmmu_memop_runtime_decl(SWMMU_MEMOP_MEMCPY,
+						 true);
 	if (!runtime_decl)
 		return false;
 
@@ -2205,7 +2190,8 @@ swmmu_transform_function(function *fn)
 				AGGREGATE_TYPE_P(TREE_TYPE(lhs))) {
 				tree runtime_decl;
 
-				runtime_decl = swmmu_memcpy_dynamic_runtime_decl();
+				runtime_decl = swmmu_memop_runtime_decl(
+					SWMMU_MEMOP_MEMCPY, true);
 				if (!runtime_decl) {
 					error_at(gimple_location(stmt),
 						"SWMMU aggregate-copy runtime "

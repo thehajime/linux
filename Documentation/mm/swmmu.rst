@@ -101,3 +101,60 @@ For SAS mode, host aliases are active mappings for the currently running
 ``mm_struct``. They are not permanent mappings for every SWMMU address space.
 When the current task changes, the active host aliases must be replaced with
 the aliases belonging to the new ``mm_struct``.
+
+Testing
+-------
+
+SWMMU UML testing uses the NOMMU selftests in
+``tools/testing/selftests/mm/nommu``. Build the kernel with the SAS and SWMMU
+options enabled, then build the GCC plugin and install the tests into a
+separate output directory. The host compiler must have GCC plugin headers
+installed for its GCC version.
+
+For example, configure the kernel output directory with:
+
+.. code-block:: sh
+
+   make ARCH=um O=build defconfig
+   scripts/config --file build/.config --disable MMU \
+           --enable NOMMU_SWMMU \
+           --enable GCC_PLUGINS \
+           --enable GCC_PLUGIN_SWMMU \
+           --enable NOMMU_SWMMU_KUNIT_TEST \
+           --enable NOMMU_SWMMU_DEFAULT_ON \
+           --enable UML_NOMMU_SAS \
+           --enable BINFMT_ELF_FDPIC
+   make ARCH=um O=build -j32
+
+Build the selftest plugin and install the selftests with:
+
+.. code-block:: sh
+
+   make -C tools/testing/selftests/mm/nommu \
+           SWMMU_BUILD_PLUGIN=1 SWMMU_HOSTCXX=g++ \
+           SWMMU_PLUGIN="$PWD/build-kselftest/swmmu_plugin.so" \
+           swmmu-plugin
+   make ARCH=um NOMMU=1 O=build-kselftest \
+           SWMMU_ALL_ACCESS=1 \
+           SWMMU_PLUGIN="$PWD/build-kselftest/swmmu_plugin.so" \
+           TARGETS=mm/nommu kselftest-all kselftest-install
+
+The installed tests are under
+``build-kselftest/kselftest/kselftest_install``. Copy the installed tree into
+the test root filesystem used by the UML init script. Keep this output
+directory separate from the kernel build directory so each build can be
+cleaned independently.
+
+Run the resulting UML kernel with a root filesystem containing the installed
+tests. For example, when the root filesystem is at ``rootfs``:
+
+.. code-block:: sh
+
+   ./build/vmlinux root=/dev/root rootflags="$PWD/rootfs" \
+           rootfstype=hostfs rw mem=2g loglevel=8 zpoline=1 init=/sbin/init
+
+The root filesystem's init script is responsible for invoking the installed
+kselftests. The configuration above enables the SWMMU KUnit test as well;
+KUnit results are reported during kernel boot. Tests that rely on unsupported
+occupied-target ``MREMAP_FIXED`` behavior are currently skipped as described
+above.
