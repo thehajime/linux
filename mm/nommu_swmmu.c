@@ -1975,7 +1975,7 @@ static int swmmu_pagetable_resize_prepare(struct nommu_swmmu_space *space,
 			new_pt->ptes[i].page,
 			old_pt->ptes[source->first + i].page);
 		if (ret) {
-			swmmu_pagetable_range_release(space, new_range);
+			swmmu_pagetable_range_release_locked(space, new_range);
 			return ret;
 		}
 	}
