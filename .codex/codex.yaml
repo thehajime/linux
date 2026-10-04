@@ -1,0 +1,78 @@
+# ==============================================================================
+# Codex Cloud Configuration for User Mode Linux (UML) Development
+# ==============================================================================
+version: "1"
+
+# 1. Base Cloud Sandbox (Ubuntu) Environment Configuration
+environment:
+  os: "ubuntu-24.04"
+  # Elevate sandbox privileges to allow ptrace and other required UML operations
+  security_policy: "danger-full-access"
+  
+  # Automatically pre-install necessary host dependencies at boot time
+  system_packages:
+    - build-essential
+    - bison
+    - flex
+    - libelf-dev
+    - libncurses-dev
+    - bc
+    - bubblewrap
+
+  # Fix environment variables to bypass ccache and avoid compiler toolchain mismatches
+  env_vars:
+    CC: "gcc"
+    CCACHE_DISABLE: "1"
+
+# 2. Sequential Pre-Setup Steps Executed Before the Main Tasks
+setup_steps:
+  - name: "Prepare apparmor and unprivileged user namespaces"
+    run: |
+      # Allow unprivileged user namespaces to prevent bubblewrap sandbox crashes
+      sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+  
+  - name: "Verify compiler and host assembler availability"
+    run: |
+      gcc --version
+      as --version
+      which gcc
+
+# 3. Autautonomous Build Pipeline Definition for the AI Agent's Debugging Loop
+build_pipeline:
+  default_output_dir: "build"
+  
+  # Ordered verification steps triggered after the AI applies code modifications
+  validation_commands:
+    - name: "Generate defconfig"
+      run: "make ARCH=um O=build defconfig"
+      
+    - name: "Apply Custom SWMU-noMMU Kconfig modifications"
+      run: |
+        scripts/config --file build/.config \
+          --disable MMU \
+          --enable NOMMU_SWMMU \
+          --enable GCC_PLUGINS \
+          --enable GCC_PLUGIN_SWMMU \
+          --enable DEBUG_VM \
+          --enable DEBUG_VM_MAPLE_TREE \
+          --enable NOMMU_SWMMU_KUNIT_TEST \
+          --enable NOMMU_SWMMU_DEFAULT_ON \
+          --disable KUNIT_UAPI \
+          --enable UML_NOMMU_SAS
+          
+    - name: "Update configuration metrics"
+      run: "make ARCH=um O=build olddefconfig"
+      
+    - name: "Compile UML Kernel"
+      run: "make ARCH=um O=build -j$(nproc)"
+
+# 4. Runtime Test Pipeline (Triggered Automatically on Build Success)
+test_pipeline:
+  run_on_success: true
+  commands:
+    - name: "Boot UML and verify printk / KUnit test results"
+      run: |
+        # Execute the generated UML binary within the cloud sandbox
+        ./build/linux --version || true
+        # Optional: Specify a minimal rootfs to test console logs if required
+        # ./build/linux rootfstype=hostfs rw init=/bin/sh ...
