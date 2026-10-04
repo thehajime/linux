@@ -969,7 +969,8 @@ static int elf_fdpic_map_file_constdisp_on_uclinux(
 
 	/* allocate one big anon block for everything */
 	maddr = vm_mmap(NULL, load_addr, top - base,
-			PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE, 0);
+			PROT_READ | PROT_WRITE | PROT_EXEC,
+			MAP_PRIVATE | MAP_ANONYMOUS, 0);
 	if (IS_ERR_VALUE(maddr))
 		return (int) maddr;
 

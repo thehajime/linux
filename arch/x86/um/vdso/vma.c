@@ -21,6 +21,15 @@ static int __init init_vdso(void)
 {
 	BUG_ON(vdso_end - vdso_start > PAGE_SIZE);
 
+#ifdef CONFIG_NOMMU_SWMMU
+	/*
+	 * not implemented yet
+	 * The VDSO page is not yet mapped into the SWMMU address space.
+	 * Do not publish its native page_address() through AT_SYSINFO_EHDR.
+	 */
+	return 0;
+#endif
+
 	um_vdso = alloc_page(GFP_KERNEL);
 	if (!um_vdso)
 		panic("Cannot allocate vdso\n");

@@ -9,6 +9,7 @@
 #include <linux/module.h>
 #include <linux/sched.h>
 #include <linux/elf-fdpic.h>
+#include <linux/nommu_swmmu.h>
 #include <asm/unistd.h>
 #include <asm/insn.h>
 #include <asm/syscall.h>
@@ -84,6 +85,35 @@ static int __zpoline_translate_syscalls(struct elf_fdpic_params *params)
 	return count;
 }
 
+void zpoline_patch_sigsys(struct siginfo *si)
+{
+	unsigned long address;
+	u8 *bytes;
+	u8 op0, op1;
+
+	if (!si) {
+		pr_warn("no caller address is available");
+		return;
+	}
+
+	address = (unsigned long)si->si_call_addr;
+
+	WARN_ON_ONCE(address < 2);
+	bytes = (u8 *)address - 2;
+	op0 = READ_ONCE(bytes[0]);
+	op1 = READ_ONCE(bytes[1]);
+
+	/* Already rewritten, or not an instruction this prototype handles. */
+	if (op0 == 0xff && op1 == 0xd0)
+		return;
+	if (op0 != 0x0f || (op1 != 0x05 && op1 != 0x34))
+		return;
+
+	/* Same rewrite as the eager zpoline translator. */
+	WRITE_ONCE(bytes[0], 0xff);
+	WRITE_ONCE(bytes[1], 0xd0);
+}
+
 /**
  * elf_arch_finalize_exec() - architecture hook to translate syscall/sysenter
  *
@@ -106,6 +136,7 @@ static int __zpoline_translate_syscalls(struct elf_fdpic_params *params)
  * @exec_params: ELF meta data for executable file
  * @interp_params: ELF meta data for the interpreter file
  */
+#ifdef ZPOLINE_TRANSLATE_DISABLED
 int elf_arch_finalize_exec(struct elf_fdpic_params *exec_params,
 			   struct elf_fdpic_params *interp_params)
 {
@@ -116,6 +147,11 @@ int elf_arch_finalize_exec(struct elf_fdpic_params *exec_params,
 	if (!um_zpoline_enabled)
 		return 0;
 
+#ifdef CONFIG_NOMMU_SWMMU
+	err = nommu_swmmu_activate_mm(current->mm);
+	if (err)
+		return -1;
+#endif
 	if (down_write_killable(&mm->mmap_lock))
 		return -EINTR;
 
@@ -143,6 +179,7 @@ out:
 	up_write(&mm->mmap_lock);
 	return err;
 }
+#endif /* ZPOLINE_TRANSLATE_DISABLED */
 
 /**
  * setup_zpoline_trampoline() - install trampoline code for zpoline

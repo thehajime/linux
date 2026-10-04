@@ -7,6 +7,8 @@
 #include <linux/memblock.h>
 #include <linux/mm.h>
 #include <linux/pfn.h>
+#include <linux/mman.h>
+#include <linux/nommu_swmmu.h>
 #include <asm/page.h>
 #include <asm/sections.h>
 #include <as-layout.h>
@@ -74,7 +76,7 @@ void __init setup_physmem(unsigned long start, unsigned long reserve_end,
 
 	physmem_fd = create_mem_file(len);
 
-	err = os_map_memory((void *) reserve_end, physmem_fd, reserve,
+	err = os_map_memory_file((void *) reserve_end, physmem_fd, reserve,
 			    map_size, 1, 1, 1);
 	if (err < 0) {
 		os_warn("setup_physmem - mapping %lu bytes of memory at 0x%p "
@@ -134,3 +136,52 @@ __uml_setup("mem=", uml_mem_setup,
 "    be more, and the excess, if it's ever used, will just be swapped out.\n"
 "	Example: mem=64M\n\n"
 );
+
+static int uml_nommu_swmmu_host_map_page(unsigned long address,
+				struct page *page, unsigned int prot)
+{
+	unsigned long phys;
+	unsigned long long offset;
+	int fd;
+
+	phys = page_to_phys(page);
+	fd = phys_mapping(phys, &offset);
+	if (fd < 0)
+		return -EOPNOTSUPP;
+
+	return os_map_memory_file((void *)address, fd, offset, PAGE_SIZE,
+				prot & PROT_READ,
+				prot & PROT_WRITE,
+				prot & PROT_EXEC);
+}
+
+static void uml_nommu_swmmu_host_unmap_page(unsigned long address)
+{
+	int ret;
+
+	ret = os_unmap_memory((void *)address, PAGE_SIZE);
+	if (ret)
+		pr_warn("SWMMU: failed to unmap host page %lx: %d\n",
+			address, ret);
+}
+
+static int uml_nommu_swmmu_host_protect_range(unsigned long address,
+					unsigned long length,
+					unsigned int prot)
+{
+	return os_protect_memory((void *)address, length,
+				prot & PROT_READ,
+				prot & PROT_WRITE,
+				prot & PROT_EXEC);
+}
+
+static const struct nommu_swmmu_host_ops uml_nommu_swmmu_host_ops = {
+	.map_page = uml_nommu_swmmu_host_map_page,
+	.unmap_page = uml_nommu_swmmu_host_unmap_page,
+	.protect_range = uml_nommu_swmmu_host_protect_range,
+};
+
+const struct nommu_swmmu_host_ops *nommu_swmmu_arch_host_ops(void)
+{
+	return &uml_nommu_swmmu_host_ops;
+}

@@ -12,6 +12,9 @@ void sigsys_handler(int sig, struct siginfo *si,
 {
 	mcontext_t *mc = (mcontext_t *) ptr;
 
+	if (um_zpoline_enabled)
+		zpoline_patch_sigsys(si);
+
 	/* hook syscall via SIGSYS */
 	set_mc_sigsys_hook(mc);
 }

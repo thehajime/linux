@@ -43,6 +43,7 @@ enum {
 #define profile_pc(regs) PT_REGS_IP(regs)
 
 #define UPT_RESTART_SYSCALL(r) (UPT_IP(r) -= 2)
+
 #define PT_REGS_SET_SYSCALL_RETURN(r, res) (PT_REGS_AX(r) = (res))
 
 static inline long regs_return_value(struct pt_regs *regs)

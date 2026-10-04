@@ -31,6 +31,8 @@ obj-$(CONFIG_EARLY_PRINTK) += early_printk.o
 obj-$(CONFIG_STACKTRACE) += stacktrace.o
 obj-$(CONFIG_SMP) += smp.o
 
+CFLAGS_process.o += -fomit-frame-pointer
+
 USER_OBJS := config.o
 
 include $(srctree)/arch/um/scripts/Makefile.rules

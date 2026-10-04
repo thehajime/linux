@@ -209,6 +209,8 @@ extern void init_new_thread_signals(void);
 
 extern int os_map_memory(void *virt, int fd, unsigned long long off,
 			 unsigned long len, int r, int w, int x);
+extern int os_map_memory_file(void *virt, int fd, unsigned long long off,
+			unsigned long len, int r, int w, int x);
 extern int os_protect_memory(void *addr, unsigned long len,
 			     int r, int w, int x);
 extern int os_unmap_memory(void *addr, int len);
@@ -373,6 +375,7 @@ extern int os_setup_seccomp(void);
 
 /* zpoline.c */
 extern int um_zpoline_enabled;
+extern void zpoline_patch_sigsys(struct siginfo *si);
 #endif
 
 #endif

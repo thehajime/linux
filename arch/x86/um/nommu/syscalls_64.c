@@ -10,6 +10,7 @@
 #include <linux/sched/mm.h>
 #include <linux/syscalls.h>
 #include <linux/uaccess.h>
+#include <linux/nommu_swmmu.h>
 #include <asm/fsgsbase.h>
 #include <asm/prctl.h> /* XXX This should get the constants from libc */
 #include <registers.h>
@@ -56,6 +57,25 @@ void arch_set_stack_to_current(void)
 {
 	current_top_of_stack = task_top_of_stack(current);
 	current_ptregs = (long)task_pt_regs(current);
+
+	os_x86_set_hostfs();
+
+#if IS_ENABLED(CONFIG_NOMMU_SWMMU)
+	if (nommu_swmmu_activate_mm(current->mm))
+		panic("NOMMU SWMMU: failed to activate host aliases\n");
+#endif
+}
+
+void arch_restore_guest_fs(void)
+{
+	unsigned long fs;
+
+	if (!current->mm)
+		return;
+
+	fs = current->thread.regs.regs.gp[FS_BASE / sizeof(unsigned long)];
+
+	os_x86_arch_prctl(0, ARCH_SET_FS, (void __user *)fs);
 }
 
 void arch_switch_to(struct task_struct *to)
@@ -67,13 +87,7 @@ void arch_switch_to(struct task_struct *to)
 	current_top_of_stack = task_top_of_stack(to);
 	current_ptregs = (long)task_pt_regs(to);
 
-	if ((to->thread.regs.regs.gp[FS_BASE / sizeof(unsigned long)] == 0) ||
-	    (to->mm == NULL))
-		return;
-
-	/* this changes the FS on every context switch */
-	os_x86_arch_prctl(0, ARCH_SET_FS,
-		   (void __user *) to->thread.regs.regs.gp[FS_BASE / sizeof(unsigned long)]);
+	os_x86_set_hostfs();
 }
 
 static int __init um_nommu_setup_hostfs(void)
