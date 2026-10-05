@@ -9,6 +9,7 @@
 #include <string.h>
 #include <limits.h>
 #include "kselftest.h"
+#include "nommu.h"
 
 #include <sys/vfs.h>
 #ifndef RAMFS_MAGIC
@@ -16,6 +17,7 @@
 #endif
 
 static size_t ps;
+static int nommu;
 
 struct test_case_t {
 	const char *name;
@@ -30,6 +32,9 @@ struct test_case_t {
 static int get_shm_expected_error(const char *path)
 {
 	struct statfs fs;
+
+	if (!nommu)
+		return 0;
 
 	if (statfs(path, &fs) == 0) {
 		if (fs.f_type == RAMFS_MAGIC)
@@ -74,11 +79,7 @@ static struct test_case_t test_cases[] = {
 		.mmap_prot = PROT_READ | PROT_WRITE,
 		.mmap_flags = MAP_SHARED,
 		.exp_err = 0,
-#ifdef NOMMU
 		.resolve_exp_err = get_shm_expected_error,
-#else
-		.resolve_exp_err = NULL,
-#endif
 	},
 	{
 		.name = "non-anonymous shared file mapping (r--)",
@@ -87,11 +88,7 @@ static struct test_case_t test_cases[] = {
 		.mmap_prot = PROT_READ,
 		.mmap_flags = MAP_SHARED,
 		.exp_err = 0,
-#ifdef NOMMU
 		.resolve_exp_err = get_shm_expected_error,
-#else
-		.resolve_exp_err = 0,
-#endif
 	},
 };
 
@@ -203,20 +200,20 @@ static int test_map_fixed(void)
 	ptr = mmap(fixed_addr, ps, PROT_READ | PROT_WRITE,
 		MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
 
-#ifdef NOMMU
-	if (ptr == MAP_FAILED && (errno == ENODEV || errno == EINVAL)) {
-		ksft_test_result_pass("MAP_FIXED correctly rejected under nommu\n");
-		return KSFT_PASS;
-	}
-	if (ptr != MAP_FAILED) {
-		ksft_test_result_fail("MAP_FIXED unexpectedly allowed under nommu\n");
-		munmap(ptr, ps);
+	if (nommu) {
+		if (ptr == MAP_FAILED && (errno == ENODEV || errno == EINVAL)) {
+			ksft_test_result_pass("MAP_FIXED correctly rejected under nommu\n");
+			return KSFT_PASS;
+		}
+		if (ptr != MAP_FAILED) {
+			ksft_test_result_fail("MAP_FIXED unexpectedly allowed under nommu\n");
+			munmap(ptr, ps);
+			return KSFT_FAIL;
+		}
+		ksft_test_result_fail("MAP_FIXED failed under NOMMU: %s\n",
+				      strerror(errno));
 		return KSFT_FAIL;
 	}
-	ksft_test_result_fail("MAP_FIXED failed under NOMMU: %s\n",
-			      strerror(errno));
-	return KSFT_FAIL;
-#else
 	if (ptr != MAP_FAILED) {
 		ksft_test_result_pass("MAP_FIXED successfully allocated under MMU\n");
 		munmap(ptr, ps);
@@ -224,7 +221,6 @@ static int test_map_fixed(void)
 	}
 	ksft_test_result_fail("MAP_FIXED failed allocation under MMU\n");
 	return KSFT_FAIL;
-#endif
 }
 
 int main(int argc, char **argv)
@@ -232,15 +228,18 @@ int main(int argc, char **argv)
 	int result = KSFT_PASS;
 	int i, rc;
 
+	nommu = ksft_is_nommu();
+	if (nommu < 0)
+		ksft_exit_skip("Cannot read /proc/meminfo; mount procfs at /proc\n");
+
 	ps = sysconf(_SC_PAGESIZE);
 	ksft_print_header();
 	ksft_set_plan(ARRAY_SIZE(test_cases) + 1);
 
-#ifdef NOMMU
-	ksft_print_msg("Running strict MMAP test criteria under nommu architecture\n");
-#else
-	ksft_print_msg("Running MMAP test criteria under MMU architecture\n");
-#endif
+	if (nommu)
+		ksft_print_msg("Running strict MMAP test criteria under nommu architecture\n");
+	else
+		ksft_print_msg("Running MMAP test criteria under MMU architecture\n");
 
 	if (test_map_fixed() == KSFT_FAIL)
 		result = KSFT_FAIL;

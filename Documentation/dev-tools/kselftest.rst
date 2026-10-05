@@ -233,16 +233,20 @@ section::
 Build and test on nommu target
 ==============================
 
-If you (cross-)build kselftests for nommu targets, or run tests on nommu targets, use
-``NOMMU=1`` as a make variable/environment setting to tell build system to do the additional
-checks.  These nommu targets may differ in several ways, such as not supporting fork(2) or
-using musl or another libc.  Set this variable to apply the necessary build and test adjustments.
+The nommu selftests detect NOMMU at runtime by checking for the ``MmapCopy``
+entry in ``/proc/meminfo``. Ensure procfs is mounted at ``/proc`` before
+building and running the tests.
 
 ::
 
-  $ make ARCH=um NOMMU=1 O=build kselftest-all TARGETS=nommu  # <= build-only
-  $ make ARCH=um NOMMU=1 O=build kselftest-install TARGETS=nommu
-  $ NOMMU=1 ./build/kselftest/kselftest_install/run_kselftest.sh -p -c nommu
+  $ make ARCH=um O=build kselftest-all TARGETS=nommu  # <= build-only
+  $ make ARCH=um O=build kselftest-install TARGETS=nommu
+  $ ./build/kselftest/kselftest_install/run_kselftest.sh -p -c nommu
+
+The C tests report a skip if ``/proc/meminfo`` is unavailable. On a NOMMU
+system, the runner needs that file to avoid wrapping the tests in ``timeout``
+before they can report a skip. Mounting procfs is therefore a prerequisite
+for running this target through the kselftest runner.
 
 Contributing new tests
 ======================
